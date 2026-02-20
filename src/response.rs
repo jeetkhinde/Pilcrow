@@ -151,7 +151,7 @@ pub struct NavigateResponse {
 
 impl IntoResponse for NavigateResponse {
     fn into_response(self) -> Response {
-        // Fix #5: Explicitly using 303 See Other, which is best practice for client-side routers
+        // Policy: navigation responses use HTTP 303 See Other.
         let mut response = Redirect::to(&self.path).into_response();
 
         // Ensure the status is explicitly 303 (Axum defaults to 303 for Redirect::to, but this guarantees it)
@@ -160,6 +160,68 @@ impl IntoResponse for NavigateResponse {
         self.base.apply_to_response(&mut response);
         self.base.apply_toast_cookies(&mut response);
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{html, json, ResponseExt};
+    use axum::{
+        body::to_bytes,
+        http::{header::SET_COOKIE, StatusCode},
+        response::IntoResponse,
+    };
+    use serde::ser::{Error as _, Serialize, Serializer};
+
+    #[tokio::test]
+    async fn json_non_object_payload_is_wrapped_with_toasts() {
+        let response = json(vec![1, 2, 3]).with_toast("Saved", "success").into_response();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should serialize");
+
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid json");
+
+        assert_eq!(payload["data"], serde_json::json!([1, 2, 3]));
+        assert_eq!(payload["_toasts"][0]["message"], "Saved");
+        assert_eq!(payload["_toasts"][0]["level"], "success");
+    }
+
+    struct BadSerialize;
+
+    impl Serialize for BadSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Err(S::Error::custom("serialization failed"))
+        }
+    }
+
+    #[test]
+    fn json_serialization_failure_returns_500() {
+        let response = json(BadSerialize).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn html_toast_cookie_is_encoded_and_present() {
+        let response = html("ok")
+            .with_toast("a;b=c", "info")
+            .into_response();
+
+        let cookie_header = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .next()
+            .expect("set-cookie should exist")
+            .to_str()
+            .expect("set-cookie must be valid ascii");
+
+        assert!(cookie_header.contains("silcrow_toasts="));
+        assert!(cookie_header.contains("%3B"));
     }
 }
 
