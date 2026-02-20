@@ -178,3 +178,91 @@ fn site_shell(content: String) -> String {
 | **Cache Control** | `.no_cache()` | Prevents Silcrow.js from caching the view |
 
 **Pilcrow** takes the complexity of modern web state management and hides it behind a clean, type-safe Rust API. One handler, any client, total control.
+
+
+The comparison between a raw **Axum + Maud** setup and the **Pilcrow** experience is the difference between building a car from parts versus driving a luxury vehicle with an intelligent dashboard.
+
+While Axum provides the engine and Maud provides the cargo, Pilcrow acts as the orchestration layer that makes them talk to each other and to the frontend.
+
+---
+
+### 1. The Developer Workflow: A Side-by-Side
+
+**The Task:** Create an endpoint that saves a user profile. It must return a partial HTML div for the web frontend, JSON for the mobile app, and a "Success" toast message that survives a redirect if needed.
+
+#### The Axum + Maud Way (Manual Labor)
+
+You are responsible for every HTTP detail. You have to check headers manually and handle "state" like toasts via string manipulation.
+
+```rust
+async fn save_user(headers: HeaderMap, State(db): State<DbPool>) -> Response {
+    let user = db.save().await.unwrap();
+    let accept = headers.get("Accept").and_then(|v| v.to_str().ok()).unwrap_or("");
+
+    if accept.contains("text/html") {
+        let cookie = "silcrow_toast=Saved:success; Path=/; SameSite=Lax";
+        (
+            StatusCode::OK,
+            [(header::SET_COOKIE, cookie)],
+            Html(maud::html! { div { (user.name) " saved!" } }.into_string())
+        ).into_response()
+    } else {
+        Json(json!({ "status": "success", "user": user, "_toast": "Saved" })).into_response()
+    }
+}
+
+```
+
+* **The Pain:** High boilerplate. You have to remember to inject the toast differently for JSON vs HTML. Negotiation logic is repeated in every handler.
+
+#### The Pilcrow Way (Fluent Orchestration)
+
+You declare your intent. Pilcrow handles the "How" of the HTTP transport.
+
+```rust
+async fn save_user(req: SilcrowRequest, State(db): State<DbPool>) -> Result<Response, E> {
+    let user = db.save().await?;
+
+    req.select(Responses::new()
+        .html(|| html(maud::html! { div { (user.name) " saved!" } }))
+        .json(|| json!(user))
+    ).map(|res| res.with_toast("Saved!", "success")) 
+}
+
+```
+
+* **The Gain:** The `with_toast` modifier works globally. The negotiation is handled by the framework. The code focuses entirely on data and UI.
+
+---
+
+### 2. Feature Comparison Table
+
+| Feature | Axum + Maud | Pilcrow Experience |
+| --- | --- | --- |
+| **Content Negotiation** | Manual `Accept` header parsing in every function. | Automated via `req.select()`. |
+| **Execution** | Eager (you fetch data before knowing if the client wants it). | Lazy (only the required closure runs). |
+| **Toasts/Alerts** | Manual cookie formatting or JSON injection. | Unified `.with_toast()` modifier. |
+| **Frontend Sync** | None. You manually write JS to handle updates. | Deep sync with `silcrow.js` via `.retarget()` and `.trigger_event()`. |
+| **Error Handling** | Manual mapping to `StatusCode`. | Unified `AppError` and `?` support inside closures. |
+| **Redirects** | `Redirect::to(...)` (Toasts often lost). | `Maps(...)` (Toasts persisted via safe cookies). |
+
+---
+
+### 3. The "Vibe" Shift: From Components to Orchestration
+
+#### Axum + Maud is "Component-First"
+
+You think in terms of **Response Types**. Every time you write a handler, you are asking: *"What specific HTTP object do I need to construct right now?"* This leads to "Fragmented Logic," where your JSON API and your HTML views live in different worlds, even if they do the same thing.
+
+#### Pilcrow is "UI-First"
+
+You think in terms of **Interactions**. You are asking: *"What is the result of this action, and how should the UI (in any format) reflect it?"* Because Pilcrow handles the "packaging," you can spend your time building complex UI patterns:
+
+* **"Save this form, but update the sidebar too."** (`.retarget("#sidebar")`)
+* **"Delete this item, and tell the header to refresh the count."** (`.trigger_event("update-cart")`)
+* **"Update the profile, and make sure the URL bar matches."** (`.push_history("/profile")`)
+
+### 🏁 Final Verdict
+
+* **Axum + Maud** is for when you want a standard, "by-the-book" REST API and simple server-rendered pages. It is robust but requires you to do the heavy lifting for modern UX.
+* **Pilcrow** is for developers building **Hypermedia Applications**. It gives you the feel of a single-page app (SPA) with the simplicity of a multi-page app (MPA). It’s for when you want "framework-grade" features like global toasts and DOM retargeting without the weight of a heavy frontend framework.
