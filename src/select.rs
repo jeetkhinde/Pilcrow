@@ -1,7 +1,6 @@
 // ./crates/pilcrow/src/select.rs
 use crate::extract::{RequestMode, SilcrowRequest};
 use crate::response::{html, json, HtmlResponse, JsonResponse};
-use ax_response = axum::response;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -11,45 +10,60 @@ use axum::{
 // 1. The Polymorphic Conversion Traits
 // ════════════════════════════════════════════════════════════
 
-/// Trait to automatically convert various types into a Pilcrow HTML Result.
 pub trait IntoPilcrowHtml<E> {
     fn into_pilcrow_html(self) -> Result<HtmlResponse, E>;
 }
 
 impl<E> IntoPilcrowHtml<E> for String {
-    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { Ok(html(self)) }
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> {
+        Ok(html(self))
+    }
 }
 
 impl<E> IntoPilcrowHtml<E> for HtmlResponse {
-    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { Ok(self) }
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> {
+        Ok(self)
+    }
 }
 
 impl<R, E> IntoPilcrowHtml<E> for Result<R, E>
-where R: Into<HtmlResponse> {
-    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { self.map(Into::into) }
+where
+    R: Into<HtmlResponse>,
+{
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> {
+        self.map(Into::into)
+    }
 }
 
-// Special implementation for Result<String, E> to handle common usage
 impl<E> IntoPilcrowHtml<E> for Result<String, E> {
-    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { self.map(html) }
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> {
+        self.map(html)
+    }
 }
 
-/// Trait to automatically convert various types into a Pilcrow JSON Result.
 pub trait IntoPilcrowJson<E> {
     fn into_pilcrow_json(self) -> Result<Response, E>;
 }
 
-impl<T, E> IntoPilcrowJson<E> for JsonResponse<T> 
-where T: serde::Serialize {
-    fn into_pilcrow_json(self) -> Result<Response, E> { Ok(self.into_response()) }
+impl<T, E> IntoPilcrowJson<E> for JsonResponse<T>
+where
+    T: serde::Serialize,
+{
+    fn into_pilcrow_json(self) -> Result<Response, E> {
+        Ok(self.into_response())
+    }
 }
 
 impl<E> IntoPilcrowJson<E> for serde_json::Value {
-    fn into_pilcrow_json(self) -> Result<Response, E> { Ok(json(self).into_response()) }
+    fn into_pilcrow_json(self) -> Result<Response, E> {
+        Ok(json(self).into_response())
+    }
 }
 
 impl<T, E> IntoPilcrowJson<E> for Result<T, E>
-where T: IntoPilcrowJson<E> {
+where
+    T: IntoPilcrowJson<E>,
+{
     fn into_pilcrow_json(self) -> Result<Response, E> {
         match self {
             Ok(val) => val.into_pilcrow_json(),
@@ -68,16 +82,19 @@ pub struct Responses<E> {
 }
 
 impl<E> Default for Responses<E> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<E> Responses<E> {
     pub fn new() -> Self {
-        Self { html: None, json: None }
+        Self {
+            html: None,
+            json: None,
+        }
     }
 
-    /// Registers the HTML response generator.
-    /// Accepts String, HtmlResponse, or Result of either.
     pub fn html<F, T>(mut self, f: F) -> Self
     where
         F: FnOnce() -> T + Send + 'static,
@@ -90,8 +107,6 @@ impl<E> Responses<E> {
         self
     }
 
-    /// Registers the JSON response generator.
-    /// Accepts Value, JsonResponse, or Result of either.
     pub fn json<F, T>(mut self, f: F) -> Self
     where
         F: FnOnce() -> T + Send + 'static,
