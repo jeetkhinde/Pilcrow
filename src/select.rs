@@ -1,93 +1,130 @@
 // ./crates/pilcrow/src/select.rs
 use crate::extract::{RequestMode, SilcrowRequest};
+use crate::response::{html, json, HtmlResponse, JsonResponse};
+use ax_response = axum::response;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 
 // ════════════════════════════════════════════════════════════
-// 1. The Type-Erased Responses Builder
+// 1. The Polymorphic Conversion Traits
 // ════════════════════════════════════════════════════════════
 
-/// Holds the closures for each potential response format.
-/// We box the closures to avoid generic trait bound explosions when a user
-/// only wants to provide one or two of the formats.
+/// Trait to automatically convert various types into a Pilcrow HTML Result.
+pub trait IntoPilcrowHtml<E> {
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E>;
+}
+
+impl<E> IntoPilcrowHtml<E> for String {
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { Ok(html(self)) }
+}
+
+impl<E> IntoPilcrowHtml<E> for HtmlResponse {
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { Ok(self) }
+}
+
+impl<R, E> IntoPilcrowHtml<E> for Result<R, E>
+where R: Into<HtmlResponse> {
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { self.map(Into::into) }
+}
+
+// Special implementation for Result<String, E> to handle common usage
+impl<E> IntoPilcrowHtml<E> for Result<String, E> {
+    fn into_pilcrow_html(self) -> Result<HtmlResponse, E> { self.map(html) }
+}
+
+/// Trait to automatically convert various types into a Pilcrow JSON Result.
+pub trait IntoPilcrowJson<E> {
+    fn into_pilcrow_json(self) -> Result<Response, E>;
+}
+
+impl<T, E> IntoPilcrowJson<E> for JsonResponse<T> 
+where T: serde::Serialize {
+    fn into_pilcrow_json(self) -> Result<Response, E> { Ok(self.into_response()) }
+}
+
+impl<E> IntoPilcrowJson<E> for serde_json::Value {
+    fn into_pilcrow_json(self) -> Result<Response, E> { Ok(json(self).into_response()) }
+}
+
+impl<T, E> IntoPilcrowJson<E> for Result<T, E>
+where T: IntoPilcrowJson<E> {
+    fn into_pilcrow_json(self) -> Result<Response, E> {
+        match self {
+            Ok(val) => val.into_pilcrow_json(),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 2. The Type-Erased Responses Builder
+// ════════════════════════════════════════════════════════════
+
 pub struct Responses<E> {
     html: Option<Box<dyn FnOnce() -> Result<Response, E> + Send>>,
     json: Option<Box<dyn FnOnce() -> Result<Response, E> + Send>>,
 }
 
 impl<E> Default for Responses<E> {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl<E> Responses<E> {
-    /// Starts an empty set of responses
     pub fn new() -> Self {
-        Self {
-            html: None,
-            json: None,
-        }
+        Self { html: None, json: None }
     }
 
     /// Registers the HTML response generator.
-    pub fn html<F, R>(mut self, f: F) -> Self
+    /// Accepts String, HtmlResponse, or Result of either.
+    pub fn html<F, T>(mut self, f: F) -> Self
     where
-        F: FnOnce() -> Result<R, E> + Send + 'static,
-        R: IntoResponse + 'static,
+        F: FnOnce() -> T + Send + 'static,
+        T: IntoPilcrowHtml<E> + 'static,
         E: 'static,
     {
-        // We evaluate the closure, and if it succeeds, convert its output into a standard Axum Response
-        self.html = Some(Box::new(|| f().map(|res| res.into_response())));
+        self.html = Some(Box::new(|| {
+            f().into_pilcrow_html().map(|res| res.into_response())
+        }));
         self
     }
 
     /// Registers the JSON response generator.
-    pub fn json<F, R>(mut self, f: F) -> Self
+    /// Accepts Value, JsonResponse, or Result of either.
+    pub fn json<F, T>(mut self, f: F) -> Self
     where
-        F: FnOnce() -> Result<R, E> + Send + 'static,
-        R: IntoResponse + 'static,
+        F: FnOnce() -> T + Send + 'static,
+        T: IntoPilcrowJson<E> + 'static,
         E: 'static,
     {
-        self.json = Some(Box::new(|| f().map(|res| res.into_response())));
+        self.json = Some(Box::new(|| f().into_pilcrow_json()));
         self
     }
 }
 
 // ════════════════════════════════════════════════════════════
-// 2. The Core Selector Implementation
+// 3. The Core Selector Implementation
 // ════════════════════════════════════════════════════════════
 
 impl SilcrowRequest {
-    /// Evaluates the preferred mode and executes *only* the matching closure.
-    /// `E` is whatever Error type the developer chooses to use in their app!
     pub fn select<E>(&self, responses: Responses<E>) -> Result<Response, E>
     where
-        E: IntoResponse, // The developer's error must be convertible to a Response
+        E: IntoResponse,
     {
         match self.preferred_mode() {
             RequestMode::Html => {
                 if let Some(f) = responses.html {
                     f()
                 } else {
-                    Ok((
-                        StatusCode::NOT_ACCEPTABLE,
-                        "HTML representation not provided",
-                    )
-                        .into_response())
+                    Ok((StatusCode::NOT_ACCEPTABLE, "HTML not provided").into_response())
                 }
             }
             RequestMode::Json => {
                 if let Some(f) = responses.json {
                     f()
                 } else {
-                    Ok((
-                        StatusCode::NOT_ACCEPTABLE,
-                        "JSON representation not provided",
-                    )
-                        .into_response())
+                    Ok((StatusCode::NOT_ACCEPTABLE, "JSON not provided").into_response())
                 }
             }
         }
