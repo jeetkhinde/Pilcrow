@@ -95,6 +95,9 @@ impl<E> Responses<E> {
         }
     }
 
+    /// Registers the HTML response generator.
+    /// The closure `f` can now return various types that implement `IntoPilcrowHtml<E>`,
+    /// including `String`, `HtmlResponse`, or `Result` types containing these.
     pub fn html<F, T>(mut self, f: F) -> Self
     where
         F: FnOnce() -> T + Send + 'static,
@@ -106,7 +109,9 @@ impl<E> Responses<E> {
         }));
         self
     }
-
+    /// Registers the JSON response generator.
+    /// The closure `f` can now return various types that implement `IntoPilcrowJson<E>`,
+    /// including `serde_json::Value`, `JsonResponse<T>`, or `Result` types containing these.
     pub fn json<F, T>(mut self, f: F) -> Self
     where
         F: FnOnce() -> T + Send + 'static,
@@ -121,7 +126,9 @@ impl<E> Responses<E> {
 // ════════════════════════════════════════════════════════════
 // 3. The Core Selector Implementation
 // ════════════════════════════════════════════════════════════
-
+/// Evaluates the preferred mode (HTML or JSON) and executes *only* the matching closure
+/// from the provided `Responses` builder.
+/// `E` represents the application's custom error type, which must be convertible to an Axum `Response`.
 impl SilcrowRequest {
     pub fn select<E>(&self, responses: Responses<E>) -> Result<Response, E>
     where
