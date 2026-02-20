@@ -623,11 +623,12 @@
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     showLoading(targetEl);
-
+    // 
     try {
       let cached = method === "GET" ? cacheGet(fullUrl) : null;
 
       let text, contentType, redirected = false, finalUrl = fullUrl;
+
       const wantsHTML = sourceEl?.hasAttribute("s-html");
       if (cached) {
         text = cached.text;
@@ -653,12 +654,40 @@
 
         const response = await fetch(fullUrl, fetchOptions);
 
+
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         // Redirect detection
         redirected = response.redirected;
+        // --- NEW: Silcrow Response Headers ---
+        // 1. Client-Side Event Triggers
+        const triggerHeader = response.headers.get("silcrow-trigger");
+        if (triggerHeader) {
+          try {
+            const triggers = JSON.parse(triggerHeader);
+            Object.entries(triggers).forEach(([evt, detail]) => {
+              document.dispatchEvent(new CustomEvent(evt, {bubbles: true, detail}));
+            });
+          } catch (e) {warn("Malformed silcrow-trigger header");}
+        }
+
+        // 2. Dynamic Retargeting
+        const retarget = response.headers.get("silcrow-retarget");
+        if (retarget) {
+          const newTarget = document.querySelector(retarget);
+          if (newTarget) options.target = newTarget;
+        }
+
+        // 3. Server-Driven URL Push
+        const pushUrl = response.headers.get("silcrow-push-url");
+        if (pushUrl) {
+          finalUrl = new URL(pushUrl, location.origin).href;
+          redirected = true; // Force history update
+        }
+        // --- END NEW SECTION ---
+
         finalUrl = response.url || fullUrl;
 
         text = await response.text();
@@ -701,18 +730,32 @@
           location.href
         );
       }
+      // --- NEW: History Push with Server Override ---
+      // Determine the final URL: Server Header > Redirect URL > Original URL
+      const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
 
+      if (shouldPushHistory && trigger !== "popstate") {
+        history.pushState(
+          {
+            silcrow: true,
+            url: finalHistoryUrl,
+            targetSelector: options.target?.id || 'body'
+          },
+          "",
+          finalHistoryUrl
+        );
+      }
       // Prepare swap content
       let swapContent;
       const isJSON = contentType.includes("application/json");
 
       if (isJSON) {
         swapContent = JSON.parse(text);
-        processToasts(true, swapContent); // <-- ADD THIS HERE
+        processToasts(true, swapContent);
       } else {
         const isFullPage = !targetSelector;
         swapContent = extractHTML(text, targetSelector, isFullPage);
-        processToasts(false); // <-- ADD THIS HERE
+        processToasts(false);
       }
 
       // Fire silcrow:before-swap — transition hook
@@ -747,6 +790,8 @@
       // History push AFTER successful render (use finalUrl if redirected)
       const historyUrl = redirected ? finalUrl : fullUrl;
       if (shouldPushHistory && trigger !== "popstate") {
+
+
         history.pushState(
           {silcrow: true, url: historyUrl, targetSelector},
           "",

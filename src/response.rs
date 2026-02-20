@@ -65,6 +65,8 @@ impl BaseResponse {
 // 2. The Modifier Trait
 // ════════════════════════════════════════════════════════════
 
+// In src/response.rs, update the ResponseExt trait:
+
 pub trait ResponseExt: Sized {
     fn base_mut(&mut self) -> &mut BaseResponse;
 
@@ -86,8 +88,31 @@ pub trait ResponseExt: Sized {
         });
         self
     }
-}
 
+    // Trigger a custom DOM event on the client
+    fn trigger_event(mut self, event_name: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(event_name) {
+            self.base_mut().headers.insert("silcrow-trigger", val);
+        }
+        self
+    }
+
+    //  Override the target DOM element for the swap
+    fn retarget(mut self, selector: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(selector) {
+            self.base_mut().headers.insert("silcrow-retarget", val);
+        }
+        self
+    }
+
+    // Force the browser history URL, or prevent it entirely with "false"
+    fn push_history(mut self, url: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(url) {
+            self.base_mut().headers.insert("silcrow-push", val);
+        }
+        self
+    }
+}
 // ════════════════════════════════════════════════════════════
 // 3. Response Wrappers & Transport Logic
 // ════════════════════════════════════════════════════════════
