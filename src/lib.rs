@@ -8,7 +8,7 @@ pub mod select;
 // Re-export the core API so developers can just `use pilcrow::*`
 pub use extract::SilcrowRequest;
 pub use response::{html, json, navigate, ResponseExt};
-pub use select::{AppError, Responses};
+pub use select::Responses;
 
 // Re-export Axum primitives they might need for convenience
 pub use axum;

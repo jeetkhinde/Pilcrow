@@ -1,117 +1,76 @@
+// ./crates/pilcrow/src/select.rs
+use crate::extract::{RequestMode, SilcrowRequest};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-// use std::convert::Infallible;
 
 // ════════════════════════════════════════════════════════════
-// 1. The Unified Application Error
-// ════════════════════════════════════════════════════════════
-
-/// A unified error type so developers can use `?` inside their closures.
-pub enum AppError {
-    /// A standard 500 Internal Server Error (e.g., database failure)
-    Internal(anyhow::Error),
-    /// A 404 Not Found (e.g., requested user doesn't exist)
-    NotFound(String),
-}
-
-// Map your custom AppError to standard Axum responses
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        match self {
-            AppError::Internal(err) => {
-                tracing::error!("Internal server error: {}", err);
-                (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong").into_response()
-            }
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg).into_response(),
-        }
-    }
-}
-
-// Allows developers to use `?` on standard Result types (like SQLx or std::io)
-impl<E> From<E> for AppError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(err: E) -> Self {
-        AppError::Internal(err.into())
-    }
-}
-
-// ════════════════════════════════════════════════════════════
-// 2. The Responses Container (with Type-Safe Builder)
+// 1. The Type-Erased Responses Builder
 // ════════════════════════════════════════════════════════════
 
 /// Holds the closures for each potential response format.
-pub struct Responses<H, J, N> {
-    html: Option<H>,
-    json: Option<J>,
-    navigate: Option<N>,
+/// We box the closures to avoid generic trait bound explosions when a user
+/// only wants to provide one or two of the formats.
+pub struct Responses<E> {
+    html: Option<Box<dyn FnOnce() -> Result<Response, E> + Send>>,
+    json: Option<Box<dyn FnOnce() -> Result<Response, E> + Send>>,
 }
 
-impl Responses<(), (), ()> {
+impl<E> Default for Responses<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<E> Responses<E> {
     /// Starts an empty set of responses
     pub fn new() -> Self {
         Self {
             html: None,
             json: None,
-            navigate: None,
-        }
-    }
-}
-
-impl<H, J, N> Responses<H, J, N> {
-    pub fn html<NewH>(self, f: NewH) -> Responses<NewH, J, N> {
-        Responses {
-            html: Some(f),
-            json: self.json,
-            navigate: self.navigate,
         }
     }
 
-    pub fn json<NewJ>(self, f: NewJ) -> Responses<H, NewJ, N> {
-        Responses {
-            html: self.html,
-            json: Some(f),
-            navigate: self.navigate,
-        }
+    /// Registers the HTML response generator.
+    pub fn html<F, R>(mut self, f: F) -> Self
+    where
+        F: FnOnce() -> Result<R, E> + Send + 'static,
+        R: IntoResponse + 'static,
+        E: 'static,
+    {
+        // We evaluate the closure, and if it succeeds, convert its output into a standard Axum Response
+        self.html = Some(Box::new(|| f().map(|res| res.into_response())));
+        self
     }
 
-    pub fn navigate<NewN>(self, f: NewN) -> Responses<H, J, NewN> {
-        Responses {
-            html: self.html,
-            json: self.json,
-            navigate: Some(f),
-        }
+    /// Registers the JSON response generator.
+    pub fn json<F, R>(mut self, f: F) -> Self
+    where
+        F: FnOnce() -> Result<R, E> + Send + 'static,
+        R: IntoResponse + 'static,
+        E: 'static,
+    {
+        self.json = Some(Box::new(|| f().map(|res| res.into_response())));
+        self
     }
 }
 
 // ════════════════════════════════════════════════════════════
-// 3. The Core Selector Implementation
+// 2. The Core Selector Implementation
 // ════════════════════════════════════════════════════════════
-
-// Assuming RequestMode is imported from Phase 1
-use crate::extract::{RequestMode, SilcrowRequest};
 
 impl SilcrowRequest {
     /// Evaluates the preferred mode and executes *only* the matching closure.
-    pub fn select<H, J, N, THtml, TJson, TNav>(
-        &self,
-        responses: Responses<H, J, N>,
-    ) -> Result<Response, AppError>
+    /// `E` is whatever Error type the developer chooses to use in their app!
+    pub fn select<E>(&self, responses: Responses<E>) -> Result<Response, E>
     where
-        H: FnOnce() -> Result<THtml, AppError>,
-        J: FnOnce() -> Result<TJson, AppError>,
-        N: FnOnce() -> Result<TNav, AppError>,
-        THtml: IntoResponse,
-        TJson: IntoResponse,
-        TNav: IntoResponse,
+        E: IntoResponse, // The developer's error must be convertible to a Response
     {
         match self.preferred_mode() {
             RequestMode::Html => {
                 if let Some(f) = responses.html {
-                    Ok(f()?.into_response())
+                    f()
                 } else {
                     Ok((
                         StatusCode::NOT_ACCEPTABLE,
@@ -122,23 +81,13 @@ impl SilcrowRequest {
             }
             RequestMode::Json => {
                 if let Some(f) = responses.json {
-                    Ok(f()?.into_response())
+                    f()
                 } else {
                     Ok((
                         StatusCode::NOT_ACCEPTABLE,
                         "JSON representation not provided",
                     )
                         .into_response())
-                }
-            }
-            RequestMode::Navigate => {
-                if let Some(f) = responses.navigate {
-                    Ok(f()?.into_response())
-                } else {
-                    Ok(
-                        (StatusCode::NOT_ACCEPTABLE, "Navigation rule not provided")
-                            .into_response(),
-                    )
                 }
             }
         }

@@ -13,7 +13,6 @@ use axum::{
 pub enum RequestMode {
     Html,
     Json,
-    Navigate,
 }
 
 // ════════════════════════════════════════════════════════════
