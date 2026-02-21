@@ -152,3 +152,100 @@ impl SilcrowRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Responses;
+    use crate::extract::SilcrowRequest;
+    use axum::{body::to_bytes, http::StatusCode, response::Response};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn select_executes_only_html_branch_for_html_request() {
+        let req = SilcrowRequest {
+            is_silcrow: false,
+            accepts_html: true,
+            accepts_json: true,
+        };
+
+        let html_calls = Arc::new(AtomicUsize::new(0));
+        let json_calls = Arc::new(AtomicUsize::new(0));
+
+        let html_calls_clone = Arc::clone(&html_calls);
+        let json_calls_clone = Arc::clone(&json_calls);
+
+        let response = req
+            .select::<Response>(
+                Responses::new()
+                    .html(move || {
+                        html_calls_clone.fetch_add(1, Ordering::SeqCst);
+                        "<p>html</p>".to_string()
+                    })
+                    .json(move || {
+                        json_calls_clone.fetch_add(1, Ordering::SeqCst);
+                        serde_json::json!({"mode": "json"})
+                    }),
+            )
+            .expect("selection should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(html_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(json_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn select_returns_406_when_requested_format_is_missing() {
+        let req = SilcrowRequest {
+            is_silcrow: false,
+            accepts_html: true,
+            accepts_json: false,
+        };
+
+        let response = req
+            .select::<Response>(Responses::new().json(|| serde_json::json!({"ok": true})))
+            .expect("selection should return fallback response");
+
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+    }
+
+    #[tokio::test]
+    async fn select_supports_json_result_closures() {
+        let req = SilcrowRequest {
+            is_silcrow: true,
+            accepts_html: false,
+            accepts_json: true,
+        };
+
+        let response = req
+            .select::<Response>(
+                Responses::new().json(|| Ok::<_, Response>(serde_json::json!({"ok": true}))),
+            )
+            .expect("selection should succeed");
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json should parse");
+        assert_eq!(payload["ok"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn select_propagates_custom_errors() {
+        let req = SilcrowRequest {
+            is_silcrow: true,
+            accepts_html: true,
+            accepts_json: false,
+        };
+
+        let err = req
+            .select::<StatusCode>(
+                Responses::new().html(|| Err::<String, _>(StatusCode::BAD_REQUEST)),
+            )
+            .expect_err("error should propagate from closure");
+
+        assert_eq!(err, StatusCode::BAD_REQUEST);
+    }
+}
