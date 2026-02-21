@@ -79,3 +79,85 @@ impl SilcrowRequest {
         RequestMode::Json
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{RequestMode, SilcrowRequest};
+
+    #[test]
+    fn silcrow_prefers_html_when_requested() {
+        let req = SilcrowRequest {
+            is_silcrow: true,
+            accepts_html: true,
+            accepts_json: true,
+        };
+
+        assert_eq!(req.preferred_mode(), RequestMode::Html);
+    }
+
+    #[test]
+    fn silcrow_falls_back_to_json_when_html_not_accepted() {
+        let req = SilcrowRequest {
+            is_silcrow: true,
+            accepts_html: false,
+            accepts_json: true,
+        };
+
+        assert_eq!(req.preferred_mode(), RequestMode::Json);
+    }
+
+    #[test]
+    fn silcrow_without_known_accept_defaults_to_json() {
+        let req = SilcrowRequest {
+            is_silcrow: true,
+            accepts_html: false,
+            accepts_json: false,
+        };
+
+        assert_eq!(req.preferred_mode(), RequestMode::Json);
+    }
+
+    #[test]
+    fn non_silcrow_browser_defaults_to_html() {
+        let req = SilcrowRequest {
+            is_silcrow: false,
+            accepts_html: true,
+            accepts_json: false,
+        };
+
+        assert_eq!(req.preferred_mode(), RequestMode::Html);
+    }
+
+    #[tokio::test]
+    async fn from_request_parts_reads_accept_and_silcrow_headers() {
+        use axum::extract::FromRequestParts;
+        use axum::http::{header::ACCEPT, Request};
+
+        let request = Request::builder()
+            .uri("/")
+            .header(ACCEPT, "text/html,application/json")
+            .header("silcrow-target", "#main")
+            .body(())
+            .expect("request should build");
+        let (mut parts, _) = request.into_parts();
+
+        let extracted = SilcrowRequest::from_request_parts(&mut parts, &())
+            .await
+            .expect("extractor should succeed");
+
+        assert!(extracted.is_silcrow);
+        assert!(extracted.accepts_html);
+        assert!(extracted.accepts_json);
+    }
+
+    #[test]
+    fn non_silcrow_api_client_defaults_to_json() {
+        let req = SilcrowRequest {
+            is_silcrow: false,
+            accepts_html: false,
+            accepts_json: false,
+        };
+
+        assert_eq!(req.preferred_mode(), RequestMode::Json);
+    }
+}

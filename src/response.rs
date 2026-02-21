@@ -228,3 +228,144 @@ impl ResponseExt for NavigateResponse {
         &mut self.base
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{html, json, navigate, ResponseExt};
+    use axum::{
+        body::to_bytes,
+        http::{header, StatusCode},
+        response::IntoResponse,
+    };
+    use serde::Serialize;
+
+    #[tokio::test]
+    async fn html_response_sets_toast_cookie_and_headers() {
+        let response = html("<h1>Hello</h1>")
+            .with_toast("Saved", "success")
+            .retarget("#sidebar")
+            .trigger_event("refresh")
+            .no_cache()
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["silcrow-retarget"], "#sidebar");
+        assert_eq!(response.headers()["silcrow-trigger"], "refresh");
+        assert_eq!(response.headers()["silcrow-cache"], "no-cache");
+
+        let set_cookie_values: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("set-cookie should be utf8"))
+            .collect();
+
+        assert!(set_cookie_values
+            .iter()
+            .any(|cookie| cookie.starts_with("silcrow_toasts=")));
+    }
+
+    #[tokio::test]
+    async fn json_response_injects_toasts_into_object_payload() {
+        let response = json(serde_json::json!({"ok": true}))
+            .with_toast("Saved", "success")
+            .into_response();
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("json body should be readable");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("response should be valid json");
+
+        assert_eq!(payload["ok"], serde_json::json!(true));
+        assert_eq!(payload["_toasts"][0]["message"], "Saved");
+        assert_eq!(payload["_toasts"][0]["level"], "success");
+    }
+
+    #[tokio::test]
+    async fn json_response_wraps_non_object_payload_when_toasts_exist() {
+        let response = json(vec![1, 2, 3])
+            .with_toast("Done", "info")
+            .into_response();
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("json body should be readable");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("response should be valid json");
+
+        assert_eq!(payload["data"], serde_json::json!([1, 2, 3]));
+        assert_eq!(payload["_toasts"][0]["message"], "Done");
+    }
+
+    #[test]
+    fn html_response_without_toasts_does_not_emit_toast_cookie() {
+        let response = html("<p>plain</p>").into_response();
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("set-cookie should be utf8"))
+            .collect();
+
+        assert!(cookies
+            .iter()
+            .all(|cookie| !cookie.starts_with("silcrow_toasts=")));
+    }
+
+    #[test]
+    fn json_response_toasts_do_not_emit_toast_cookie_header() {
+        let response = json(serde_json::json!({"ok": true}))
+            .with_toast("Saved", "success")
+            .into_response();
+
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("set-cookie should be utf8"))
+            .collect();
+
+        assert!(cookies
+            .iter()
+            .all(|cookie| !cookie.starts_with("silcrow_toasts=")));
+    }
+
+    #[derive(Clone)]
+    struct FailingSerialize;
+
+    impl Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("expected serialization failure"))
+        }
+    }
+
+    #[test]
+    fn json_response_returns_500_on_serialization_error() {
+        let response = json(FailingSerialize).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn navigate_response_is_303_with_location_and_toast_cookie() {
+        let response = navigate("/dashboard")
+            .with_toast("Redirected", "info")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/dashboard");
+
+        let cookies: Vec<_> = response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("set-cookie should be utf8"))
+            .collect();
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie.starts_with("silcrow_toasts=")));
+    }
+}
