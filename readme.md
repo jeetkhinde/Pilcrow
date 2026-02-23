@@ -179,7 +179,6 @@ fn site_shell(content: String) -> String {
 
 **Pilcrow** takes the complexity of modern web state management and hides it behind a clean, type-safe Rust API. One handler, any client, total control.
 
-
 The comparison between a raw **Axum + Maud** setup and the **Pilcrow** experience is the difference between building a car from parts versus driving a luxury vehicle with an intelligent dashboard.
 
 While Axum provides the engine and Maud provides the cargo, Pilcrow acts as the orchestration layer that makes them talk to each other and to the frontend.

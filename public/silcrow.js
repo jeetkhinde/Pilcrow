@@ -627,7 +627,7 @@
     try {
       let cached = method === "GET" ? cacheGet(fullUrl) : null;
 
-      let text, contentType, redirected = false, finalUrl = fullUrl;
+      let text, contentType, redirected = false, finalUrl = fullUrl, pushUrl = null;
 
       const wantsHTML = sourceEl?.hasAttribute("s-html");
       if (cached) {
@@ -681,7 +681,7 @@
         }
 
         // 3. Server-Driven URL Push
-        const pushUrl = response.headers.get("silcrow-push-url");
+        pushUrl = response.headers.get("silcrow-push-url");
         if (pushUrl) {
           finalUrl = new URL(pushUrl, location.origin).href;
           redirected = true; // Force history update
@@ -730,21 +730,7 @@
           location.href
         );
       }
-      // --- NEW: History Push with Server Override ---
-      // Determine the final URL: Server Header > Redirect URL > Original URL
-      const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
 
-      if (shouldPushHistory && trigger !== "popstate") {
-        history.pushState(
-          {
-            silcrow: true,
-            url: finalHistoryUrl,
-            targetSelector: options.target?.id || 'body'
-          },
-          "",
-          finalHistoryUrl
-        );
-      }
       // Prepare swap content
       let swapContent;
       const isJSON = contentType.includes("application/json");
@@ -787,15 +773,13 @@
       // If no listener called proceed(), do it now
       if (!swapExecuted) proceed();
 
-      // History push AFTER successful render (use finalUrl if redirected)
-      const historyUrl = redirected ? finalUrl : fullUrl;
+      // History push AFTER successful render
+      const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
       if (shouldPushHistory && trigger !== "popstate") {
-
-
         history.pushState(
-          {silcrow: true, url: historyUrl, targetSelector},
+          {silcrow: true, url: finalHistoryUrl, targetSelector},
           "",
-          historyUrl
+          finalHistoryUrl
         );
       }
 
