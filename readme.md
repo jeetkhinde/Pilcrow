@@ -6,6 +6,19 @@ A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handler
 
 ```rust
 use pilcrow::*;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Greeting {
+    msg: String,
+}
+
+async fn home(req: SilcrowRequest) -> Result<Response, StatusCode> {
+    pilcrow::respond!(req, {
+        html => html("<h1>Hello</h1>"),
+        json => json(Greeting { msg: "Hello".into() }),
+    })
+}
 
 #[tokio::main]
 async fn main() {
@@ -19,13 +32,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
-
-async fn home(req: SilcrowRequest) -> Result<Response, StatusCode> {
-    req.select(Responses::new()
-        .html(|| async { "<h1>Hello</h1>".to_string() })
-        .json(|| async { serde_json::json!({"msg": "Hello"}) })
-    ).await
-}
 ```
 
 ## Why Pilcrow?
@@ -38,19 +44,19 @@ async fn handler(headers: HeaderMap) -> Response {
     if accept.contains("text/html") {
         Html("<h1>Hi</h1>").into_response()
     } else {
-        Json(json!({"m": "Hi"})).into_response()
+        Json(user).into_response()
     }
 }
 ```
 
-Pilcrow replaces this with a declarative API where you register closures per format and the framework executes only the one the client needs:
+Pilcrow replaces this with a declarative API:
 
 ```rust
 async fn handler(req: SilcrowRequest) -> Result<Response, StatusCode> {
-    req.select(Responses::new()
-        .html(|| async { "<h1>Hi</h1>".to_string() })
-        .json(|| async { serde_json::json!({"m": "Hi"}) })
-    ).await
+    pilcrow::respond!(req, {
+        html => html("<h1>Hi</h1>"),
+        json => json(user),
+    })
 }
 ```
 
@@ -65,34 +71,101 @@ An Axum extractor that reads the `Accept` and `silcrow-target` headers to determ
 ```rust
 pub async fn handler(req: SilcrowRequest) -> Result<Response, AppError> {
     // req.preferred_mode() returns RequestMode::Html or RequestMode::Json
-    // req.select(...) dispatches to the right closure
 }
 ```
 
 The negotiation logic: Silcrow.js requests respect `Accept` strictly. Standard browser requests default to HTML. Everything else falls back to JSON.
 
-### 2. The Selector: `req.select(Responses)`
+### 2. The `respond!` Macro
 
-`Responses` is a builder where you register async closures for each format. `select()` evaluates the client's preferred mode and runs **only** the matching closure — the other is never executed.
+The primary API. Declare your response arms and Pilcrow handles closure wrapping, async, and dispatch:
+
+```rust
+pilcrow::respond!(req, {
+    html => html(markup),
+    json => json(user),
+})
+```
+
+The macro expands to `req.select(Responses::new()...).await` — the builder pattern runs underneath, but you don't write the boilerplate.
+
+**JSON shorthand with `raw`:** For serializable values where you don't need modifiers, skip the `json()` constructor:
+
+```rust
+pilcrow::respond!(req, {
+    html => html(markup),
+    json => raw user,        // auto-wrapped in json()
+})
+```
+
+`raw` is JSON-only. HTML always uses the explicit `html()` constructor.
+
+**Shared toasts:** When both arms need the same toast, declare it once:
+
+```rust
+pilcrow::respond!(req, {
+    html => html(markup),
+    json => json(user),
+    toast => ("Saved!", "success"),
+})
+```
+
+The toast is applied to whichever branch runs.
+
+**Single-arm handlers:** If an endpoint only serves one format, omit the other. Pilcrow returns `406 Not Acceptable` for unregistered formats automatically:
+
+```rust
+pilcrow::respond!(req, {
+    json => json(status),
+})
+```
+
+**All macro variants:**
+
+```rust
+// Both arms
+pilcrow::respond!(req, { html => expr, json => expr })
+
+// Both arms with raw JSON
+pilcrow::respond!(req, { html => expr, json => raw expr })
+
+// Both arms with shared toast
+pilcrow::respond!(req, { html => expr, json => expr, toast => (msg, level) })
+
+// HTML-only / JSON-only
+pilcrow::respond!(req, { html => expr })
+pilcrow::respond!(req, { json => expr })
+pilcrow::respond!(req, { json => raw expr })
+
+// Single arm with shared toast
+pilcrow::respond!(req, { html => expr, toast => (msg, level) })
+pilcrow::respond!(req, { json => expr, toast => (msg, level) })
+```
+
+### 3. The Builder API (Advanced)
+
+The `respond!` macro covers 95% of cases. For the remaining 5% — conditional logic inside response arms, complex async workflows — use the builder directly:
 
 ```rust
 req.select(Responses::new()
-    .html(|| async { /* only runs for HTML clients */ })
-    .json(|| async { /* only runs for JSON clients */ })
+    .html(move || async move {
+        if user.is_premium {
+            html(premium_markup).with_header("X-Tier", "premium")
+        } else {
+            html(basic_markup)
+        }
+    })
+    .json(move || async move { json(user) })
 ).await
 ```
 
-If the client requests a format you didn't register, Pilcrow returns `406 Not Acceptable` automatically.
+The builder supports three return styles per closure:
 
-### 3. Three Levels of Response
-
-Closures support three return styles, from zero-boilerplate to full control:
-
-**Level 1 — Pure data.** Return a `String` for HTML or a `serde_json::Value` for JSON. Pilcrow wraps it.
+**Level 1 — Pure data.** Return a `String` for HTML or a serializable value for JSON. Pilcrow wraps it.
 
 ```rust
 .html(|| async { "<h1>Dashboard</h1>".to_string() })
-.json(|| async { json!({"status": "online"}) })
+.json(|| async { user })
 ```
 
 **Level 2 — Fallible data.** Return a `Result`. Errors propagate via `?`.
@@ -104,7 +177,7 @@ Closures support three return styles, from zero-boilerplate to full control:
 })
 ```
 
-**Level 3 — Full package.** Use the `html()` / `json()` constructors to access modifiers.
+**Level 3 — Full package.** Use constructors with modifiers.
 
 ```rust
 .html(|| async {
@@ -141,9 +214,9 @@ pub async fn admin(req: SilcrowRequest) -> Result<Response, AppError> {
             .into_response());
     }
 
-    req.select(Responses::new()
-        .html(|| async { admin_markup.to_string() })
-    ).await
+    pilcrow::respond!(req, {
+        html => html(admin_markup),
+    })
 }
 ```
 
@@ -171,33 +244,103 @@ The served response includes `Cache-Control: public, max-age=31536000, immutable
 ## Full Example: Dual-Mode Handler with DB
 
 ```rust
+#[derive(Serialize)]
+struct UserProfile {
+    id: i64,
+    name: String,
+    bio: String,
+}
+
 pub async fn get_profile(
     req: SilcrowRequest,
     State(db): State<DbPool>,
 ) -> Result<Response, AppError> {
-    let user = db.fetch_user(123).await?;
+    let user: UserProfile = db.fetch_user(123).await?;
 
-    req.select(Responses::new()
-        .html(|| async {
-            Ok(html(maud::html! {
-                div.profile {
-                    h1 { (user.name) }
-                    p { (user.bio) }
-                }
-            }.into_string())
-            .with_toast("Loaded", "info"))
-        })
-        .json(|| async {
-            Ok(json(serde_json::json!({
-                "id": user.id,
-                "name": user.name
-            })))
-        })
-    ).await
+    let markup = maud::html! {
+        div.profile {
+            h1 { (user.name) }
+            p { (user.bio) }
+        }
+    }.into_string();
+
+    pilcrow::respond!(req, {
+        html => html(markup).with_toast("Loaded", "info"),
+        json => json(user),
+    })
 }
 ```
 
-Both closures are async and only the one matching the client's `Accept` header executes. The data fetch (`db.fetch_user`) is shared — it runs before `select()`. If you need format-specific queries, put them inside the closures.
+Only the matching closure executes. The data fetch (`db.fetch_user`) runs before `respond!` — it's shared. If you need format-specific queries, drop to the builder API and put them inside the closures.
+
+## Patterns for Beginners
+
+### One-Off Responses
+
+For simple endpoints that don't map to a database model, define a small struct:
+
+```rust
+#[derive(Serialize)]
+struct StatusResponse {
+    status: String,
+}
+
+pub async fn health(req: SilcrowRequest) -> Result<Response, StatusCode> {
+    pilcrow::respond!(req, {
+        html => html("<p>OK</p>"),
+        json => json(StatusResponse { status: "ok".into() }),
+    })
+}
+```
+
+### Enums for Variant Responses
+
+When an endpoint can return different shapes depending on logic:
+
+```rust
+#[derive(Serialize)]
+#[serde(tag = "type")]
+enum ApiResponse {
+    Success { id: i64 },
+    Error { reason: String },
+}
+
+pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
+    let result = db.create_item().await;
+
+    let (markup, payload) = match result {
+        Ok(id) => (
+            format!("<p>Created item {id}</p>"),
+            ApiResponse::Success { id },
+        ),
+        Err(e) => (
+            format!("<p class='error'>{e}</p>"),
+            ApiResponse::Error { reason: e.to_string() },
+        ),
+    };
+
+    pilcrow::respond!(req, {
+        html => html(markup),
+        json => json(payload),
+    })
+}
+```
+
+### Raw Shorthand
+
+When you just need to return a struct without modifiers:
+
+```rust
+pub async fn get_user(req: SilcrowRequest) -> Result<Response, AppError> {
+    let user = db.fetch_user(123).await?;
+    let markup = render_user(&user);
+
+    pilcrow::respond!(req, {
+        html => html(markup),
+        json => raw user,    // equivalent to json(user), no chaining needed
+    })
+}
+```
 
 ## Dependencies
 

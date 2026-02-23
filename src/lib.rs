@@ -2,9 +2,9 @@
 
 pub mod assets;
 pub mod extract;
+pub mod macros;
 pub mod response;
 pub mod select;
-
 // Re-export the core API so developers can just `use pilcrow::*`
 pub use extract::SilcrowRequest;
 pub use response::{html, json, navigate, ResponseExt};
