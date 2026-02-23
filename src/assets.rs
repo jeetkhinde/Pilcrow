@@ -7,9 +7,8 @@ use axum::response::{IntoResponse, Response};
 pub const SILCROW_JS: &str = include_str!("../public/silcrow.js");
 
 /// Canonical URL path for serving the Silcrow JS bundle.
-pub const SILCROW_JS_PATH: &str = "/_silcrow/silcrow.js";
+const SILCROW_JS_HASH: &str = env!("SILCROW_JS_HASH");
 
-/// Axum handler that serves the embedded Silcrow JS with aggressive caching.
 pub async fn serve_silcrow_js() -> Response {
     (
         StatusCode::OK,
@@ -25,28 +24,30 @@ pub async fn serve_silcrow_js() -> Response {
         .into_response()
 }
 
-/// Returns a raw HTML `<script>` tag pointing to the Silcrow JS bundle.
-pub fn script_tag() -> &'static str {
-    "<script src=\"/_silcrow/silcrow.js\" defer></script>"
+pub fn silcrow_js_path() -> String {
+    format!("/_silcrow/silcrow.{SILCROW_JS_HASH}.js")
 }
-
+pub fn script_tag() -> String {
+    format!(r#"<script src="{}" defer></script>"#, silcrow_js_path())
+}
 #[cfg(test)]
 mod tests {
-    use super::{script_tag, serve_silcrow_js, SILCROW_JS, SILCROW_JS_PATH};
+    use super::{script_tag, serve_silcrow_js, silcrow_js_path, SILCROW_JS};
     use axum::{
         body::to_bytes,
         http::{header, StatusCode},
     };
 
     #[test]
-    fn script_tag_uses_canonical_path() {
+    fn script_tag_uses_fingerprinted_path() {
+        let path = silcrow_js_path();
+        assert!(path.starts_with("/_silcrow/silcrow."));
+        assert!(path.ends_with(".js"));
         assert_eq!(
             script_tag(),
-            r#"<script src="/_silcrow/silcrow.js" defer></script>"#
+            format!(r#"<script src="{path}" defer></script>"#)
         );
-        assert_eq!(SILCROW_JS_PATH, "/_silcrow/silcrow.js");
     }
-
     #[tokio::test]
     async fn serve_silcrow_js_returns_expected_headers_and_body() {
         let response = serve_silcrow_js().await;

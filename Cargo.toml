@@ -11,12 +11,10 @@ repository = "https://github.com/jeetkhinde/pilcrow"
 name = "pilcrow"
 path = "src/lib.rs"
 [dependencies]
-anyhow = "1.0.101"
 axum = "0.7"
 cookie = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
 urlencoding = "2.1"
 tracing = "0.1"
 

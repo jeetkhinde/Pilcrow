@@ -542,12 +542,25 @@
   }
 
   // ── Safe HTML Assignment ───────────────────────────────────
-  function safeSetHTML(el, html) {
+  function safeSetHTML(el, raw) {
     if (el.setHTML) {
-      el.setHTML(html);
-    } else {
-      el.innerHTML = html;
+      el.setHTML(raw);
+      return;
     }
+
+    const doc = new DOMParser().parseFromString(raw, "text/html");
+
+    // Strip scripts and event handler attributes
+    for (const script of doc.querySelectorAll("script")) script.remove();
+    for (const node of doc.querySelectorAll("*")) {
+      for (const attr of [...node.attributes]) {
+        if (attr.name.toLowerCase().startsWith("on")) {
+          node.removeAttribute(attr.name);
+        }
+      }
+    }
+
+    el.innerHTML = doc.body.innerHTML;
   }
 
   // ── Loading State ──────────────────────────────────────────
@@ -670,7 +683,10 @@
             Object.entries(triggers).forEach(([evt, detail]) => {
               document.dispatchEvent(new CustomEvent(evt, {bubbles: true, detail}));
             });
-          } catch (e) {warn("Malformed silcrow-trigger header");}
+          } catch (e) {
+            // Fallback: treat as a plain event name
+            document.dispatchEvent(new CustomEvent(triggerHeader, {bubbles: true}));
+          }
         }
 
         // 2. Dynamic Retargeting

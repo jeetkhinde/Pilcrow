@@ -51,6 +51,7 @@ impl BaseResponse {
                 let cookie = Cookie::build(("silcrow_toasts", encoded.into_owned()))
                     .path("/")
                     .same_site(SameSite::Lax)
+                    .max_age(cookie::time::Duration::seconds(5))
                     .build();
 
                 if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
@@ -91,12 +92,12 @@ pub trait ResponseExt: Sized {
 
     // Trigger a custom DOM event on the client
     fn trigger_event(mut self, event_name: &str) -> Self {
-        if let Ok(val) = HeaderValue::from_str(event_name) {
+        let map = serde_json::json!({ event_name: {} });
+        if let Ok(val) = HeaderValue::from_str(&map.to_string()) {
             self.base_mut().headers.insert("silcrow-trigger", val);
         }
         self
     }
-
     //  Override the target DOM element for the swap
     fn retarget(mut self, selector: &str) -> Self {
         if let Ok(val) = HeaderValue::from_str(selector) {
@@ -122,7 +123,17 @@ pub struct HtmlResponse {
     pub data: String,
     pub base: BaseResponse,
 }
+impl From<String> for HtmlResponse {
+    fn from(s: String) -> Self {
+        html(s)
+    }
+}
 
+impl From<&str> for HtmlResponse {
+    fn from(s: &str) -> Self {
+        html(s.to_owned())
+    }
+}
 impl IntoResponse for HtmlResponse {
     fn into_response(self) -> Response {
         let mut response = axum::response::Html(self.data).into_response();
@@ -250,7 +261,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["silcrow-retarget"], "#sidebar");
-        assert_eq!(response.headers()["silcrow-trigger"], "refresh");
+        assert_eq!(response.headers()["silcrow-trigger"], r#"{"refresh":{}}"#);
         assert_eq!(response.headers()["silcrow-cache"], "no-cache");
 
         let set_cookie_values: Vec<_> = response
