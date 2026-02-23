@@ -1,267 +1,213 @@
-# 🏆 The Definitive Guide to Pilcrow
+# Pilcrow
 
-**Pilcrow** is a premium response layer for Axum. It turns standard HTTP handlers into powerful, multi-modal engines that orchestrate the **Silcrow.js** frontend via content negotiation and server-side instructions.
+A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handlers into multi-modal engines — one handler serves HTML to browsers and JSON to API clients via content negotiation, lazy evaluation, and server-side orchestration of the [Silcrow.js](public/SILCROW.md) frontend runtime.
 
----
+## Quick Start
 
-## 1. The Core Philosophy: "Intelligent Packaging"
+```rust
+use pilcrow::*;
 
-In a Pilcrow app, the backend doesn't just send "data"; it sends a **Managed Response**.
+#[tokio::main]
+async fn main() {
+    use axum::{routing::get, Router};
+    use pilcrow::assets::{serve_silcrow_js, silcrow_js_path};
 
-* **Content Negotiation:** One handler serves HTML to your browser and JSON to your mobile app automatically.
-* **Lazy Evaluation:** Only the code required for the specific client format is executed.
-* **Zero-Friction API:** Return raw data or full response packages—Pilcrow's trait system handles the wrapping.
+    let app = Router::new()
+        .route(&silcrow_js_path(), get(serve_silcrow_js))
+        .route("/", get(home));
 
----
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
 
-## 2. From Axum to Pilcrow: The Evolution
+async fn home(req: SilcrowRequest) -> Result<Response, StatusCode> {
+    req.select(Responses::new()
+        .html(|| async { "<h1>Hello</h1>".to_string() })
+        .json(|| async { serde_json::json!({"msg": "Hello"}) })
+    ).await
+}
+```
 
-### The Boilerplate Way (Raw Axum)
+## Why Pilcrow?
 
-You have to manually check headers and handle different return types.
+Raw Axum requires manual header parsing and format switching in every handler:
 
 ```rust
 async fn handler(headers: HeaderMap) -> Response {
-    if is_html(&headers) {
+    let accept = headers.get("Accept").and_then(|v| v.to_str().ok()).unwrap_or("");
+    if accept.contains("text/html") {
         Html("<h1>Hi</h1>").into_response()
     } else {
         Json(json!({"m": "Hi"})).into_response()
     }
 }
-
 ```
 
-### The Fluent Way (Pilcrow)
-
-The `SilcrowRequest` extractor handles the "Check," and `req.select` handles the "Response."
+Pilcrow replaces this with a declarative API where you register closures per format and the framework executes only the one the client needs:
 
 ```rust
-async fn handler(req: SilcrowRequest) -> Result<Response, AppError> {
+async fn handler(req: SilcrowRequest) -> Result<Response, StatusCode> {
     req.select(Responses::new()
-        .html(|| "<h1>Hi</h1>")
-        .json(|| json!({"m": "Hi"}))
-    )
+        .html(|| async { "<h1>Hi</h1>".to_string() })
+        .json(|| async { serde_json::json!({"m": "Hi"}) })
+    ).await
 }
-
 ```
 
----
+Content negotiation, lazy evaluation, and response packaging are handled for you.
 
-## 3. The Fluent API: 3 Levels of Data Returning
+## Core Concepts
 
-Pilcrow’s V3 API uses **Polymorphic Inference**. You don't have to wrap everything in `Ok(html(...))` anymore.
+### 1. The Extractor: `SilcrowRequest`
 
-### Level 1: Pure Data (Zero Boilerplate)
-
-If the data is ready, just return it. Pilcrow assumes success.
+An Axum extractor that reads the `Accept` and `silcrow-target` headers to determine what the client wants. Use it as a handler argument — Axum injects it automatically.
 
 ```rust
-.html(|| maud::html! { h1 { "Dashboard" } }.into_string())
-.json(|| json!({ "status": "online" }))
-
+pub async fn handler(req: SilcrowRequest) -> Result<Response, AppError> {
+    // req.preferred_mode() returns RequestMode::Html or RequestMode::Json
+    // req.select(...) dispatches to the right closure
+}
 ```
 
-### Level 2: Fallible Data (The `?` Operator)
+The negotiation logic: Silcrow.js requests respect `Accept` strictly. Standard browser requests default to HTML. Everything else falls back to JSON.
 
-If you are fetching from a DB, return a `Result`. Pilcrow handles the mapping.
+### 2. The Selector: `req.select(Responses)`
+
+`Responses` is a builder where you register async closures for each format. `select()` evaluates the client's preferred mode and runs **only** the matching closure — the other is never executed.
 
 ```rust
-.html(|| {
-    let user = db.get_user(id)?; // Returns Result<User, E>
-    Ok(format!("<h1>Welcome, {}</h1>", user.name))
+req.select(Responses::new()
+    .html(|| async { /* only runs for HTML clients */ })
+    .json(|| async { /* only runs for JSON clients */ })
+).await
+```
+
+If the client requests a format you didn't register, Pilcrow returns `406 Not Acceptable` automatically.
+
+### 3. Three Levels of Response
+
+Closures support three return styles, from zero-boilerplate to full control:
+
+**Level 1 — Pure data.** Return a `String` for HTML or a `serde_json::Value` for JSON. Pilcrow wraps it.
+
+```rust
+.html(|| async { "<h1>Dashboard</h1>".to_string() })
+.json(|| async { json!({"status": "online"}) })
+```
+
+**Level 2 — Fallible data.** Return a `Result`. Errors propagate via `?`.
+
+```rust
+.html(|| async {
+    let user = db.get_user(id).await?;
+    Ok(format!("<h1>{}</h1>", user.name))
 })
-
 ```
 
-### Level 3: Full Package (Modifiers)
-
-When you need to send Toasts or use advanced orchestration, use the `html()` or `json()` constructors.
+**Level 3 — Full package.** Use the `html()` / `json()` constructors to access modifiers.
 
 ```rust
-.html(|| {
+.html(|| async {
     Ok(html(markup)
-        .with_toast("Profile Updated", "success")
+        .with_toast("Updated", "success")
         .no_cache())
 })
-
 ```
 
----
+### 4. Modifiers via `ResponseExt`
 
-## 4. Server-Side Orchestration (HTMX Power)
+All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implement `ResponseExt`, giving you a unified modifier chain:
 
-Pilcrow allows the Rust backend to act as a "Puppet Master" for the Silcrow.js frontend using invisible HTTP headers.
+| Method | Effect |
+| --- | --- |
+| `.with_toast(msg, level)` | Cookie-based for HTML/Navigate, payload-injected for JSON |
+| `.with_header(key, value)` | Arbitrary response header |
+| `.no_cache()` | Sets `silcrow-cache: no-cache` to prevent client caching |
+| `.retarget(selector)` | Silcrow.js swaps HTML into a different DOM element |
+| `.trigger_event(name)` | Fires a `CustomEvent` in the browser via Silcrow.js |
+| `.push_history(url)` | Updates the browser URL bar without a page load |
 
-```rust
-pub async fn save_handler(req: SilcrowRequest) -> Result<Response, AppError> {
-    req.select(Responses::new()
-        .html(|| {
-            Ok(html(success_partial)
-                .with_toast("Saved!", "success")
-                // Hijack the swap: put this HTML in #sidebar instead of the original target
-                .retarget("#sidebar") 
-                // Tell JS to fire a 'refresh-data' event
-                .trigger_event("refresh-data")
-                // Update the browser's URL bar without a full page load
-                .push_history("/dashboard/success"))
-        })
-    )
-}
+Toast transport is automatic — HTML responses use a short-lived cookie (`Max-Age=5`, `SameSite=Lax`), JSON responses inject a `_toasts` array into the payload. If the JSON root isn't an object (e.g. you returned a `Vec`), Pilcrow wraps it as `{"data": [...], "_toasts": [...]}`.
 
-```
+### 5. Navigation (Redirects)
 
----
-
-## 5. Navigation: The Imperative Bailout
-
-Redirects are not "negotiated"—they are server decisions. Use `Maps(path)` for early returns in your logic (like Auth or Errors).
+Redirects are imperative — they're not negotiated. Use `navigate()` for early returns like auth guards:
 
 ```rust
-pub async fn admin_panel(req: SilcrowRequest) -> Result<Response, AppError> {
-    // 1. Early Return (The Bailout)
+pub async fn admin(req: SilcrowRequest) -> Result<Response, AppError> {
     if !user.is_admin() {
         return Ok(navigate("/login")
-            .with_toast("Admins Only!", "error")
+            .with_toast("Unauthorized", "error")
             .into_response());
     }
 
-    // 2. Negotiated Response
-    req.select(Responses::new().html(|| admin_markup))
+    req.select(Responses::new()
+        .html(|| async { admin_markup.to_string() })
+    ).await
 }
-
 ```
 
----
+`navigate()` returns a `303 See Other` with the `Location` header. Toasts persist across the redirect via cookie.
 
-## 6. Layout Composition & Setup
+## Asset Serving
 
-### Serve the Asset
-
-Pilcrow provides an embedded handler for the JS runtime so you don't have to manage files.
+Pilcrow embeds `silcrow.js` at compile time and serves it with a content-hashed URL for immutable caching. The hash is computed by `build.rs` at build time.
 
 ```rust
-use pilcrow::assets::{serve_silcrow_js, SILCROW_JS_PATH};
+use pilcrow::assets::{serve_silcrow_js, silcrow_js_path, script_tag};
 
+// Route the fingerprinted path
 let app = Router::new()
-    .route(SILCROW_JS_PATH, get(serve_silcrow_js))
-    .route("/", get(home));
+    .route(&silcrow_js_path(), get(serve_silcrow_js));
 
-```
-
-### Build the Shell
-
-Use the `script_tag()` helper to inject the runtime into your base layout. It returns a `&'static str`, making it compatible with any template engine.
-
-```rust
-fn site_shell(content: String) -> String {
-    format!(r#"
-        <html>
-            <head>{}</head>
-            <body>{}</body>
-        </html>
-    "#, pilcrow::assets::script_tag(), content)
+// In your layout template — returns `<script src="/_silcrow/silcrow.{hash}.js" defer></script>`
+fn layout(content: &str) -> String {
+    format!("<html><head>{}</head><body>{content}</body></html>", script_tag())
 }
-
 ```
 
----
+The served response includes `Cache-Control: public, max-age=31536000, immutable`.
 
-## 💡 Developer Summary
-
-| Feature | Method | Result |
-| --- | --- | --- |
-| **Toast** | `.with_toast(msg, lvl)` | Cookie (HTML) or Payload (JSON) |
-| **Redirect** | `Maps(url)` | 303 Redirect with Toast persistence |
-| **Swap Target** | `.retarget(selector)` | Silcrow.js swaps into specific element |
-| **DOM Events** | `.trigger_event(name)` | Fires `CustomEvent` in browser |
-| **URL Change** | `.push_history(url)` | Updates browser history bar |
-| **Cache Control** | `.no_cache()` | Prevents Silcrow.js from caching the view |
-
-**Pilcrow** takes the complexity of modern web state management and hides it behind a clean, type-safe Rust API. One handler, any client, total control.
-
-The comparison between a raw **Axum + Maud** setup and the **Pilcrow** experience is the difference between building a car from parts versus driving a luxury vehicle with an intelligent dashboard.
-
-While Axum provides the engine and Maud provides the cargo, Pilcrow acts as the orchestration layer that makes them talk to each other and to the frontend.
-
----
-
-### 1. The Developer Workflow: A Side-by-Side
-
-**The Task:** Create an endpoint that saves a user profile. It must return a partial HTML div for the web frontend, JSON for the mobile app, and a "Success" toast message that survives a redirect if needed.
-
-#### The Axum + Maud Way (Manual Labor)
-
-You are responsible for every HTTP detail. You have to check headers manually and handle "state" like toasts via string manipulation.
+## Full Example: Dual-Mode Handler with DB
 
 ```rust
-async fn save_user(headers: HeaderMap, State(db): State<DbPool>) -> Response {
-    let user = db.save().await.unwrap();
-    let accept = headers.get("Accept").and_then(|v| v.to_str().ok()).unwrap_or("");
-
-    if accept.contains("text/html") {
-        let cookie = "silcrow_toast=Saved:success; Path=/; SameSite=Lax";
-        (
-            StatusCode::OK,
-            [(header::SET_COOKIE, cookie)],
-            Html(maud::html! { div { (user.name) " saved!" } }.into_string())
-        ).into_response()
-    } else {
-        Json(json!({ "status": "success", "user": user, "_toast": "Saved" })).into_response()
-    }
-}
-
-```
-
-* **The Pain:** High boilerplate. You have to remember to inject the toast differently for JSON vs HTML. Negotiation logic is repeated in every handler.
-
-#### The Pilcrow Way (Fluent Orchestration)
-
-You declare your intent. Pilcrow handles the "How" of the HTTP transport.
-
-```rust
-async fn save_user(req: SilcrowRequest, State(db): State<DbPool>) -> Result<Response, E> {
-    let user = db.save().await?;
+pub async fn get_profile(
+    req: SilcrowRequest,
+    State(db): State<DbPool>,
+) -> Result<Response, AppError> {
+    let user = db.fetch_user(123).await?;
 
     req.select(Responses::new()
-        .html(|| html(maud::html! { div { (user.name) " saved!" } }))
-        .json(|| json!(user))
-    ).map(|res| res.with_toast("Saved!", "success")) 
+        .html(|| async {
+            Ok(html(maud::html! {
+                div.profile {
+                    h1 { (user.name) }
+                    p { (user.bio) }
+                }
+            }.into_string())
+            .with_toast("Loaded", "info"))
+        })
+        .json(|| async {
+            Ok(json(serde_json::json!({
+                "id": user.id,
+                "name": user.name
+            })))
+        })
+    ).await
 }
-
 ```
 
-* **The Gain:** The `with_toast` modifier works globally. The negotiation is handled by the framework. The code focuses entirely on data and UI.
+Both closures are async and only the one matching the client's `Accept` header executes. The data fetch (`db.fetch_user`) is shared — it runs before `select()`. If you need format-specific queries, put them inside the closures.
 
----
+## Dependencies
 
-### 2. Feature Comparison Table
+```toml
+[dependencies]
+pilcrow = "0.1"
+```
 
-| Feature | Axum + Maud | Pilcrow Experience |
-| --- | --- | --- |
-| **Content Negotiation** | Manual `Accept` header parsing in every function. | Automated via `req.select()`. |
-| **Execution** | Eager (you fetch data before knowing if the client wants it). | Lazy (only the required closure runs). |
-| **Toasts/Alerts** | Manual cookie formatting or JSON injection. | Unified `.with_toast()` modifier. |
-| **Frontend Sync** | None. You manually write JS to handle updates. | Deep sync with `silcrow.js` via `.retarget()` and `.trigger_event()`. |
-| **Error Handling** | Manual mapping to `StatusCode`. | Unified `AppError` and `?` support inside closures. |
-| **Redirects** | `Redirect::to(...)` (Toasts often lost). | `Maps(...)` (Toasts persisted via safe cookies). |
+Pilcrow depends on `axum 0.7`, `serde`, `serde_json`, `cookie`, `urlencoding`, and `tracing`. No runtime overhead beyond what Axum already requires.
 
----
+## License
 
-### 3. The "Vibe" Shift: From Components to Orchestration
-
-#### Axum + Maud is "Component-First"
-
-You think in terms of **Response Types**. Every time you write a handler, you are asking: *"What specific HTTP object do I need to construct right now?"* This leads to "Fragmented Logic," where your JSON API and your HTML views live in different worlds, even if they do the same thing.
-
-#### Pilcrow is "UI-First"
-
-You think in terms of **Interactions**. You are asking: *"What is the result of this action, and how should the UI (in any format) reflect it?"* Because Pilcrow handles the "packaging," you can spend your time building complex UI patterns:
-
-* **"Save this form, but update the sidebar too."** (`.retarget("#sidebar")`)
-* **"Delete this item, and tell the header to refresh the count."** (`.trigger_event("update-cart")`)
-* **"Update the profile, and make sure the URL bar matches."** (`.push_history("/profile")`)
-
-### 🏁 Final Verdict
-
-* **Axum + Maud** is for when you want a standard, "by-the-book" REST API and simple server-rendered pages. It is robust but requires you to do the heavy lifting for modern UX.
-* **Pilcrow** is for developers building **Hypermedia Applications**. It gives you the feel of a single-page app (SPA) with the simplicity of a multi-page app (MPA). It’s for when you want "framework-grade" features like global toasts and DOM retargeting without the weight of a heavy frontend framework.
+MIT
