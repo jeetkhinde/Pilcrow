@@ -1,15 +1,9 @@
+// ./silcrow/build.rs
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::Hasher;
 
-const MODULES: &[&str] = &[
-    "debug",
-    "patcher",
-    "safety",
-    "toasts",
-    "navigator",
-    "index",
-];
+const MODULES: &[&str] = &["debug", "patcher", "safety", "toasts", "navigator", "index"];
 
 fn main() {
     // Rerun if any module file changes
@@ -21,8 +15,7 @@ fn main() {
     let mut bundle = String::from("(function(){\"use strict\";\n");
     for name in MODULES {
         let path = format!("public/silcrow/{name}.js");
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("{path} not found"));
+        let content = fs::read_to_string(&path).unwrap_or_else(|_| panic!("{path} not found"));
         bundle.push_str(&content);
         bundle.push('\n');
     }
