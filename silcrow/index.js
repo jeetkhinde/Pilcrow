@@ -1,0 +1,86 @@
+// ════════════════════════════════════════════════════════════
+// API — public surface & lifecycle
+// ════════════════════════════════════════════════════════════
+
+function init() {
+  document.addEventListener("click", onClick);
+  document.addEventListener("submit", onSubmit);
+  window.addEventListener("popstate", onPopState);
+  document.addEventListener("mouseenter", onMouseEnter, true);
+
+  if (!history.state?.silcrow) {
+    history.replaceState(
+      {silcrow: true, url: location.href},
+      "",
+      location.href
+    );
+  }
+}
+
+function destroy() {
+  document.removeEventListener("click", onClick);
+  document.removeEventListener("submit", onSubmit);
+  window.removeEventListener("popstate", onPopState);
+  document.removeEventListener("mouseenter", onMouseEnter, true);
+  responseCache.clear();
+  preloadInflight.clear();
+}
+
+window.Silcrow = {
+  // Runtime
+  patch,
+  invalidate,
+  stream,
+  onToast(handler) {
+    setToastHandler(handler);
+    return this;
+  },
+  // Navigation
+  go(path, options = {}) {
+    return navigate(path, {
+      method: options.method || (options.body ? "POST" : "GET"),
+      body: options.body || null,
+      target: options.target
+        ? document.querySelector(options.target)
+        : null,
+      trigger: "api",
+    });
+  },
+
+  onRoute(handler) {
+    routeHandler = handler;
+    return this;
+  },
+
+  onError(handler) {
+    errorHandler = handler;
+    return this;
+  },
+
+  cache: {
+    clear(path) {
+      if (path) {
+        const url = new URL(path, location.origin).href;
+        responseCache.delete(url);
+      } else {
+        responseCache.clear();
+      }
+    },
+    has(path) {
+      const url = new URL(path, location.origin).href;
+      return !!cacheGet(url);
+    },
+  },
+
+  destroy,
+};
+
+// Backward compatibility
+window.SilcrowNavigate = window.Silcrow;
+
+// Auto-init navigation when DOM is ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
