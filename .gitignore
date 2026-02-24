@@ -1,6 +1,6 @@
 # Compiled output
 /target/
-/public/silcrow.js
+/public/*
 # Cargo lock file (for libraries)
 /Cargo.lock
 # IDE / Editor files
