@@ -18,5 +18,9 @@ serde_json = "1"
 urlencoding = "2.1"
 tracing = "0.1"
 
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[build-dependencies]
+minifier = "0.3"

@@ -1,6 +1,6 @@
 # Silcrow.js
 
-A lightweight client-side runtime for building hypermedia-driven applications. Silcrow handles DOM patching, client-side navigation, response caching, and server-driven UI orchestration — all from declarative HTML attributes.
+A lightweight client-side runtime for building hypermedia-driven applications. Silcrow handles DOM patching, client-side navigation, response caching, live SSE connections, optimistic updates, and server-driven UI orchestration — all from declarative HTML attributes.
 
 Silcrow.js is the frontend counterpart to [Pilcrow](readme.md) but operates independently as a standalone library. Any backend that speaks HTTP and returns HTML or JSON can drive it.
 
@@ -22,12 +22,13 @@ Enable debug mode by adding `s-debug` to the body:
 
 This enables console warnings and throws on template validation errors.
 
-## Two Systems
+## Three Systems
 
-Silcrow.js has two independent systems exposed through a single `window.Silcrow` API:
+Silcrow.js has three independent systems exposed through a single `window.Silcrow` API:
 
 1. **Runtime** — reactive data binding and DOM patching via `s-bind` and `s-list` attributes
 2. **Navigator** — client-side routing, history management, and response caching via `s-action` attributes
+3. **Live** — SSE connections, optimistic updates, and real-time data streaming via `s-live` attributes
 
 ---
 
@@ -180,7 +181,9 @@ For HTML responses, if the response is a full page (`<!DOCTYPE` or `<html`), Sil
 
 ### Server-Driven Headers
 
-The backend can control Silcrow's behavior through response headers:
+The backend can control Silcrow's behavior through response headers. These are split into two phases: headers processed during the fetch, and side-effect headers executed after the main swap.
+
+**During fetch:**
 
 | Header | Effect |
 | --- | --- |
@@ -188,6 +191,17 @@ The backend can control Silcrow's behavior through response headers:
 | `silcrow-retarget` | CSS selector — override where the response is swapped into. |
 | `silcrow-push-url` | Override the URL pushed to browser history. |
 | `silcrow-cache` | Set to `no-cache` to prevent this response from being cached. |
+
+**After swap (side effects):**
+
+| Header | Effect |
+| --- | --- |
+| `silcrow-patch` | JSON `{"target": "#el", "data": {...}}` — patches data into a secondary element via `Silcrow.patch()`. |
+| `silcrow-invalidate` | CSS selector — rebuilds binding maps for the target element via `Silcrow.invalidate()`. |
+| `silcrow-navigate` | URL path — triggers a client-side navigation after the swap completes. |
+| `silcrow-sse` | URL path — dispatches a `silcrow:sse` event signaling the client to open an SSE connection. |
+
+Side-effect headers execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### Caching
 
@@ -225,6 +239,121 @@ Navigating to the same target while a GET is in-flight aborts the previous reque
 
 ---
 
+## Live: SSE Connections & Real-Time Updates
+
+### Declarative with `s-live`
+
+Add `s-live` to any element to automatically open an SSE connection on page load. The attribute value is the SSE endpoint URL:
+
+```html
+<div id="feed" s-live="/events/feed">
+  <span s-bind="count"></span> items
+</div>
+```
+
+Silcrow scans for `s-live` elements during initialization. When the server sends an SSE message, the data is parsed as JSON and piped to `Silcrow.patch()` on that element.
+
+### Programmatic with `Silcrow.live()`
+
+```js
+Silcrow.live("#dashboard", "/events/dashboard");
+```
+
+Opens an `EventSource` to the given URL. Every `message` event is parsed as JSON and passed to `Silcrow.patch()` on the root element.
+
+### SSE Message Format
+
+The server sends standard SSE messages. The `data` field must be valid JSON:
+
+```text
+data: {"count": 42, "status": "online"}
+```
+
+Silcrow also supports named SSE events for specific actions:
+
+| Event Name | Effect |
+| --- | --- |
+| `message` (default) | Parsed as JSON, passed to `Silcrow.patch()` on the root |
+| `patch` | Same as `message` — parsed and patched |
+| `invalidate` | Calls `Silcrow.invalidate()` on the root (no data needed) |
+| `navigate` | `data` field is a URL path — triggers client-side navigation |
+
+```text
+event: navigate
+data: /dashboard
+
+event: invalidate
+data:
+
+event: patch
+data: {"users": [{"key": "1", "name": "Alice"}]}
+
+```
+
+### Reconnection
+
+When an SSE connection drops, Silcrow reconnects automatically with exponential backoff: 1s → 2s → 4s → 8s → ... up to a maximum of 30 seconds. Backoff resets on successful reconnection or on a manual `Silcrow.reconnect()` call.
+
+### `Silcrow.disconnect(root)`
+
+Pauses the SSE connection for a root. The connection is closed and automatic reconnection is stopped.
+
+```js
+Silcrow.disconnect("#feed");
+```
+
+### `Silcrow.reconnect(root)`
+
+Resumes a disconnected SSE connection. Resets the backoff timer and reconnects immediately.
+
+```js
+Silcrow.reconnect("#feed");
+```
+
+---
+
+## Optimistic Updates
+
+### `Silcrow.optimistic(root, data)`
+
+Takes a snapshot of the root element's current DOM state, then immediately patches the data. Use this for instant UI feedback before the server confirms:
+
+```js
+// User clicks "like" — update immediately
+Silcrow.optimistic("#post-42", { likes: currentLikes + 1, liked: true });
+
+// Send to server
+Silcrow.go("/api/posts/42/like", { method: "POST", target: "#post-42" });
+```
+
+### `Silcrow.revert(root)`
+
+Restores the DOM to the state captured by `Silcrow.optimistic()`. Call this when the server request fails:
+
+```js
+try {
+  await fetch("/api/posts/42/like", { method: "POST" });
+} catch (err) {
+  Silcrow.revert("#post-42");
+  showError("Failed to save");
+}
+```
+
+`revert()` restores the element's `innerHTML` and calls `Silcrow.invalidate()` to rebuild binding maps since the DOM was replaced.
+
+### Optimistic + Error Handler Pattern
+
+Combine optimistic updates with the error handler for a clean pattern:
+
+```js
+Silcrow.onError((err, { url, target }) => {
+  // Revert any optimistic updates on the failed target
+  Silcrow.revert(target);
+});
+```
+
+---
+
 ## Toast System
 
 Register a toast handler to receive toast notifications from both JSON payloads and cookie-based HTML responses:
@@ -252,6 +381,11 @@ All events bubble and are dispatched on `document` (except `silcrow:patched` whi
 | `silcrow:load` | `{url, target, redirected}` | No | After successful swap |
 | `silcrow:error` | `{error, url}` | No | On fetch error or timeout |
 | `silcrow:patched` | `{paths}` | No | After `patch()` completes |
+| `silcrow:sse` | `{path}` | No | When server sends `silcrow-sse` header |
+| `silcrow:live:connect` | `{root, url}` | No | SSE connection opened |
+| `silcrow:live:disconnect` | `{root, url, reconnectIn}` | No | SSE connection lost (with backoff ms) |
+| `silcrow:optimistic` | `{root, data}` | No | After optimistic patch applied |
+| `silcrow:revert` | `{root}` | No | After DOM reverted to snapshot |
 
 **Transition hook:** Listen to `silcrow:before-swap` and call `event.detail.proceed()` manually to control when the DOM update happens (e.g., after a CSS transition). If no listener calls `proceed()`, Silcrow executes it automatically.
 
@@ -270,7 +404,7 @@ Silcrow
     // Custom error handling
   });
 
-// Teardown — removes all event listeners and clears caches
+// Teardown — removes all event listeners, clears caches, closes SSE connections
 Silcrow.destroy();
 ```
 
@@ -294,14 +428,29 @@ Silcrow.destroy();
 | `Silcrow.cache.has(path)` | Check if a path is cached |
 | `Silcrow.cache.clear(path?)` | Clear one or all cache entries |
 
-### Lifecycle Table
+### Live (SSE)
+
+| Method | Description |
+| --- | --- |
+| `Silcrow.live(root, url)` | Open SSE connection, pipe messages to `patch()` |
+| `Silcrow.disconnect(root)` | Pause SSE connection and stop auto-reconnect |
+| `Silcrow.reconnect(root)` | Resume SSE connection with reset backoff |
+
+### Optimistic Methods
+
+| Method | Description |
+| --- | --- |
+| `Silcrow.optimistic(root, data)` | Snapshot DOM, then patch immediately |
+| `Silcrow.revert(root)` | Restore DOM from snapshot, invalidate bindings |
+
+### Lifecycle Handlers
 
 | Method | Description |
 | --- | --- |
 | `Silcrow.onToast(handler)` | Register toast callback (chainable) |
 | `Silcrow.onRoute(handler)` | Register route middleware (chainable) |
 | `Silcrow.onError(handler)` | Register error handler (chainable) |
-| `Silcrow.destroy()` | Teardown all listeners and caches |
+| `Silcrow.destroy()` | Teardown all listeners, caches, and SSE connections |
 
 `window.SilcrowNavigate` is available as a backward-compatible alias for `window.Silcrow`.
 
@@ -309,4 +458,4 @@ Silcrow.destroy();
 
 ## Compatibility
 
-Silcrow.js requires a modern browser with support for `fetch`, `URL`, `CustomEvent`, `WeakMap`, `queueMicrotask`, and `<template>`. No polyfills are bundled.
+Silcrow.js requires a modern browser with support for `fetch`, `URL`, `CustomEvent`, `WeakMap`, `queueMicrotask`, `EventSource`, and `<template>`. No polyfills are bundled.

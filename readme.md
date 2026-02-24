@@ -1,6 +1,6 @@
 # Pilcrow
 
-A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handlers into multi-modal engines — one handler serves HTML to browsers and JSON to API clients via content negotiation, lazy evaluation, and server-side orchestration of the [Silcrow.js](public/SILCROW.md) frontend runtime.
+A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handlers into multi-modal engines — one handler serves HTML to browsers and JSON to API clients via content negotiation, lazy evaluation, and server-side orchestration of the [Silcrow.js](SILCROW.md) frontend runtime.
 
 ## Quick Start
 
@@ -199,8 +199,33 @@ All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implemen
 | `.retarget(selector)` | Silcrow.js swaps HTML into a different DOM element |
 | `.trigger_event(name)` | Fires a `CustomEvent` in the browser via Silcrow.js |
 | `.push_history(url)` | Updates the browser URL bar without a page load |
+| `.patch_target(selector, &data)` | Patches JSON data into a secondary DOM element via Silcrow.js |
+| `.invalidate_target(selector)` | Rebuilds Silcrow.js binding maps for the target element |
+| `.client_navigate(path)` | Triggers a client-side navigation via Silcrow.js |
+| `.sse(path)` | Signals the client to open an SSE connection to the given path |
 
 Toast transport is automatic — HTML responses use a short-lived cookie (`Max-Age=5`, `SameSite=Lax`), JSON responses inject a `_toasts` array into the payload. If the JSON root isn't an object (e.g. you returned a `Vec`), Pilcrow wraps it as `{"data": [...], "_toasts": [...]}`.
+
+### Server-Driven Side Effects
+
+The last four modifiers above are server-driven — the response header tells Silcrow.js to perform an action after the main swap completes. This lets you orchestrate complex UI updates from a single response:
+
+```rust
+pub async fn save_item(req: SilcrowRequest) -> Result<Response, AppError> {
+    let item = db.save_item(&payload).await?;
+    let count = db.item_count().await?;
+
+    pilcrow::respond!(req, {
+        html => html(render_item(&item))
+            .patch_target("#item-count", &serde_json::json!({"count": count}))
+            .invalidate_target("#sidebar")
+            .with_toast("Saved", "success"),
+        json => json(item),
+    })
+}
+```
+
+The `.patch_target()` header carries a JSON object: `{"target": "#item-count", "data": {"count": 42}}`. Silcrow.js parses this and calls `Silcrow.patch()` on the secondary element after the primary swap.
 
 ### 5. Navigation (Redirects)
 
@@ -341,6 +366,39 @@ pub async fn get_user(req: SilcrowRequest) -> Result<Response, AppError> {
     })
 }
 ```
+
+### Server-Driven Multi-Target Updates
+
+When a single action needs to update multiple parts of the page:
+
+```rust
+pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, AppError> {
+    let item = db.toggle_favorite(item_id).await?;
+    let favorites_count = db.favorites_count(user_id).await?;
+
+    pilcrow::respond!(req, {
+        html => html(render_item(&item))
+            .patch_target("#fav-count", &serde_json::json!({"count": favorites_count}))
+            .with_toast("Updated", "success"),
+        json => json(item),
+    })
+}
+```
+
+### Triggering Live Connections
+
+When a page should open an SSE connection for real-time updates:
+
+```rust
+pub async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
+    pilcrow::respond!(req, {
+        html => html(dashboard_markup).sse("/events/dashboard"),
+        json => json(dashboard_data),
+    })
+}
+```
+
+The client receives the `silcrow-sse` header and can bind it via `Silcrow.live()` or the `s-live` attribute.
 
 ## Dependencies
 
