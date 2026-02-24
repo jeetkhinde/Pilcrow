@@ -113,6 +113,39 @@ pub trait ResponseExt: Sized {
         }
         self
     }
+
+    /// Server-driven patch: tells Silcrow.js to patch JSON data into a specific root element.
+    fn patch_target(mut self, selector: &str, data: &impl serde::Serialize) -> Self {
+        let payload = serde_json::json!({ "target": selector, "data": data });
+        if let Ok(val) = HeaderValue::from_str(&payload.to_string()) {
+            self.base_mut().headers.insert("silcrow-patch", val);
+        }
+        self
+    }
+
+    /// Server-driven invalidation: tells Silcrow.js to rebuild binding maps for a root.
+    fn invalidate_target(mut self, selector: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(selector) {
+            self.base_mut().headers.insert("silcrow-invalidate", val);
+        }
+        self
+    }
+
+    /// Server-driven navigation: tells Silcrow.js to perform a client-side navigation.
+    fn client_navigate(mut self, path: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(path) {
+            self.base_mut().headers.insert("silcrow-navigate", val);
+        }
+        self
+    }
+
+    /// Server-driven SSE: tells Silcrow.js to open an SSE connection to the given path.
+    fn sse(mut self, path: &str) -> Self {
+        if let Ok(val) = HeaderValue::from_str(path) {
+            self.base_mut().headers.insert("silcrow-sse", val);
+        }
+        self
+    }
 }
 // ════════════════════════════════════════════════════════════
 // 3. Response Wrappers & Transport Logic
@@ -345,5 +378,95 @@ mod tests {
         assert!(cookies
             .iter()
             .any(|cookie| cookie.starts_with("silcrow_toasts=")));
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // New: Server-driven header methods
+    // ════════════════════════════════════════════════════════════
+
+    #[test]
+    fn patch_target_sets_json_header_with_selector_and_data() {
+        let response = html("<h1>Updated</h1>")
+            .patch_target("#sidebar", &serde_json::json!({"count": 42}))
+            .into_response();
+
+        let header = response.headers()["silcrow-patch"]
+            .to_str()
+            .expect("header should be utf8");
+        let parsed: serde_json::Value =
+            serde_json::from_str(header).expect("header should be valid json");
+
+        assert_eq!(parsed["target"], "#sidebar");
+        assert_eq!(parsed["data"]["count"], 42);
+    }
+
+    #[test]
+    fn patch_target_works_on_json_response() {
+        let response = json(serde_json::json!({"ok": true}))
+            .patch_target("#notifications", &serde_json::json!({"unread": 5}))
+            .into_response();
+
+        let header = response.headers()["silcrow-patch"]
+            .to_str()
+            .expect("header should be utf8");
+        let parsed: serde_json::Value =
+            serde_json::from_str(header).expect("header should be valid json");
+
+        assert_eq!(parsed["target"], "#notifications");
+        assert_eq!(parsed["data"]["unread"], 5);
+    }
+
+    #[test]
+    fn invalidate_target_sets_header() {
+        let response = html("<h1>Reloaded</h1>")
+            .invalidate_target("#app")
+            .into_response();
+
+        assert_eq!(response.headers()["silcrow-invalidate"], "#app");
+    }
+
+    #[test]
+    fn client_navigate_sets_header() {
+        let response = json(serde_json::json!({"saved": true}))
+            .client_navigate("/dashboard")
+            .into_response();
+
+        assert_eq!(response.headers()["silcrow-navigate"], "/dashboard");
+    }
+
+    #[test]
+    fn sse_sets_header() {
+        let response = html("<div id='feed'></div>")
+            .sse("/events/feed")
+            .into_response();
+
+        assert_eq!(response.headers()["silcrow-sse"], "/events/feed");
+    }
+
+    #[test]
+    fn all_new_headers_chain_together() {
+        let response = html("<h1>Full</h1>")
+            .patch_target("#stats", &serde_json::json!({"online": 100}))
+            .invalidate_target("#sidebar")
+            .client_navigate("/home")
+            .sse("/events/live")
+            .into_response();
+
+        assert!(response.headers().contains_key("silcrow-patch"));
+        assert_eq!(response.headers()["silcrow-invalidate"], "#sidebar");
+        assert_eq!(response.headers()["silcrow-navigate"], "/home");
+        assert_eq!(response.headers()["silcrow-sse"], "/events/live");
+    }
+
+    #[test]
+    fn navigate_response_supports_new_headers() {
+        let response = navigate("/login")
+            .client_navigate("/auth/callback")
+            .invalidate_target("#session")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()["silcrow-navigate"], "/auth/callback");
+        assert_eq!(response.headers()["silcrow-invalidate"], "#session");
     }
 }

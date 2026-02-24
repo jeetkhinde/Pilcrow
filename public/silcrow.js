@@ -597,6 +597,86 @@
     responseCache.clear();
   }
 
+  // ── Server-Driven Side Effects ─────────────────────────────
+  // Processes silcrow-patch, silcrow-invalidate, silcrow-navigate,
+  // and silcrow-sse headers after the main swap completes.
+  function processServerHeaders(headers) {
+    const effects = {
+      patches: null,
+      invalidations: null,
+      clientNav: null,
+      sse: null,
+    };
+
+    // 1. silcrow-patch: {"target":"#sidebar","data":{...}}
+    const patchHeader = headers.get("silcrow-patch");
+    if (patchHeader) {
+      try {
+        effects.patches = JSON.parse(patchHeader);
+      } catch (e) {
+        warn("Invalid silcrow-patch header: " + e.message);
+      }
+    }
+
+    // 2. silcrow-invalidate: CSS selector string
+    const invalidateHeader = headers.get("silcrow-invalidate");
+    if (invalidateHeader) {
+      effects.invalidations = invalidateHeader;
+    }
+
+    // 3. silcrow-navigate: path for client-side navigation
+    const navHeader = headers.get("silcrow-navigate");
+    if (navHeader) {
+      effects.clientNav = navHeader;
+    }
+
+    // 4. silcrow-sse: path to open SSE connection
+    const sseHeader = headers.get("silcrow-sse");
+    if (sseHeader) {
+      effects.sse = sseHeader;
+    }
+
+    return effects;
+  }
+
+  function applyServerEffects(effects) {
+    // 1. Patch a secondary target
+    if (effects.patches) {
+      const {target, data} = effects.patches;
+      if (target && data) {
+        const el = document.querySelector(target);
+        if (el) {
+          patch(data, el);
+        } else {
+          warn("silcrow-patch target not found: " + target);
+        }
+      }
+    }
+
+    // 2. Invalidate binding maps
+    if (effects.invalidations) {
+      const el = document.querySelector(effects.invalidations);
+      if (el) {
+        invalidate(el);
+      } else {
+        warn("silcrow-invalidate target not found: " + effects.invalidations);
+      }
+    }
+
+    // 3. Trigger client-side navigation
+    if (effects.clientNav) {
+      navigate(effects.clientNav, {trigger: "server"});
+    }
+
+    // 4. SSE — dispatch event for userland (live() not yet implemented)
+    if (effects.sse) {
+      document.dispatchEvent(new CustomEvent("silcrow:sse", {
+        bubbles: true,
+        detail: {path: effects.sse},
+      }));
+    }
+  }
+
   // ── Core Navigate ──────────────────────────────────────────
   async function navigate(url, options = {}) {
     const {
@@ -641,6 +721,7 @@
       let cached = method === "GET" ? cacheGet(fullUrl) : null;
 
       let text, contentType, redirected = false, finalUrl = fullUrl, pushUrl = null;
+      let serverEffects = null;
 
       const wantsHTML = sourceEl?.hasAttribute("s-html");
       if (cached) {
@@ -674,7 +755,7 @@
 
         // Redirect detection
         redirected = response.redirected;
-        // --- NEW: Silcrow Response Headers ---
+        // --- Silcrow Response Headers ---
         // 1. Client-Side Event Triggers
         const triggerHeader = response.headers.get("silcrow-trigger");
         if (triggerHeader) {
@@ -702,7 +783,9 @@
           finalUrl = new URL(pushUrl, location.origin).href;
           redirected = true; // Force history update
         }
-        // --- END NEW SECTION ---
+
+        // 4. Server-Driven Side Effects (patch, invalidate, navigate, sse)
+        serverEffects = processServerHeaders(response.headers);
 
         finalUrl = response.url || fullUrl;
 
@@ -788,6 +871,11 @@
 
       // If no listener called proceed(), do it now
       if (!swapExecuted) proceed();
+
+      // Apply server-driven side effects after main swap
+      if (serverEffects) {
+        applyServerEffects(serverEffects);
+      }
 
       // History push AFTER successful render
       const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
