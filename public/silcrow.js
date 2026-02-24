@@ -683,8 +683,9 @@
   // ════════════════════════════════════════════════════════════
 
   const sseRegistry = new Map();     // element → {url, source, backoff, timer, paused}
-  const snapshotCache = new WeakMap(); // element → {html, data}
+  const snapshotCache = new WeakMap(); // element → {html}
   const MAX_BACKOFF = 30000;
+  let sseObserver = null;
 
   function live(root, url) {
     const element = resolveRoot(root);
@@ -1260,6 +1261,28 @@
 
     // Auto-connect SSE for [s-live] elements
     scanLiveElements();
+
+    // Watch for DOM removals to clean up orphaned SSE connections
+    sseObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.removedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+          const cleanup = (el) => {
+            if (sseRegistry.has(el)) {
+              disconnectElement(el);
+              sseRegistry.delete(el);
+            }
+          };
+
+          cleanup(node);
+          if (node.querySelectorAll) {
+            node.querySelectorAll("[s-live]").forEach(cleanup);
+          }
+        }
+      }
+    });
+    sseObserver.observe(document.body, {childList: true, subtree: true});
   }
 
   function destroy() {
@@ -1270,6 +1293,10 @@
     responseCache.clear();
     preloadInflight.clear();
     destroyAllSSE();
+    if (sseObserver) {
+      sseObserver.disconnect();
+      sseObserver = null;
+    }
   }
 
   // ════════════════════════════════════════════════════════════
