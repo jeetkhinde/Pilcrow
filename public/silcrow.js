@@ -668,12 +668,206 @@
       navigate(effects.clientNav, {trigger: "server"});
     }
 
-    // 4. SSE — dispatch event for userland (live() not yet implemented)
+    // 4. SSE — notify userland of server-requested SSE connection
+    // Use Silcrow.live() or s-live attribute to bind to specific elements
     if (effects.sse) {
       document.dispatchEvent(new CustomEvent("silcrow:sse", {
         bubbles: true,
         detail: {path: effects.sse},
       }));
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // Live — SSE connection manager & optimistic updates
+  // ════════════════════════════════════════════════════════════
+
+  const sseRegistry = new Map();     // element → {url, source, backoff, timer, paused}
+  const snapshotCache = new WeakMap(); // element → {html, data}
+  const MAX_BACKOFF = 30000;
+
+  function live(root, url) {
+    const element = resolveRoot(root);
+    const fullUrl = new URL(url, location.origin).href;
+
+    // Close existing connection to this root if any
+    if (sseRegistry.has(element)) {
+      disconnectElement(element);
+    }
+
+    const entry = {url: fullUrl, source: null, backoff: 1000, timer: null, paused: false};
+    sseRegistry.set(element, entry);
+    connectSSE(element, entry);
+
+    return element;
+  }
+
+  function connectSSE(element, entry) {
+    if (entry.paused) return;
+
+    const source = new EventSource(entry.url);
+    entry.source = source;
+
+    source.onopen = () => {
+      entry.backoff = 1000; // Reset backoff on successful connect
+      document.dispatchEvent(new CustomEvent("silcrow:live:connect", {
+        bubbles: true,
+        detail: {root: element, url: entry.url},
+      }));
+    };
+
+    source.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        patch(data, element);
+      } catch (err) {
+        warn("SSE parse error: " + err.message);
+      }
+    };
+
+    // Support named events: server sends `event: custom\ndata: {...}\n\n`
+    source.addEventListener("patch", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        patch(data, element);
+      } catch (err) {
+        warn("SSE patch event parse error: " + err.message);
+      }
+    });
+
+    source.addEventListener("invalidate", () => {
+      invalidate(element);
+    });
+
+    source.addEventListener("navigate", (e) => {
+      if (e.data) {
+        navigate(e.data, {trigger: "sse"});
+      }
+    });
+
+    source.onerror = () => {
+      source.close();
+      entry.source = null;
+
+      if (entry.paused) return;
+
+      // Exponential backoff reconnect
+      document.dispatchEvent(new CustomEvent("silcrow:live:disconnect", {
+        bubbles: true,
+        detail: {root: element, url: entry.url, reconnectIn: entry.backoff},
+      }));
+
+      entry.timer = setTimeout(() => {
+        entry.timer = null;
+        if (!entry.paused && sseRegistry.has(element)) {
+          connectSSE(element, entry);
+        }
+      }, entry.backoff);
+
+      entry.backoff = Math.min(entry.backoff * 2, MAX_BACKOFF);
+    };
+  }
+
+  function disconnectElement(element) {
+    const entry = sseRegistry.get(element);
+    if (!entry) return;
+
+    entry.paused = true;
+    if (entry.source) {
+      entry.source.close();
+      entry.source = null;
+    }
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+  }
+
+  function sseDisconnect(root) {
+    const element = resolveRoot(root);
+    disconnectElement(element);
+  }
+
+  function sseReconnect(root) {
+    const element = resolveRoot(root);
+    const entry = sseRegistry.get(element);
+    if (!entry) {
+      warn("No SSE connection registered for this root");
+      return;
+    }
+
+    // Close any existing connection cleanly
+    if (entry.source) {
+      entry.source.close();
+      entry.source = null;
+    }
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+
+    entry.paused = false;
+    entry.backoff = 1000; // Reset backoff on manual reconnect
+    connectSSE(element, entry);
+  }
+
+  function destroyAllSSE() {
+    for (const [element, entry] of sseRegistry) {
+      entry.paused = true;
+      if (entry.source) entry.source.close();
+      if (entry.timer) clearTimeout(entry.timer);
+    }
+    sseRegistry.clear();
+  }
+
+  // ── Optimistic Updates & Snapshots ─────────────────────────
+
+  function optimistic(root, data) {
+    const element = resolveRoot(root);
+
+    // Take snapshot before applying
+    snapshotCache.set(element, {
+      html: element.innerHTML,
+    });
+
+    // Apply immediately
+    patch(data, element);
+
+    document.dispatchEvent(new CustomEvent("silcrow:optimistic", {
+      bubbles: true,
+      detail: {root: element, data},
+    }));
+  }
+
+  function revert(root) {
+    const element = resolveRoot(root);
+    const snapshot = snapshotCache.get(element);
+
+    if (!snapshot) {
+      warn("No snapshot to revert for this root");
+      return;
+    }
+
+    element.innerHTML = snapshot.html;
+    snapshotCache.delete(element);
+
+    // Rebuild binding maps since DOM was replaced
+    invalidate(element);
+
+    document.dispatchEvent(new CustomEvent("silcrow:revert", {
+      bubbles: true,
+      detail: {root: element},
+    }));
+  }
+
+  // ── s-live Auto-Scanner ────────────────────────────────────
+  function scanLiveElements() {
+    const elements = document.querySelectorAll("[s-live]");
+    for (const el of elements) {
+      const url = el.getAttribute("s-live");
+      if (url && !sseRegistry.has(el)) {
+        live(el, url);
+      }
     }
   }
 
@@ -1063,6 +1257,9 @@
         location.href
       );
     }
+
+    // Auto-connect SSE for [s-live] elements
+    scanLiveElements();
   }
 
   function destroy() {
@@ -1072,6 +1269,7 @@
     document.removeEventListener("mouseenter", onMouseEnter, true);
     responseCache.clear();
     preloadInflight.clear();
+    destroyAllSSE();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -1089,6 +1287,16 @@
       processToasts(false);
       return this;
     },
+
+    // Live (SSE)
+    live,
+    disconnect: sseDisconnect,
+    reconnect: sseReconnect,
+
+    // Optimistic updates
+    optimistic,
+    revert,
+
     // Navigation
     go(path, options = {}) {
       return navigate(path, {
