@@ -424,6 +424,7 @@ function stream(root) {
   };
 }
 
+// silcrow/safety.js
 // ════════════════════════════════════════════════════════════
 // Safety — HTML extraction & sanitization
 // ════════════════════════════════════════════════════════════
@@ -469,6 +470,7 @@ function safeSetHTML(el, raw) {
   el.innerHTML = doc.body.innerHTML;
 }
 
+// silcrow/toasts.js
 // ════════════════════════════════════════════════════════════
 // Toasts — notification processing
 // ════════════════════════════════════════════════════════════
@@ -506,6 +508,7 @@ function setToastHandler(handler) {
   processToasts(false);
 }
 
+// silcrow/navigator.js
 // ════════════════════════════════════════════════════════════
 // Navigator — client-side routing, history, caching
 // ════════════════════════════════════════════════════════════
@@ -938,6 +941,8 @@ function onMouseEnter(e) {
 
   preloadInflight.set(fullUrl, promise);
 }
+
+// silcrow/index.js
 
 // ════════════════════════════════════════════════════════════
 // API — public surface & lifecycle

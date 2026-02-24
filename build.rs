@@ -1,3 +1,4 @@
+//./build.rs
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::Hasher;
