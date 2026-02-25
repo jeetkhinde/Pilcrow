@@ -1097,8 +1097,13 @@ function connectSSE(url, state) {
       const target = payload.target
         ? document.querySelector(payload.target)
         : state.element;
-      if (target && payload.html) {
-        safeSetHTML(target, payload.html);
+      if (
+        target &&
+        payload &&
+        typeof payload === "object" &&
+        Object.prototype.hasOwnProperty.call(payload, "html")
+      ) {
+        safeSetHTML(target, payload.html == null ? "" : String(payload.html));
       }
     } catch (err) {
       warn("Failed to parse SSE html event: " + err.message);
