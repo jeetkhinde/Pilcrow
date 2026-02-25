@@ -1245,19 +1245,6 @@ function destroyAllLive() {
   liveConnectionsByUrl.clear();
 }
 
-// ── Process silcrow-sse header from navigator responses ────
-function processSSEHeader(response) {
-  const ssePath = response.headers.get("silcrow-sse");
-  if (ssePath) {
-    document.dispatchEvent(
-      new CustomEvent("silcrow:sse", {
-        bubbles: true,
-        detail: {path: ssePath},
-      })
-    );
-  }
-}
-
 // ── Auto-scan for s-live elements on init ──────────────────
 function initLiveElements() {
   const elements = document.querySelectorAll("[s-live]");
