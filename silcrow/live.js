@@ -71,11 +71,27 @@ function connectSSE(url, state) {
   es.addEventListener("patch", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = payload.target
-        ? document.querySelector(payload.target)
-        : state.element;
-      if (target && payload.data) {
-        patch(payload.data, target);
+      let target = state.element;
+      let data = payload;
+
+      // Supports both:
+      // 1) {"target":"#el","data":{...}} (Pilcrow SilcrowEvent::patch)
+      // 2) {...} or [...] (direct root patch payload)
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+
+      if (target && data !== undefined) {
+        patch(data, target);
       }
     } catch (err) {
       warn("Failed to parse SSE patch event: " + err.message);

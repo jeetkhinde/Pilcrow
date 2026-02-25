@@ -274,7 +274,7 @@ Silcrow also supports named SSE events for specific actions:
 | Event Name | Effect |
 | --- | --- |
 | `message` (default) | Parsed as JSON, passed to `Silcrow.patch()` on the root |
-| `patch` | Same as `message` — parsed and patched |
+| `patch` | Parsed and patched. Supports direct payload (`{...}` / `[...]`) on root, or `{target, data}` to patch a specific selector |
 | `invalidate` | Calls `Silcrow.invalidate()` on the root (no data needed) |
 | `navigate` | `data` field is a URL path — triggers client-side navigation |
 
@@ -287,6 +287,9 @@ data:
 
 event: patch
 data: {"users": [{"key": "1", "name": "Alice"}]}
+
+event: patch
+data: {"target":"#dashboard","data":{"count":42}}
 
 ```
 
