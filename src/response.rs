@@ -140,8 +140,8 @@ pub trait ResponseExt: Sized {
     }
 
     /// Server-driven SSE: tells Silcrow.js to open an SSE connection to the given path.
-    fn sse(mut self, path: &str) -> Self {
-        if let Ok(val) = HeaderValue::from_str(path) {
+    fn sse(mut self, path: impl AsRef<str>) -> Self {
+        if let Ok(val) = HeaderValue::from_str(path.as_ref()) {
             self.base_mut().headers.insert("silcrow-sse", val);
         }
         self

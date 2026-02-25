@@ -3,7 +3,16 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::Hasher;
 
-const MODULES: &[&str] = &["debug", "patcher", "safety", "toasts", "navigator", "index"];
+const MODULES: &[&str] = &[
+    "debug",
+    "patcher",
+    "safety",
+    "toasts",
+    "navigator",
+    "live",
+    "optimistic",
+    "index",
+];
 
 fn main() {
     for name in MODULES {

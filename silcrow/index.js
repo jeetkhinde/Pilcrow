@@ -17,6 +17,9 @@ function init() {
       location.href
     );
   }
+
+  // Auto-scan for s-live elements
+  initLiveElements();
 }
 
 function destroy() {
@@ -26,6 +29,7 @@ function destroy() {
   document.removeEventListener("mouseenter", onMouseEnter, true);
   responseCache.clear();
   preloadInflight.clear();
+  destroyAllLive();
 }
 
 window.Silcrow = {
@@ -37,6 +41,7 @@ window.Silcrow = {
     setToastHandler(handler);
     return this;
   },
+
   // Navigation
   go(path, options = {}) {
     return navigate(path, {
@@ -72,6 +77,28 @@ window.Silcrow = {
       const url = new URL(path, location.origin).href;
       return !!cacheGet(url);
     },
+  },
+
+  // Live (SSE)
+  live(root, url) {
+    openLive(root, url);
+  },
+
+  disconnect(root) {
+    disconnectLive(root);
+  },
+
+  reconnect(root) {
+    reconnectLive(root);
+  },
+
+  // Optimistic
+  optimistic(root, data) {
+    optimisticPatch(root, data);
+  },
+
+  revert(root) {
+    revertOptimistic(root);
   },
 
   destroy,

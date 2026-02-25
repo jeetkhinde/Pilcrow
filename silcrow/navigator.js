@@ -88,6 +88,42 @@ function bustCacheOnMutation() {
   responseCache.clear();
 }
 
+// ── Side-Effect Header Processing ──────────────────────────
+function processSideEffectHeaders(sideEffects) {
+  if (!sideEffects) return;
+
+  // Order: patch → invalidate → navigate → sse
+  if (sideEffects.patch) {
+    try {
+      const payload = JSON.parse(sideEffects.patch);
+      if (payload.target && payload.data) {
+        const el = document.querySelector(payload.target);
+        if (el) patch(payload.data, el);
+      }
+    } catch (e) {
+      warn("Failed to process silcrow-patch header: " + e.message);
+    }
+  }
+
+  if (sideEffects.invalidate) {
+    const el = document.querySelector(sideEffects.invalidate);
+    if (el) invalidate(el);
+  }
+
+  if (sideEffects.navigate) {
+    navigate(sideEffects.navigate, {trigger: "header"});
+  }
+
+  if (sideEffects.sse) {
+    document.dispatchEvent(
+      new CustomEvent("silcrow:sse", {
+        bubbles: true,
+        detail: {path: sideEffects.sse},
+      })
+    );
+  }
+}
+
 // ── Core Navigate ──────────────────────────────────────────
 async function navigate(url, options = {}) {
   const {
@@ -128,6 +164,7 @@ async function navigate(url, options = {}) {
     let cached = method === "GET" ? cacheGet(fullUrl) : null;
 
     let text, contentType, redirected = false, finalUrl = fullUrl, pushUrl = null;
+    let sideEffects = null;
 
     const wantsHTML = sourceEl?.hasAttribute("s-html");
     if (cached) {
@@ -183,6 +220,14 @@ async function navigate(url, options = {}) {
         finalUrl = new URL(pushUrl, location.origin).href;
         redirected = true;
       }
+
+      // Capture side-effect headers for post-swap processing
+      sideEffects = {
+        patch: response.headers.get("silcrow-patch"),
+        invalidate: response.headers.get("silcrow-invalidate"),
+        navigate: response.headers.get("silcrow-navigate"),
+        sse: response.headers.get("silcrow-sse"),
+      };
 
       finalUrl = response.url || fullUrl;
 
@@ -263,6 +308,9 @@ async function navigate(url, options = {}) {
     if (!document.dispatchEvent(beforeSwap)) return;
 
     if (!swapExecuted) proceed();
+
+    // Process side-effect headers after the main swap
+    processSideEffectHeaders(sideEffects);
 
     const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
     if (shouldPushHistory && trigger !== "popstate") {

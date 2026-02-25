@@ -87,8 +87,6 @@ pilcrow::respond!(req, {
 })
 ```
 
-The macro expands to `req.select(Responses::new()...).await` — the builder pattern runs underneath, but you don't write the boilerplate.
-
 **JSON shorthand with `raw`:** For serializable values where you don't need modifiers, skip the `json()` constructor:
 
 ```rust
@@ -120,6 +118,15 @@ pilcrow::respond!(req, {
 })
 ```
 
+**Per-arm modifiers:** Chain modifiers directly on each arm:
+
+```rust
+pilcrow::respond!(req, {
+    html => html(markup).with_toast("Updated", "success").no_cache(),
+    json => json(user),
+})
+```
+
 **All macro variants:**
 
 ```rust
@@ -142,52 +149,7 @@ pilcrow::respond!(req, { html => expr, toast => (msg, level) })
 pilcrow::respond!(req, { json => expr, toast => (msg, level) })
 ```
 
-### 3. The Builder API (Advanced)
-
-The `respond!` macro covers 95% of cases. For the remaining 5% — conditional logic inside response arms, complex async workflows — use the builder directly:
-
-```rust
-req.select(Responses::new()
-    .html(move || async move {
-        if user.is_premium {
-            html(premium_markup).with_header("X-Tier", "premium")
-        } else {
-            html(basic_markup)
-        }
-    })
-    .json(move || async move { json(user) })
-).await
-```
-
-The builder supports three return styles per closure:
-
-**Level 1 — Pure data.** Return a `String` for HTML or a serializable value for JSON. Pilcrow wraps it.
-
-```rust
-.html(|| async { "<h1>Dashboard</h1>".to_string() })
-.json(|| async { user })
-```
-
-**Level 2 — Fallible data.** Return a `Result`. Errors propagate via `?`.
-
-```rust
-.html(|| async {
-    let user = db.get_user(id).await?;
-    Ok(format!("<h1>{}</h1>", user.name))
-})
-```
-
-**Level 3 — Full package.** Use constructors with modifiers.
-
-```rust
-.html(|| async {
-    Ok(html(markup)
-        .with_toast("Updated", "success")
-        .no_cache())
-})
-```
-
-### 4. Modifiers via `ResponseExt`
+### 3. Modifiers via `ResponseExt`
 
 All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implement `ResponseExt`, giving you a unified modifier chain:
 
@@ -202,7 +164,7 @@ All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implemen
 | `.patch_target(selector, &data)` | Patches JSON data into a secondary DOM element via Silcrow.js |
 | `.invalidate_target(selector)` | Rebuilds Silcrow.js binding maps for the target element |
 | `.client_navigate(path)` | Triggers a client-side navigation via Silcrow.js |
-| `.sse(path)` | Signals the client to open an SSE connection to the given path |
+| `.sse(route)` | Signals the client to open an SSE connection to the given path |
 
 Toast transport is automatic — HTML responses use a short-lived cookie (`Max-Age=5`, `SameSite=Lax`), JSON responses inject a `_toasts` array into the payload. If the JSON root isn't an object (e.g. you returned a `Vec`), Pilcrow wraps it as `{"data": [...], "_toasts": [...]}`.
 
@@ -225,9 +187,9 @@ pub async fn save_item(req: SilcrowRequest) -> Result<Response, AppError> {
 }
 ```
 
-The `.patch_target()` header carries a JSON object: `{"target": "#item-count", "data": {"count": 42}}`. Silcrow.js parses this and calls `Silcrow.patch()` on the secondary element after the primary swap.
+Side effects execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
-### 5. Navigation (Redirects)
+### 4. Navigation (Redirects)
 
 Redirects are imperative — they're not negotiated. Use `navigate()` for early returns like auth guards:
 
@@ -246,6 +208,69 @@ pub async fn admin(req: SilcrowRequest) -> Result<Response, AppError> {
 ```
 
 `navigate()` returns a `303 See Other` with the `Location` header. Toasts persist across the redirect via cookie.
+
+### 5. Server-Sent Events (SSE)
+
+Pilcrow provides typed SSE support for real-time updates driven by Silcrow.js.
+
+**Define a route constant:**
+
+```rust
+use pilcrow::SseRoute;
+
+pub const DASHBOARD_EVENTS: SseRoute = SseRoute::new("/events/dashboard");
+```
+
+`SseRoute` is a typed newtype — use it in both the route registration and the `.sse()` modifier to keep paths in sync.
+
+**Tell the client to connect:**
+
+```rust
+async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
+    pilcrow::respond!(req, {
+        html => html(markup).sse(DASHBOARD_EVENTS),
+        json => json(data),
+    })
+}
+```
+
+The `.sse()` modifier sets the `silcrow-sse` header. Silcrow.js reads it and opens an `EventSource` connection automatically.
+
+**Create the SSE endpoint:**
+
+```rust
+use pilcrow::{sse, SilcrowEvent};
+
+async fn dashboard_events() -> impl IntoResponse {
+    let stream = async_stream::stream! {
+        loop {
+            let stats = db.get_stats().await;
+            yield Ok::<_, std::convert::Infallible>(
+                SilcrowEvent::patch(stats, "#dashboard").into()
+            );
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    };
+    pilcrow::sse(stream)
+}
+```
+
+`SilcrowEvent` has two constructors:
+
+- `SilcrowEvent::patch(data, target)` — sends JSON data to `Silcrow.patch(data, target)`
+- `SilcrowEvent::html(markup, target)` — sends HTML to `safeSetHTML(element, markup)`
+
+Both serialize to the SSE wire format with named events that Silcrow.js understands.
+
+**Register the route:**
+
+```rust
+Router::new()
+    .route("/dashboard", get(dashboard))
+    .route(DASHBOARD_EVENTS.path(), get(dashboard_events))
+```
+
+**Client-side:** Silcrow.js handles everything — connection management, reconnection with exponential backoff (1s → 2s → 4s → max 30s), and piping events to the right DOM targets. See the [Silcrow.js docs](SILCROW.md#live-sse-connections--real-time-updates) for the full client-side API.
 
 ## Asset Serving
 
@@ -266,7 +291,9 @@ fn layout(content: &str) -> String {
 
 The served response includes `Cache-Control: public, max-age=31536000, immutable`.
 
-## Full Example: Dual-Mode Handler with DB
+## Examples
+
+### Dual-Mode Handler with DB
 
 ```rust
 #[derive(Serialize)]
@@ -291,29 +318,75 @@ pub async fn get_profile(
 
     pilcrow::respond!(req, {
         html => html(markup).with_toast("Loaded", "info"),
-        json => json(user),
+        json => raw user,
     })
 }
 ```
 
-Only the matching closure executes. The data fetch (`db.fetch_user`) runs before `respond!` — it's shared. If you need format-specific queries, drop to the builder API and put them inside the closures.
+Only the matching closure executes. The data fetch runs before `respond!` — it's shared across both arms.
 
-## Patterns for Beginners
+### Multi-Target Update
 
-### One-Off Responses
-
-For simple endpoints that don't map to a database model, define a small struct:
+When a single action needs to update multiple parts of the page:
 
 ```rust
-#[derive(Serialize)]
-struct StatusResponse {
-    status: String,
+pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, AppError> {
+    let item = db.toggle_favorite(item_id).await?;
+    let count = db.favorites_count(user_id).await?;
+
+    pilcrow::respond!(req, {
+        html => html(render_item(&item))
+            .patch_target("#fav-count", &serde_json::json!({"count": count}))
+            .with_toast("Updated", "success"),
+        json => json(item),
+    })
+}
+```
+
+### Real-Time Dashboard with SSE
+
+```rust
+pub const DASH_EVENTS: SseRoute = SseRoute::new("/events/dash");
+
+pub async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
+    let stats = db.get_stats().await?;
+    let markup = render_dashboard(&stats);
+
+    pilcrow::respond!(req, {
+        html => html(markup).sse(DASH_EVENTS),
+        json => json(stats),
+    })
 }
 
-pub async fn health(req: SilcrowRequest) -> Result<Response, StatusCode> {
+pub async fn dashboard_stream() -> impl IntoResponse {
+    let stream = async_stream::stream! {
+        loop {
+            let stats = db.get_stats().await;
+            yield Ok::<_, Infallible>(SilcrowEvent::patch(stats, "#dashboard").into());
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    };
+    pilcrow::sse(stream)
+}
+
+// Router
+Router::new()
+    .route("/dashboard", get(dashboard))
+    .route(DASH_EVENTS.path(), get(dashboard_stream))
+```
+
+### Raw Shorthand
+
+When you just need to return a struct without modifiers:
+
+```rust
+pub async fn get_user(req: SilcrowRequest) -> Result<Response, AppError> {
+    let user = db.fetch_user(123).await?;
+    let markup = render_user(&user);
+
     pilcrow::respond!(req, {
-        html => html("<p>OK</p>"),
-        json => json(StatusResponse { status: "ok".into() }),
+        html => html(markup),
+        json => raw user,
     })
 }
 ```
@@ -351,54 +424,20 @@ pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
 }
 ```
 
-### Raw Shorthand
+## Public API
 
-When you just need to return a struct without modifiers:
-
-```rust
-pub async fn get_user(req: SilcrowRequest) -> Result<Response, AppError> {
-    let user = db.fetch_user(123).await?;
-    let markup = render_user(&user);
-
-    pilcrow::respond!(req, {
-        html => html(markup),
-        json => raw user,    // equivalent to json(user), no chaining needed
-    })
-}
-```
-
-### Server-Driven Multi-Target Updates
-
-When a single action needs to update multiple parts of the page:
-
-```rust
-pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, AppError> {
-    let item = db.toggle_favorite(item_id).await?;
-    let favorites_count = db.favorites_count(user_id).await?;
-
-    pilcrow::respond!(req, {
-        html => html(render_item(&item))
-            .patch_target("#fav-count", &serde_json::json!({"count": favorites_count}))
-            .with_toast("Updated", "success"),
-        json => json(item),
-    })
-}
-```
-
-### Triggering Live Connections
-
-When a page should open an SSE connection for real-time updates:
-
-```rust
-pub async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
-    pilcrow::respond!(req, {
-        html => html(dashboard_markup).sse("/events/dashboard"),
-        json => json(dashboard_data),
-    })
-}
-```
-
-The client receives the `silcrow-sse` header and can bind it via `Silcrow.live()` or the `s-live` attribute.
+| Export | Description |
+| --- | --- |
+| `SilcrowRequest` | Axum extractor for content negotiation |
+| `respond!` | Macro for declaring response arms |
+| `html(data)` | HTML response constructor |
+| `json(data)` | JSON response constructor |
+| `navigate(path)` | Redirect response constructor (303) |
+| `ResponseExt` | Modifier trait (`.with_toast()`, `.no_cache()`, `.sse()`, etc.) |
+| `SseRoute` | Typed SSE route constant |
+| `SilcrowEvent` | Structured SSE event builder (`.patch()`, `.html()`) |
+| `sse(stream)` | Creates an SSE response from a stream with keep-alive |
+| `Responses` | Builder for advanced use cases |
 
 ## Dependencies
 
@@ -407,7 +446,7 @@ The client receives the `silcrow-sse` header and can bind it via `Silcrow.live()
 pilcrow = "0.1"
 ```
 
-Pilcrow depends on `axum 0.7`, `serde`, `serde_json`, `cookie`, `urlencoding`, and `tracing`. No runtime overhead beyond what Axum already requires.
+Pilcrow depends on `axum 0.7`, `serde`, `serde_json`, `cookie`, `urlencoding`, `futures-core`, and `tracing`. No runtime overhead beyond what Axum already requires.
 
 ## License
 
