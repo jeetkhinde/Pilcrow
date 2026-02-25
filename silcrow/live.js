@@ -6,6 +6,14 @@
 const liveConnections = new Map(); // route → { es, root, backoff, paused }
 const MAX_BACKOFF = 30000;
 
+function onSSEEvent(e) {
+  const path = e?.detail?.path;
+  if (!path || typeof path !== "string") return;
+
+  const root = e?.detail?.target || document.body;
+  openLive(root, path);
+}
+
 function openLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
   if (!element) {

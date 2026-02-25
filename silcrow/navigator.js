@@ -89,7 +89,7 @@ function bustCacheOnMutation() {
 }
 
 // ── Side-Effect Header Processing ──────────────────────────
-function processSideEffectHeaders(sideEffects) {
+function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (!sideEffects) return;
 
   // Order: patch → invalidate → navigate → sse
@@ -118,7 +118,7 @@ function processSideEffectHeaders(sideEffects) {
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse},
+        detail: {path: sideEffects.sse, target: primaryTarget || null},
       })
     );
   }
@@ -310,7 +310,7 @@ async function navigate(url, options = {}) {
     if (!swapExecuted) proceed();
 
     // Process side-effect headers after the main swap
-    processSideEffectHeaders(sideEffects);
+    processSideEffectHeaders(sideEffects, targetEl);
 
     const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
     if (shouldPushHistory && trigger !== "popstate") {

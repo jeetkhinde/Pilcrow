@@ -599,7 +599,7 @@ function bustCacheOnMutation() {
 }
 
 // ── Side-Effect Header Processing ──────────────────────────
-function processSideEffectHeaders(sideEffects) {
+function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (!sideEffects) return;
 
   // Order: patch → invalidate → navigate → sse
@@ -628,7 +628,7 @@ function processSideEffectHeaders(sideEffects) {
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse},
+        detail: {path: sideEffects.sse, target: primaryTarget || null},
       })
     );
   }
@@ -820,7 +820,7 @@ async function navigate(url, options = {}) {
     if (!swapExecuted) proceed();
 
     // Process side-effect headers after the main swap
-    processSideEffectHeaders(sideEffects);
+    processSideEffectHeaders(sideEffects, targetEl);
 
     const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
     if (shouldPushHistory && trigger !== "popstate") {
@@ -989,6 +989,7 @@ function onMouseEnter(e) {
 
   preloadInflight.set(fullUrl, promise);
 }
+
 // silcrow/live.js
 // ════════════════════════════════════════════════════════════
 // Live — SSE connections & real-time updates
@@ -996,6 +997,14 @@ function onMouseEnter(e) {
 
 const liveConnections = new Map(); // route → { es, root, backoff, paused }
 const MAX_BACKOFF = 30000;
+
+function onSSEEvent(e) {
+  const path = e?.detail?.path;
+  if (!path || typeof path !== "string") return;
+
+  const root = e?.detail?.target || document.body;
+  openLive(root, path);
+}
 
 function openLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
@@ -1203,6 +1212,7 @@ function initLiveElements() {
     }
   }
 }
+
 // silcrow/optimistic.js
 // ════════════════════════════════════════════════════════════
 // Optimistic — snapshot & revert for instant UI feedback
@@ -1266,6 +1276,7 @@ function init() {
   document.addEventListener("submit", onSubmit);
   window.addEventListener("popstate", onPopState);
   document.addEventListener("mouseenter", onMouseEnter, true);
+  document.addEventListener("silcrow:sse", onSSEEvent);
 
   if (!history.state?.silcrow) {
     history.replaceState(
@@ -1284,6 +1295,7 @@ function destroy() {
   document.removeEventListener("submit", onSubmit);
   window.removeEventListener("popstate", onPopState);
   document.removeEventListener("mouseenter", onMouseEnter, true);
+  document.removeEventListener("silcrow:sse", onSSEEvent);
   responseCache.clear();
   preloadInflight.clear();
   destroyAllLive();
@@ -1370,4 +1382,5 @@ if (document.readyState === "loading") {
 } else {
   init();
 }
+
 })();

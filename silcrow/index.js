@@ -9,6 +9,7 @@ function init() {
   document.addEventListener("submit", onSubmit);
   window.addEventListener("popstate", onPopState);
   document.addEventListener("mouseenter", onMouseEnter, true);
+  document.addEventListener("silcrow:sse", onSSEEvent);
 
   if (!history.state?.silcrow) {
     history.replaceState(
@@ -27,6 +28,7 @@ function destroy() {
   document.removeEventListener("submit", onSubmit);
   window.removeEventListener("popstate", onPopState);
   document.removeEventListener("mouseenter", onMouseEnter, true);
+  document.removeEventListener("silcrow:sse", onSSEEvent);
   responseCache.clear();
   preloadInflight.clear();
   destroyAllLive();
