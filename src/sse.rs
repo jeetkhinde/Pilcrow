@@ -161,25 +161,49 @@ mod tests {
         assert_eq!(s, "/events/live");
     }
 
+    async fn render_event(event: Event) -> String {
+        use axum::{body::to_bytes, response::IntoResponse};
+        use futures_core::Stream;
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        struct SingleEvent(Option<Event>);
+
+        impl Stream for SingleEvent {
+            type Item = Result<Event, Infallible>;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                Poll::Ready(self.0.take().map(Ok))
+            }
+        }
+
+        let response = sse(SingleEvent(Some(event))).into_response();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("SSE body should render");
+
+        String::from_utf8(body.to_vec()).expect("SSE payload should be UTF-8")
+    }
+
     // ── SilcrowEvent::patch ────────────────────────────────
-    #[test]
-    fn patch_event_serializes_correct_wire_format() {
+    #[tokio::test]
+    async fn patch_event_serializes_correct_wire_format() {
         let evt = SilcrowEvent::patch(
             serde_json::json!({"count": 42, "status": "online"}),
             "#dashboard",
         );
-        let sse_event: Event = evt.into();
-
-        // Convert to string to verify format
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:patch"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: patch"));
         assert!(rendered.contains("\"target\":\"#dashboard\""));
         assert!(rendered.contains("\"count\":42"));
         assert!(rendered.contains("\"status\":\"online\""));
     }
 
-    #[test]
-    fn patch_event_with_struct_data() {
+    #[tokio::test]
+    async fn patch_event_with_struct_data() {
         #[derive(serde::Serialize)]
         struct Stats {
             online: u32,
@@ -193,75 +217,67 @@ mod tests {
             },
             "#stats",
         );
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:patch"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: patch"));
         assert!(rendered.contains("\"online\":100"));
         assert!(rendered.contains("\"active\":true"));
         assert!(rendered.contains("\"target\":\"#stats\""));
     }
 
     // ── SilcrowEvent::html ─────────────────────────────────
-    #[test]
-    fn html_event_serializes_correct_wire_format() {
+    #[tokio::test]
+    async fn html_event_serializes_correct_wire_format() {
         let evt = SilcrowEvent::html("<p>Updated</p>", "#content");
-        let sse_event: Event = evt.into();
-
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:html"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: html"));
         assert!(rendered.contains("\"target\":\"#content\""));
         assert!(rendered.contains("<p>Updated</p>"));
     }
 
-    #[test]
-    fn html_event_with_string_owned() {
+    #[tokio::test]
+    async fn html_event_with_string_owned() {
         let markup = format!("<div>{}</div>", "dynamic");
         let evt = SilcrowEvent::html(markup, "#app");
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:html"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: html"));
         assert!(rendered.contains("<div>dynamic</div>"));
     }
 
     // ── SilcrowEvent edge cases ────────────────────────────
-    #[test]
-    fn patch_event_with_empty_object() {
+    #[tokio::test]
+    async fn patch_event_with_empty_object() {
         let evt = SilcrowEvent::patch(serde_json::json!({}), "#empty");
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:patch"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: patch"));
         assert!(rendered.contains("\"target\":\"#empty\""));
         assert!(rendered.contains("\"data\":{}"));
     }
 
-    #[test]
-    fn patch_event_with_array_data() {
+    #[tokio::test]
+    async fn patch_event_with_array_data() {
         let evt = SilcrowEvent::patch(serde_json::json!([{"key": "1", "name": "Alice"}]), "#list");
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:patch"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: patch"));
         assert!(rendered.contains("\"target\":\"#list\""));
         assert!(rendered.contains("\"name\":\"Alice\""));
     }
 
-    #[test]
-    fn html_event_with_empty_markup() {
+    #[tokio::test]
+    async fn html_event_with_empty_markup() {
         let evt = SilcrowEvent::html("", "#slot");
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
-        assert!(rendered.contains("event:html"));
+        let rendered = render_event(evt.into()).await;
+        assert!(rendered.contains("event: html"));
         assert!(rendered.contains("\"target\":\"#slot\""));
         assert!(rendered.contains("\"html\":\"\""));
     }
 
-    #[test]
-    fn patch_event_with_nested_data() {
+    #[tokio::test]
+    async fn patch_event_with_nested_data() {
         let evt = SilcrowEvent::patch(
             serde_json::json!({"user": {"profile": {"name": "Bob"}}}),
             "#deep",
         );
-        let sse_event: Event = evt.into();
-        let rendered = format!("{sse_event}");
+        let rendered = render_event(evt.into()).await;
         assert!(rendered.contains("\"name\":\"Bob\""));
         assert!(rendered.contains("\"target\":\"#deep\""));
     }
