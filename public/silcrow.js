@@ -49,6 +49,68 @@ const knownProps = {
   selectedIndex: "number",
 };
 
+const URL_PROPS = new Set([
+  "action",
+  "background",
+  "cite",
+  "formaction",
+  "href",
+  "poster",
+  "src",
+  "xlink:href",
+]);
+
+const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+const PATCH_SAFE_DATA_IMAGE_RE =
+  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i;
+
+function hasSafeBoundProtocol(raw, allowDataImage) {
+  const value = String(raw || "").trim();
+  if (!value) return true;
+
+  const compact = value.replace(/[\u0000-\u0020\u007F]+/g, "");
+  if (/^(?:javascript|vbscript|file):/i.test(compact)) return false;
+
+  if (/^data:/i.test(compact)) {
+    return allowDataImage && PATCH_SAFE_DATA_IMAGE_RE.test(compact);
+  }
+
+  try {
+    const parsed = new URL(value, location.origin);
+    return SAFE_URL_PROTOCOLS.has(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
+}
+
+function hasSafeBoundSrcSet(raw) {
+  const parts = String(raw || "").split(",");
+  for (const part of parts) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    const idx = candidate.search(/\s/);
+    const url = idx === -1 ? candidate : candidate.slice(0, idx);
+    if (!hasSafeBoundProtocol(url, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isUnsafeBoundUrl(el, prop, value) {
+  const name = String(prop || "").toLowerCase();
+  if (!name) return false;
+
+  if (name === "srcset") {
+    return !hasSafeBoundSrcSet(value);
+  }
+
+  if (!URL_PROPS.has(name)) return false;
+
+  const allowDataImage = name === "src" && el.tagName === "IMG";
+  return !hasSafeBoundProtocol(value, allowDataImage);
+}
+
 function setValue(el, prop, value) {
   if (isOnHandler(prop)) {
     throwErr("Binding to event handler attribute rejected: " + prop);
@@ -66,6 +128,16 @@ function setValue(el, prop, value) {
       if (t === "boolean") el[prop] = false;
       else if (t === "number") el[prop] = 0;
       else el[prop] = "";
+    } else {
+      el.removeAttribute(prop);
+    }
+    return;
+  }
+
+  if (isUnsafeBoundUrl(el, prop, value)) {
+    warn("Rejected unsafe URL in binding: " + prop);
+    if (prop in knownProps) {
+      el[prop] = "";
     } else {
       el.removeAttribute(prop);
     }
@@ -1166,8 +1238,14 @@ function applyLivePatchPayload(payload, fallbackTarget) {
   if (
     payload &&
     typeof payload === "object" &&
-    Object.prototype.hasOwnProperty.call(payload, "data")
+    !Array.isArray(payload) &&
+    Object.prototype.hasOwnProperty.call(payload, "target")
   ) {
+    if (!Object.prototype.hasOwnProperty.call(payload, "data")) {
+      warn("SSE patch envelope missing data field");
+      return;
+    }
+
     const target = resolveLiveTarget(payload.target, fallbackTarget);
     if (target) {
       patch(payload.data, target);
