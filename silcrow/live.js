@@ -5,6 +5,62 @@
 
 const liveConnections = new Map(); // route → { es, root, backoff, paused }
 const MAX_BACKOFF = 30000;
+const LIVE_HTTP_PROTOCOLS = new Set(["http:", "https:"]);
+
+function isLikelyLiveUrl(value) {
+  return (
+    typeof value === "string" &&
+    (value.startsWith("/") ||
+      value.startsWith("http://") ||
+      value.startsWith("https://"))
+  );
+}
+
+function normalizeSSEEndpoint(rawUrl) {
+  if (typeof rawUrl !== "string") return null;
+  const value = rawUrl.trim();
+  if (!value) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(value, location.origin);
+  } catch (e) {
+    warn("Invalid SSE URL: " + value);
+    return null;
+  }
+
+  if (!LIVE_HTTP_PROTOCOLS.has(parsed.protocol)) {
+    warn("Rejected non-http(s) SSE URL: " + parsed.href);
+    return null;
+  }
+  if (parsed.origin !== location.origin) {
+    warn("Rejected cross-origin SSE URL: " + parsed.href);
+    return null;
+  }
+
+  return parsed.href;
+}
+
+function resolveLiveTarget(selector, fallback) {
+  if (typeof selector !== "string" || !selector) return fallback;
+  return document.querySelector(selector) || null;
+}
+
+function applyLivePatchPayload(payload, fallbackTarget) {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    Object.prototype.hasOwnProperty.call(payload, "data")
+  ) {
+    const target = resolveLiveTarget(payload.target, fallbackTarget);
+    if (target) {
+      patch(payload.data, target);
+    }
+    return;
+  }
+
+  patch(payload, fallbackTarget);
+}
 
 function openLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
@@ -13,7 +69,8 @@ function openLive(root, url) {
     return;
   }
 
-  const fullUrl = new URL(url, location.origin).href;
+  const fullUrl = normalizeSSEEndpoint(url);
+  if (!fullUrl) return;
 
   // Close existing connection for this route
   const existing = liveConnections.get(fullUrl);
@@ -52,8 +109,8 @@ function connectSSE(url, state) {
   // Default message event → patch
   es.onmessage = function (e) {
     try {
-      const data = JSON.parse(e.data);
-      patch(data, state.element);
+      const payload = JSON.parse(e.data);
+      applyLivePatchPayload(payload, state.element);
     } catch (err) {
       warn("Failed to parse SSE message: " + err.message);
     }
@@ -63,12 +120,7 @@ function connectSSE(url, state) {
   es.addEventListener("patch", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = payload.target
-        ? document.querySelector(payload.target)
-        : state.element;
-      if (target && payload.data) {
-        patch(payload.data, target);
-      }
+      applyLivePatchPayload(payload, state.element);
     } catch (err) {
       warn("Failed to parse SSE patch event: " + err.message);
     }
@@ -78,11 +130,14 @@ function connectSSE(url, state) {
   es.addEventListener("html", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = payload.target
-        ? document.querySelector(payload.target)
-        : state.element;
-      if (target && payload.html) {
-        safeSetHTML(target, payload.html);
+      const target = resolveLiveTarget(payload && payload.target, state.element);
+      if (
+        target &&
+        payload &&
+        typeof payload === "object" &&
+        Object.prototype.hasOwnProperty.call(payload, "html")
+      ) {
+        safeSetHTML(target, payload.html == null ? "" : String(payload.html));
       }
     } catch (err) {
       warn("Failed to parse SSE html event: " + err.message);
@@ -161,9 +216,10 @@ function reconnectLive(root) {
 }
 
 function resolveSSEUrl(root) {
-  // If root is a URL string starting with /, treat it as a route key
-  if (typeof root === "string" && root.startsWith("/")) {
-    return new URL(root, location.origin).href;
+  // If root is a URL string, treat it as a route key.
+  if (isLikelyLiveUrl(root)) {
+    const route = normalizeSSEEndpoint(root);
+    if (route) return route;
   }
   // If root is an element or selector, find its connection by element match
   const element =
@@ -191,7 +247,7 @@ function destroyAllLive() {
 
 // ── Process silcrow-sse header from navigator responses ────
 function processSSEHeader(response) {
-  const ssePath = response.headers.get("silcrow-sse");
+  const ssePath = normalizeSSEEndpoint(response.headers.get("silcrow-sse"));
   if (ssePath) {
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {

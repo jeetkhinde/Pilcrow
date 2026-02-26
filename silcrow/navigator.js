@@ -89,14 +89,19 @@ function bustCacheOnMutation() {
 }
 
 // ── Side-Effect Header Processing ──────────────────────────
-function processSideEffectHeaders(sideEffects) {
+function processSideEffectHeaders(sideEffects, liveRoot) {
   if (!sideEffects) return;
 
   // Order: patch → invalidate → navigate → sse
   if (sideEffects.patch) {
     try {
       const payload = JSON.parse(sideEffects.patch);
-      if (payload.target && payload.data) {
+      if (
+        payload &&
+        typeof payload === "object" &&
+        payload.target &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
         const el = document.querySelector(payload.target);
         if (el) patch(payload.data, el);
       }
@@ -115,10 +120,16 @@ function processSideEffectHeaders(sideEffects) {
   }
 
   if (sideEffects.sse) {
+    const ssePath =
+      typeof normalizeSSEEndpoint === "function"
+        ? normalizeSSEEndpoint(sideEffects.sse)
+        : sideEffects.sse;
+    if (!ssePath) return;
+
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse},
+        detail: {path: ssePath, root: liveRoot || null},
       })
     );
   }
@@ -310,7 +321,7 @@ async function navigate(url, options = {}) {
     if (!swapExecuted) proceed();
 
     // Process side-effect headers after the main swap
-    processSideEffectHeaders(sideEffects);
+    processSideEffectHeaders(sideEffects, targetEl);
 
     const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
     if (shouldPushHistory && trigger !== "popstate") {

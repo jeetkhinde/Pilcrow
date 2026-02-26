@@ -450,22 +450,134 @@ function extractHTML(html, targetSelector, isFullPage) {
   return html;
 }
 
+const FORBIDDEN_HTML_TAGS = new Set([
+  "base",
+  "embed",
+  "frame",
+  "iframe",
+  "link",
+  "meta",
+  "object",
+  "script",
+  "style",
+]);
+
+const URL_ATTRS = new Set([
+  "action",
+  "background",
+  "cite",
+  "formaction",
+  "href",
+  "poster",
+  "src",
+  "xlink:href",
+]);
+
+const SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+const SAFE_DATA_IMAGE_RE =
+  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i;
+
+function hasSafeProtocol(raw, allowDataImage) {
+  const value = String(raw || "").trim();
+  if (!value) return true;
+
+  const compact = value.replace(/[\u0000-\u0020\u007F]+/g, "");
+  if (/^(?:javascript|vbscript|file):/i.test(compact)) return false;
+
+  if (/^data:/i.test(compact)) {
+    return allowDataImage && SAFE_DATA_IMAGE_RE.test(compact);
+  }
+
+  try {
+    const parsed = new URL(value, location.origin);
+    return SAFE_PROTOCOLS.has(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
+}
+
+function hasSafeSrcSet(raw) {
+  const parts = String(raw || "").split(",");
+  for (const part of parts) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    const idx = candidate.search(/\s/);
+    const url = idx === -1 ? candidate : candidate.slice(0, idx);
+    if (!hasSafeProtocol(url, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function hardenBlankTargets(node) {
+  if (node.tagName !== "A") return;
+  if (String(node.getAttribute("target") || "").toLowerCase() !== "_blank") return;
+
+  const relTokens = new Set(
+    String(node.getAttribute("rel") || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+  );
+  relTokens.add("noopener");
+  relTokens.add("noreferrer");
+  node.setAttribute("rel", Array.from(relTokens).join(" "));
+}
+
+function sanitizeTree(root) {
+  for (const tag of FORBIDDEN_HTML_TAGS) {
+    for (const node of root.querySelectorAll(tag)) {
+      node.remove();
+    }
+  }
+
+  for (const node of root.querySelectorAll("*")) {
+    if (node.namespaceURI !== "http://www.w3.org/1999/xhtml") {
+      node.remove();
+      continue;
+    }
+
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value;
+
+      if (name.startsWith("on") || name === "style" || name === "srcdoc") {
+        node.removeAttribute(attr.name);
+        continue;
+      }
+
+      if (name === "srcset" && !hasSafeSrcSet(value)) {
+        node.removeAttribute(attr.name);
+        continue;
+      }
+
+      if (URL_ATTRS.has(name)) {
+        const allowDataImage = name === "src" && node.tagName === "IMG";
+        if (!hasSafeProtocol(value, allowDataImage)) {
+          node.removeAttribute(attr.name);
+        }
+      }
+    }
+
+    hardenBlankTargets(node);
+  }
+
+  for (const tpl of root.querySelectorAll("template")) {
+    sanitizeTree(tpl.content);
+  }
+}
+
 function safeSetHTML(el, raw) {
+  const markup = raw == null ? "" : String(raw);
+
   if (el.setHTML) {
-    el.setHTML(raw);
+    el.setHTML(markup);
     return;
   }
 
-  const doc = new DOMParser().parseFromString(raw, "text/html");
-
-  for (const script of doc.querySelectorAll("script")) script.remove();
-  for (const node of doc.querySelectorAll("*")) {
-    for (const attr of [...node.attributes]) {
-      if (attr.name.toLowerCase().startsWith("on")) {
-        node.removeAttribute(attr.name);
-      }
-    }
-  }
+  const doc = new DOMParser().parseFromString(markup, "text/html");
+  sanitizeTree(doc.body);
 
   el.innerHTML = doc.body.innerHTML;
 }
@@ -599,14 +711,19 @@ function bustCacheOnMutation() {
 }
 
 // ── Side-Effect Header Processing ──────────────────────────
-function processSideEffectHeaders(sideEffects) {
+function processSideEffectHeaders(sideEffects, liveRoot) {
   if (!sideEffects) return;
 
   // Order: patch → invalidate → navigate → sse
   if (sideEffects.patch) {
     try {
       const payload = JSON.parse(sideEffects.patch);
-      if (payload.target && payload.data) {
+      if (
+        payload &&
+        typeof payload === "object" &&
+        payload.target &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
         const el = document.querySelector(payload.target);
         if (el) patch(payload.data, el);
       }
@@ -625,10 +742,16 @@ function processSideEffectHeaders(sideEffects) {
   }
 
   if (sideEffects.sse) {
+    const ssePath =
+      typeof normalizeSSEEndpoint === "function"
+        ? normalizeSSEEndpoint(sideEffects.sse)
+        : sideEffects.sse;
+    if (!ssePath) return;
+
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse},
+        detail: {path: ssePath, root: liveRoot || null},
       })
     );
   }
@@ -820,7 +943,7 @@ async function navigate(url, options = {}) {
     if (!swapExecuted) proceed();
 
     // Process side-effect headers after the main swap
-    processSideEffectHeaders(sideEffects);
+    processSideEffectHeaders(sideEffects, targetEl);
 
     const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
     if (shouldPushHistory && trigger !== "popstate") {
@@ -989,6 +1112,7 @@ function onMouseEnter(e) {
 
   preloadInflight.set(fullUrl, promise);
 }
+
 // silcrow/live.js
 // ════════════════════════════════════════════════════════════
 // Live — SSE connections & real-time updates
@@ -996,6 +1120,62 @@ function onMouseEnter(e) {
 
 const liveConnections = new Map(); // route → { es, root, backoff, paused }
 const MAX_BACKOFF = 30000;
+const LIVE_HTTP_PROTOCOLS = new Set(["http:", "https:"]);
+
+function isLikelyLiveUrl(value) {
+  return (
+    typeof value === "string" &&
+    (value.startsWith("/") ||
+      value.startsWith("http://") ||
+      value.startsWith("https://"))
+  );
+}
+
+function normalizeSSEEndpoint(rawUrl) {
+  if (typeof rawUrl !== "string") return null;
+  const value = rawUrl.trim();
+  if (!value) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(value, location.origin);
+  } catch (e) {
+    warn("Invalid SSE URL: " + value);
+    return null;
+  }
+
+  if (!LIVE_HTTP_PROTOCOLS.has(parsed.protocol)) {
+    warn("Rejected non-http(s) SSE URL: " + parsed.href);
+    return null;
+  }
+  if (parsed.origin !== location.origin) {
+    warn("Rejected cross-origin SSE URL: " + parsed.href);
+    return null;
+  }
+
+  return parsed.href;
+}
+
+function resolveLiveTarget(selector, fallback) {
+  if (typeof selector !== "string" || !selector) return fallback;
+  return document.querySelector(selector) || null;
+}
+
+function applyLivePatchPayload(payload, fallbackTarget) {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    Object.prototype.hasOwnProperty.call(payload, "data")
+  ) {
+    const target = resolveLiveTarget(payload.target, fallbackTarget);
+    if (target) {
+      patch(payload.data, target);
+    }
+    return;
+  }
+
+  patch(payload, fallbackTarget);
+}
 
 function openLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
@@ -1004,7 +1184,8 @@ function openLive(root, url) {
     return;
   }
 
-  const fullUrl = new URL(url, location.origin).href;
+  const fullUrl = normalizeSSEEndpoint(url);
+  if (!fullUrl) return;
 
   // Close existing connection for this route
   const existing = liveConnections.get(fullUrl);
@@ -1043,8 +1224,8 @@ function connectSSE(url, state) {
   // Default message event → patch
   es.onmessage = function (e) {
     try {
-      const data = JSON.parse(e.data);
-      patch(data, state.element);
+      const payload = JSON.parse(e.data);
+      applyLivePatchPayload(payload, state.element);
     } catch (err) {
       warn("Failed to parse SSE message: " + err.message);
     }
@@ -1054,12 +1235,7 @@ function connectSSE(url, state) {
   es.addEventListener("patch", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = payload.target
-        ? document.querySelector(payload.target)
-        : state.element;
-      if (target && payload.data) {
-        patch(payload.data, target);
-      }
+      applyLivePatchPayload(payload, state.element);
     } catch (err) {
       warn("Failed to parse SSE patch event: " + err.message);
     }
@@ -1069,11 +1245,14 @@ function connectSSE(url, state) {
   es.addEventListener("html", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = payload.target
-        ? document.querySelector(payload.target)
-        : state.element;
-      if (target && payload.html) {
-        safeSetHTML(target, payload.html);
+      const target = resolveLiveTarget(payload && payload.target, state.element);
+      if (
+        target &&
+        payload &&
+        typeof payload === "object" &&
+        Object.prototype.hasOwnProperty.call(payload, "html")
+      ) {
+        safeSetHTML(target, payload.html == null ? "" : String(payload.html));
       }
     } catch (err) {
       warn("Failed to parse SSE html event: " + err.message);
@@ -1152,9 +1331,10 @@ function reconnectLive(root) {
 }
 
 function resolveSSEUrl(root) {
-  // If root is a URL string starting with /, treat it as a route key
-  if (typeof root === "string" && root.startsWith("/")) {
-    return new URL(root, location.origin).href;
+  // If root is a URL string, treat it as a route key.
+  if (isLikelyLiveUrl(root)) {
+    const route = normalizeSSEEndpoint(root);
+    if (route) return route;
   }
   // If root is an element or selector, find its connection by element match
   const element =
@@ -1182,7 +1362,7 @@ function destroyAllLive() {
 
 // ── Process silcrow-sse header from navigator responses ────
 function processSSEHeader(response) {
-  const ssePath = response.headers.get("silcrow-sse");
+  const ssePath = normalizeSSEEndpoint(response.headers.get("silcrow-sse"));
   if (ssePath) {
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
@@ -1203,6 +1383,7 @@ function initLiveElements() {
     }
   }
 }
+
 // silcrow/optimistic.js
 // ════════════════════════════════════════════════════════════
 // Optimistic — snapshot & revert for instant UI feedback
