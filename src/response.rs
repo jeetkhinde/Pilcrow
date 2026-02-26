@@ -40,22 +40,28 @@ impl BaseResponse {
             });
     }
 
+    fn toast_cookie_header_value(&self) -> Option<HeaderValue> {
+        if self.toasts.is_empty() {
+            return None;
+        }
+
+        serde_json::to_string(&self.toasts)
+            .ok()
+            .map(|json_string| urlencoding::encode(&json_string).into_owned())
+            .map(|encoded| {
+                Cookie::build(("silcrow_toasts", encoded))
+                    .path("/")
+                    .same_site(SameSite::Lax)
+                    .max_age(cookie::time::Duration::seconds(5))
+                    .build()
+            })
+            .and_then(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
+    }
+
     /// Safely formats toasts as URL-encoded cookies for HTML/Navigate responses.
     pub fn apply_toast_cookies(&self, response: &mut Response) {
-        // If we have multiple toasts, we serialize the array to JSON, then URL-encode it
-        if !self.toasts.is_empty() {
-            serde_json::to_string(&self.toasts)
-                .ok()
-                .map(|json_string| urlencoding::encode(&json_string).into_owned())
-                .map(|encoded| {
-                    Cookie::build(("silcrow_toasts", encoded))
-                        .path("/")
-                        .same_site(SameSite::Lax)
-                        .max_age(cookie::time::Duration::seconds(5))
-                        .build()
-                })
-                .and_then(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
-                .map(|header_value| response.headers_mut().append(SET_COOKIE, header_value));
+        if let Some(header_value) = self.toast_cookie_header_value() {
+            response.headers_mut().append(SET_COOKIE, header_value);
         }
     }
 }
@@ -273,7 +279,7 @@ impl ResponseExt for NavigateResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{html, json, navigate, ResponseExt};
+    use super::{html, json, navigate, BaseResponse, ResponseExt, Toast};
     use axum::{
         body::to_bytes,
         http::{header, StatusCode},
@@ -305,6 +311,42 @@ mod tests {
         assert!(set_cookie_values
             .iter()
             .any(|cookie| cookie.starts_with("silcrow_toasts=")));
+    }
+
+    #[test]
+    fn toast_cookie_header_value_returns_none_when_no_toasts() {
+        let base = BaseResponse::default();
+        assert!(base.toast_cookie_header_value().is_none());
+    }
+
+    #[test]
+    fn toast_cookie_header_value_returns_some_when_toasts_exist() {
+        let mut base = BaseResponse::default();
+        base.toasts.push(Toast {
+            message: "Saved".into(),
+            level: "success".into(),
+        });
+
+        assert!(base.toast_cookie_header_value().is_some());
+    }
+
+    #[test]
+    fn toast_cookie_header_value_contains_expected_cookie_name_and_attrs() {
+        let mut base = BaseResponse::default();
+        base.toasts.push(Toast {
+            message: "Saved".into(),
+            level: "success".into(),
+        });
+
+        let header = base
+            .toast_cookie_header_value()
+            .expect("header should exist when toasts are present");
+        let cookie = header.to_str().expect("set-cookie should be utf8");
+
+        assert!(cookie.contains("silcrow_toasts="));
+        assert!(cookie.contains("Path=/"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Max-Age=5"));
     }
 
     #[tokio::test]
