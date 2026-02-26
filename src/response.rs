@@ -44,7 +44,7 @@ impl BaseResponse {
     pub fn apply_toast_cookies(&self, response: &mut Response) {
         // If we have multiple toasts, we serialize the array to JSON, then URL-encode it
         if !self.toasts.is_empty() {
-            serde_json::to_string(&self.toasts)
+            if let Some(header_value) = serde_json::to_string(&self.toasts)
                 .ok()
                 .map(|json_string| urlencoding::encode(&json_string).into_owned())
                 .map(|encoded| {
@@ -55,7 +55,9 @@ impl BaseResponse {
                         .build()
                 })
                 .and_then(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
-                .map(|header_value| response.headers_mut().append(SET_COOKIE, header_value));
+            {
+                response.headers_mut().append(SET_COOKIE, header_value);
+            }
         }
     }
 }
