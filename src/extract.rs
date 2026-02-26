@@ -60,23 +60,12 @@ where
 impl SilcrowRequest {
     /// Determines the exact format the handler should return based on headers.
     pub fn preferred_mode(&self) -> RequestMode {
-        // If it's a Silcrow AJAX request, respect the Accept header strictly
-        if self.is_silcrow {
-            if self.accepts_html {
-                return RequestMode::Html;
-            }
-            if self.accepts_json {
-                return RequestMode::Json;
-            }
+        match (self.is_silcrow, self.accepts_html, self.accepts_json) {
+            (true, true, _) => RequestMode::Html,
+            (true, false, true) => RequestMode::Json,
+            (false, true, _) => RequestMode::Html,
+            _ => RequestMode::Json,
         }
-
-        // If it's a standard browser hard-refresh, default to HTML
-        if self.accepts_html {
-            return RequestMode::Html;
-        }
-
-        // Ultimate fallback for API clients
-        RequestMode::Json
     }
 }
 

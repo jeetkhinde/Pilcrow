@@ -25,39 +25,37 @@ pub struct BaseResponse {
 
 impl BaseResponse {
     /// Applies all headers and standard cookies to the Axum response.
-    /// (Fix #4: Centralized emission logic)
     pub fn apply_to_response(&self, response: &mut Response) {
         // 1. Apply standard headers
-        for (name, value) in &self.headers {
+        self.headers.iter().for_each(|(name, value)| {
             response.headers_mut().insert(name.clone(), value.clone());
-        }
+        });
 
         // 2. Apply standard cookies
-        for cookie in &self.cookies {
-            if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
+        self.cookies
+            .iter()
+            .filter_map(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
+            .for_each(|header_value| {
                 response.headers_mut().append(SET_COOKIE, header_value);
-            }
-        }
+            });
     }
 
     /// Safely formats toasts as URL-encoded cookies for HTML/Navigate responses.
-    /// (Fix #3: Safe Cookie formatting)
     pub fn apply_toast_cookies(&self, response: &mut Response) {
         // If we have multiple toasts, we serialize the array to JSON, then URL-encode it
         if !self.toasts.is_empty() {
-            if let Ok(json_string) = serde_json::to_string(&self.toasts) {
-                let encoded = urlencoding::encode(&json_string);
-
-                let cookie = Cookie::build(("silcrow_toasts", encoded.into_owned()))
-                    .path("/")
-                    .same_site(SameSite::Lax)
-                    .max_age(cookie::time::Duration::seconds(5))
-                    .build();
-
-                if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
-                    response.headers_mut().append(SET_COOKIE, header_value);
-                }
-            }
+            serde_json::to_string(&self.toasts)
+                .ok()
+                .map(|json_string| urlencoding::encode(&json_string).into_owned())
+                .map(|encoded| {
+                    Cookie::build(("silcrow_toasts", encoded))
+                        .path("/")
+                        .same_site(SameSite::Lax)
+                        .max_age(cookie::time::Duration::seconds(5))
+                        .build()
+                })
+                .and_then(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
+                .map(|header_value| response.headers_mut().append(SET_COOKIE, header_value));
         }
     }
 }
@@ -184,31 +182,31 @@ pub struct JsonResponse<T> {
 
 impl<T: serde::Serialize> IntoResponse for JsonResponse<T> {
     fn into_response(self) -> Response {
-        // Fix #1: Never unwrap serialization. Return 500 if it fails.
-        let mut json_payload = match serde_json::to_value(&self.data) {
-            Ok(val) => val,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-
-        // Fix #2: Handle toasts safely, even if the root isn't an Object
-        if !self.base.toasts.is_empty() {
-            let toasts_json = serde_json::json!(self.base.toasts);
-
-            if let serde_json::Value::Object(mut map) = json_payload {
-                map.insert("_toasts".to_string(), toasts_json);
-                json_payload = serde_json::Value::Object(map);
-            } else {
-                // Option B Safe Wrap: If the user returned an array `json(vec![1, 2])`
-                json_payload = serde_json::json!({
-                    "data": json_payload,
-                    "_toasts": toasts_json
-                });
-            }
-        }
-
-        let mut response = Json(json_payload).into_response();
-        self.base.apply_to_response(&mut response); // Apply headers/cookies (but NOT toast cookies)
-        response
+        serde_json::to_value(&self.data)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            .map(|json_payload| {
+                if self.base.toasts.is_empty() {
+                    json_payload
+                } else {
+                    let toasts_json = serde_json::json!(self.base.toasts);
+                    match json_payload {
+                        serde_json::Value::Object(mut map) => {
+                            map.insert("_toasts".to_string(), toasts_json);
+                            serde_json::Value::Object(map)
+                        }
+                        other => serde_json::json!({
+                            "data": other,
+                            "_toasts": toasts_json
+                        }),
+                    }
+                }
+            })
+            .map(|final_payload| {
+                let mut response = Json(final_payload).into_response();
+                self.base.apply_to_response(&mut response);
+                response
+            })
+            .unwrap_or_else(std::convert::identity)
     }
 }
 
