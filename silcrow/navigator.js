@@ -89,7 +89,7 @@ function bustCacheOnMutation() {
 }
 
 // ── Side-Effect Header Processing ──────────────────────────
-function processSideEffectHeaders(sideEffects, liveRoot) {
+function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (!sideEffects) return;
 
   // Order: patch → invalidate → navigate → sse
@@ -129,7 +129,7 @@ function processSideEffectHeaders(sideEffects, liveRoot) {
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: ssePath, root: liveRoot || null},
+        detail: {path: sideEffects.sse, target: primaryTarget || null},
       })
     );
   }

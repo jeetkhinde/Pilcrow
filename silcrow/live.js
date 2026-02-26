@@ -3,7 +3,8 @@
 // Live — SSE connections & real-time updates
 // ════════════════════════════════════════════════════════════
 
-const liveConnections = new Map(); // route → { es, root, backoff, paused }
+const liveConnections = new Map(); // element -> state
+const liveConnectionsByUrl = new Map(); // url -> Set<state>
 const MAX_BACKOFF = 30000;
 const LIVE_HTTP_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -62,6 +63,75 @@ function applyLivePatchPayload(payload, fallbackTarget) {
   patch(payload, fallbackTarget);
 }
 
+function registerLiveState(state) {
+  liveConnections.set(state.element, state);
+
+  let byUrl = liveConnectionsByUrl.get(state.url);
+  if (!byUrl) {
+    byUrl = new Set();
+    liveConnectionsByUrl.set(state.url, byUrl);
+  }
+  byUrl.add(state);
+}
+
+function unregisterLiveState(state) {
+  if (liveConnections.get(state.element) === state) {
+    liveConnections.delete(state.element);
+  }
+
+  const byUrl = liveConnectionsByUrl.get(state.url);
+  if (!byUrl) return;
+
+  byUrl.delete(state);
+  if (byUrl.size === 0) {
+    liveConnectionsByUrl.delete(state.url);
+  }
+}
+
+function pauseLiveState(state) {
+  state.paused = true;
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+  if (state.es) {
+    state.es.close();
+    state.es = null;
+  }
+}
+
+function resolveLiveStates(root) {
+  if (typeof root === "string") {
+    // Route key: disconnect/reconnect all connections for the URL
+    if (
+      root.startsWith("/") ||
+      root.startsWith("http://") ||
+      root.startsWith("https://")
+    ) {
+      const fullUrl = new URL(root, location.origin).href;
+      const states = liveConnectionsByUrl.get(fullUrl);
+      return states ? Array.from(states) : [];
+    }
+
+    const element = document.querySelector(root);
+    if (!element) return [];
+    const state = liveConnections.get(element);
+    return state ? [state] : [];
+  }
+
+  if (!root) return [];
+  const state = liveConnections.get(root);
+  return state ? [state] : [];
+}
+
+function onSSEEvent(e) {
+  const path = e?.detail?.path;
+  if (!path || typeof path !== "string") return;
+
+  const root = e?.detail?.target || document.body;
+  openLive(root, path);
+}
+
 function openLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
   if (!element) {
@@ -72,26 +142,29 @@ function openLive(root, url) {
   const fullUrl = normalizeSSEEndpoint(url);
   if (!fullUrl) return;
 
-  // Close existing connection for this route
-  const existing = liveConnections.get(fullUrl);
-  if (existing && existing.es) {
-    existing.es.close();
+  // Replace existing connection for this root element
+  const existing = liveConnections.get(element);
+  if (existing) {
+    pauseLiveState(existing);
+    unregisterLiveState(existing);
   }
 
   const state = {
     es: null,
+    url: fullUrl,
     element,
     backoff: 1000,
     paused: false,
     reconnectTimer: null,
   };
-  liveConnections.set(fullUrl, state);
+  registerLiveState(state);
 
   connectSSE(fullUrl, state);
 }
 
 function connectSSE(url, state) {
   if (state.paused) return;
+  if (liveConnections.get(state.element) !== state) return;
 
   const es = new EventSource(url);
   state.es = es;
@@ -120,7 +193,28 @@ function connectSSE(url, state) {
   es.addEventListener("patch", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      applyLivePatchPayload(payload, state.element);
+      let target = state.element;
+      let data = payload;
+
+      // Supports both:
+      // 1) {"target":"#el","data":{...}} (Pilcrow SilcrowEvent::patch)
+      // 2) {...} or [...] (direct root patch payload)
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+
+      if (target && data !== undefined) {
+        patch(data, target);
+      }
     } catch (err) {
       warn("Failed to parse SSE patch event: " + err.message);
     }
@@ -130,7 +224,9 @@ function connectSSE(url, state) {
   es.addEventListener("html", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      const target = resolveLiveTarget(payload && payload.target, state.element);
+      const target = payload.target
+        ? document.querySelector(payload.target)
+        : state.element;
       if (
         target &&
         payload &&
@@ -161,6 +257,7 @@ function connectSSE(url, state) {
     state.es = null;
 
     if (state.paused) return;
+    if (liveConnections.get(state.element) !== state) return;
 
     const reconnectIn = state.backoff;
 
@@ -182,80 +279,35 @@ function connectSSE(url, state) {
 }
 
 function disconnectLive(root) {
-  const url = resolveSSEUrl(root);
-  if (!url) return;
+  const states = resolveLiveStates(root);
+  if (!states.length) return;
 
-  const state = liveConnections.get(url);
-  if (!state) return;
-
-  state.paused = true;
-  if (state.reconnectTimer) {
-    clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
-  }
-  if (state.es) {
-    state.es.close();
-    state.es = null;
+  for (const state of states) {
+    pauseLiveState(state);
   }
 }
 
 function reconnectLive(root) {
-  const url = resolveSSEUrl(root);
-  if (!url) return;
+  const states = resolveLiveStates(root);
+  if (!states.length) return;
 
-  const state = liveConnections.get(url);
-  if (!state) return;
-
-  state.paused = false;
-  state.backoff = 1000; // Reset backoff
-  if (state.reconnectTimer) {
-    clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
+  for (const state of states) {
+    state.paused = false;
+    state.backoff = 1000; // Reset backoff
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    connectSSE(state.url, state);
   }
-  connectSSE(url, state);
-}
-
-function resolveSSEUrl(root) {
-  // If root is a URL string, treat it as a route key.
-  if (isLikelyLiveUrl(root)) {
-    const route = normalizeSSEEndpoint(root);
-    if (route) return route;
-  }
-  // If root is an element or selector, find its connection by element match
-  const element =
-    typeof root === "string" ? document.querySelector(root) : root;
-  if (!element) return null;
-
-  for (const [url, state] of liveConnections) {
-    if (state.element === element) return url;
-  }
-  return null;
 }
 
 function destroyAllLive() {
-  for (const [url, state] of liveConnections) {
-    state.paused = true;
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer);
-    }
-    if (state.es) {
-      state.es.close();
-    }
+  for (const state of liveConnections.values()) {
+    pauseLiveState(state);
   }
   liveConnections.clear();
-}
-
-// ── Process silcrow-sse header from navigator responses ────
-function processSSEHeader(response) {
-  const ssePath = normalizeSSEEndpoint(response.headers.get("silcrow-sse"));
-  if (ssePath) {
-    document.dispatchEvent(
-      new CustomEvent("silcrow:sse", {
-        bubbles: true,
-        detail: {path: ssePath},
-      })
-    );
-  }
+  liveConnectionsByUrl.clear();
 }
 
 // ── Auto-scan for s-live elements on init ──────────────────
