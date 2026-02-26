@@ -1,0 +1,171 @@
+public/silcrow.js
+        typeof payload === "object" &&
+        Object.prototype.hasOwnProperty.call(payload, "html")
+      ) {
+        safeSetHTML(target, payload.html == null ? "" : String(payload.html));
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-critical critical
+
+The safeSetHTML function used here has an insecure fallback sanitization mechanism. It only removes <script> tags and on* attributes, which is insufficient to prevent XSS via other vectors like javascript: URIs in href or src attributes. Since the input payload.html comes directly from an SSE stream (which can be hijacked), this allows for arbitrary JavaScript execution.
+
+
+public/silcrow.js
+      }
+
+      if (target && data !== undefined) {
+        patch(data, target);
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-high high
+
+Untrusted data from the SSE patch event is passed to the patch function, which can update attributes like href or src without sanitizing them for javascript: URIs. An attacker controlling the SSE stream can inject malicious scripts.
+
+public/silcrow.js
+      new CustomEvent("silcrow:sse", {
+        bubbles: true,
+        detail: {path: sideEffects.sse},
+        detail: {path: sideEffects.sse, target: primaryTarget || null},
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-high high
+
+The library initiates an SSE connection using a path provided in the silcrow-sse header without validating its origin. An attacker can trick the application into navigating to a malicious URL that returns this header, forcing the client to connect to an attacker-controlled SSE server.
+
+public/silcrow.js
+Comment on lines +1137 to +1148
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ high
+
+The condition to detect an envelope payload for a patch event is ambiguous. It checks for the presence of a data property, which could also exist in a direct patch payload. This can lead to misinterpreting a direct patch payload as an envelope, causing only a part of the data to be patched. A more robust approach is to check for the target property, which is a clearer indicator of an envelope and aligns better with the documentation's description of an envelope as {target, data}.
+
+Suggested change
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "target")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+
+
+
+silcrow/live.js
+        typeof payload === "object" &&
+        Object.prototype.hasOwnProperty.call(payload, "html")
+      ) {
+        safeSetHTML(target, payload.html == null ? "" : String(payload.html));
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-critical critical
+
+The safeSetHTML function used here has an insecure fallback sanitization mechanism. It only removes <script> tags and on* attributes, which is insufficient to prevent XSS via other vectors like javascript: URIs in href (for <a> tags), src (for <iframe> tags), or formaction (for <button> tags). Since the input payload.html comes directly from an SSE stream (which can be hijacked), this allows for arbitrary JavaScript execution in the context of the application.
+
+silcrow/live.js
+      }
+
+      if (target && data !== undefined) {
+        patch(data, target);
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-high high
+
+Untrusted data from the SSE patch event is passed directly to the patch function. This function can update attributes like href or src without sanitizing them for javascript: URIs. An attacker controlling the SSE stream can inject malicious scripts that execute when a user interacts with the affected elements (e.g., clicking a link with a malicious href).
+
+
+silcrow/live.js
+Comment on lines +145 to +156
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ high
+
+The condition to detect an envelope payload for a patch event is ambiguous. It checks for the presence of a data property, which could also exist in a direct patch payload. This can lead to misinterpreting a direct patch payload as an envelope, causing only a part of the data to be patched. A more robust approach is to check for the target property, which is a clearer indicator of an envelope and aligns better with the documentation's description of an envelope as {target, data}.
+
+Suggested change
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+      if (
+        payload &&
+        typeof payload === "object" &&
+        !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "target")
+      ) {
+        data = payload.data;
+        if (payload.target) {
+          const selected = document.querySelector(payload.target);
+          if (selected) target = selected;
+        }
+      }
+
+
+silcrow/navigator.js
+      new CustomEvent("silcrow:sse", {
+        bubbles: true,
+        detail: {path: sideEffects.sse},
+        detail: {path: sideEffects.sse, target: primaryTarget || null},
+@gemini-code-assist
+gemini-code-assist bot
+1 hour ago
+ security-high high
+
+The library initiates an SSE connection using a path provided in the silcrow-sse header without validating its origin. An attacker can trick the application into navigating to a malicious URL (e.g., via a link or redirect) that returns this header, forcing the client to connect to an attacker-controlled SSE server. This server can then push malicious updates (patches or HTML) to the client, leading to XSS or unauthorized modification of the page content.
+

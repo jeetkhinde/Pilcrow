@@ -51,8 +51,14 @@ function applyLivePatchPayload(payload, fallbackTarget) {
   if (
     payload &&
     typeof payload === "object" &&
-    Object.prototype.hasOwnProperty.call(payload, "data")
+    !Array.isArray(payload) &&
+    Object.prototype.hasOwnProperty.call(payload, "target")
   ) {
+    if (!Object.prototype.hasOwnProperty.call(payload, "data")) {
+      warn("SSE patch envelope missing data field");
+      return;
+    }
+
     const target = resolveLiveTarget(payload.target, fallbackTarget);
     if (target) {
       patch(payload.data, target);
