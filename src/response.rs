@@ -192,7 +192,10 @@ pub struct JsonResponse<T> {
 impl<T: serde::Serialize> IntoResponse for JsonResponse<T> {
     fn into_response(self) -> Response {
         serde_json::to_value(&self.data)
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+            .map_err(|e| {
+                tracing::error!("JsonResponse serialization failed: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            })
             .map(|json_payload| {
                 if self.base.toasts.is_empty() {
                     json_payload
@@ -227,7 +230,6 @@ pub struct NavigateResponse {
 
 impl IntoResponse for NavigateResponse {
     fn into_response(self) -> Response {
-        // Fix #5: Explicitly using 303 See Other, which is best practice for client-side routers
         let mut response = Redirect::to(&self.path).into_response();
 
         // Ensure the status is explicitly 303 (Axum defaults to 303 for Redirect::to, but this guarantees it)
