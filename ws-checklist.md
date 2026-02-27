@@ -15,3 +15,15 @@
 - [ ] Element removed from DOM → MutationObserver closes WebSocket
 - [ ] `Silcrow.disconnect("#el")` → WebSocket closes
 - [ ] `Silcrow.reconnect("#el")` → WebSocket reopens
+
+## Multiplex Verification
+
+- [ ] Two elements with `s-live="ws:/same/path"` → ONE WebSocket in Network tab
+- [ ] Two elements with different WS URLs → TWO WebSockets
+- [ ] Remove one element from DOM → socket stays open for remaining subscriber
+- [ ] Remove last element from DOM → socket closes
+- [ ] `Silcrow.send("/ws/path", data)` sends one frame, not N
+- [ ] `Silcrow.disconnect("#one")` keeps socket alive if `#two` subscribed to same URL
+- [ ] `Silcrow.disconnect("/ws/path")` pauses hub, all subscribers stop
+- [ ] `Silcrow.reconnect("/ws/path")` resumes hub for all subscribers
+- [ ] `Silcrow.destroy()` closes all hubs, no leaked sockets
