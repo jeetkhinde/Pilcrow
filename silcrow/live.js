@@ -104,6 +104,10 @@ function pauseLiveState(state) {
     state.es.close();
     state.es = null;
   }
+  if (state.socket) {
+    state.socket.close();
+    state.socket = null;
+  }
 }
 
 function resolveLiveStates(root) {
@@ -157,11 +161,13 @@ function openLive(root, url) {
 
   const state = {
     es: null,
+    socket: null,
     url: fullUrl,
     element,
     backoff: 1000,
     paused: false,
     reconnectTimer: null,
+    protocol: "sse",
   };
   registerLiveState(state);
 
@@ -320,9 +326,13 @@ function destroyAllLive() {
 function initLiveElements() {
   const elements = document.querySelectorAll("[s-live]");
   for (const el of elements) {
-    const url = el.getAttribute("s-live");
-    if (url) {
-      openLive(el, url);
+    const raw = el.getAttribute("s-live");
+    if (!raw) continue;
+
+    if (raw.startsWith("ws:")) {
+      openWsLive(el, raw.slice(3));
+    } else {
+      openLive(el, raw);
     }
   }
 }

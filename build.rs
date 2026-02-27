@@ -10,6 +10,7 @@ const MODULES: &[&str] = &[
     "toasts",
     "navigator",
     "live",
+    "ws",
     "optimistic",
     "index",
 ];
