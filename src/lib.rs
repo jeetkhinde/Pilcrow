@@ -2,16 +2,15 @@
 
 pub mod assets;
 pub mod extract;
+pub mod headers;
 pub mod macros;
 pub mod response;
-pub mod select;
 pub mod sse;
 pub mod ws;
 
 // Re-export the core API so developers can just `use pilcrow::*`
 pub use extract::SilcrowRequest;
 pub use response::{html, json, navigate, ResponseExt};
-pub use select::Responses;
 pub use sse::{sse, SilcrowEvent, SseRoute};
 pub use ws::{WsEvent, WsRoute, WsStream};
 // Re-export Axum primitives they might need for convenience

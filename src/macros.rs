@@ -39,81 +39,134 @@
 /// ```
 #[macro_export]
 macro_rules! respond {
-    // ── Both arms + shared toast ─────────────────────────────
     ($req:expr, { html => $html:expr, json => raw $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .html(move || async move { $crate::ResponseExt::with_toast($html, $msg, $lvl) })
-                .json(move || async move {
-                    $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl)
-                }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
+                ))
+            }
+            $crate::extract::RequestMode::Json => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl),
+                ))
+            }
+        }
     };
     ($req:expr, { html => $html:expr, json => $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .html(move || async move { $crate::ResponseExt::with_toast($html, $msg, $lvl) })
-                .json(move || async move { $crate::ResponseExt::with_toast($json, $msg, $lvl) }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
+                ))
+            }
+            $crate::extract::RequestMode::Json => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($json, $msg, $lvl),
+                ))
+            }
+        }
     };
 
     // ── Both arms, no shared toast ───────────────────────────
     ($req:expr, { html => $html:expr, json => raw $json:expr $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .html(move || async move { $html })
-                .json(move || async move { $crate::json($json) }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($html),
+            ),
+            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($crate::json($json)),
+            ),
+        }
     };
     ($req:expr, { html => $html:expr, json => $json:expr $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .html(move || async move { $html })
-                .json(move || async move { $json }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($html),
+            ),
+            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($json),
+            ),
+        }
     };
 
     // ── HTML-only + shared toast ─────────────────────────────
     ($req:expr, { html => $html:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .html(move || async move { $crate::ResponseExt::with_toast($html, $msg, $lvl) }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
+                ))
+            }
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "HTML required",
+            ))),
+        }
     };
 
     // ── JSON-only + shared toast ─────────────────────────────
     ($req:expr, { json => raw $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
-        $req.select($crate::Responses::new().json(move || async move {
-            $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl)
-        }))
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl),
+                ))
+            }
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "JSON required",
+            ))),
+        }
     };
     ($req:expr, { json => $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
-        $req.select(
-            $crate::Responses::new()
-                .json(move || async move { $crate::ResponseExt::with_toast($json, $msg, $lvl) }),
-        )
-        .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
+                    $crate::ResponseExt::with_toast($json, $msg, $lvl),
+                ))
+            }
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "JSON required",
+            ))),
+        }
     };
 
     // ── HTML-only, no toast ──────────────────────────────────
     ($req:expr, { html => $html:expr $(,)? }) => {
-        $req.select($crate::Responses::new().html(move || async move { $html }))
-            .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($html),
+            ),
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "HTML required",
+            ))),
+        }
     };
 
     // ── JSON-only, no toast ──────────────────────────────────
     ($req:expr, { json => raw $json:expr $(,)? }) => {
-        $req.select($crate::Responses::new().json(move || async move { $crate::json($json) }))
-            .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($crate::json($json)),
+            ),
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "JSON required",
+            ))),
+        }
     };
     ($req:expr, { json => $json:expr $(,)? }) => {
-        $req.select($crate::Responses::new().json(move || async move { $json }))
-            .await
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
+                axum::response::IntoResponse::into_response($json),
+            ),
+            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::NOT_ACCEPTABLE,
+                "JSON required",
+            ))),
+        }
     };
 }

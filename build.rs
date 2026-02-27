@@ -1,7 +1,6 @@
 //./build.rs
-use std::collections::hash_map::DefaultHasher;
+use crc32fast::Hasher;
 use std::fs;
-use std::hash::Hasher;
 
 const MODULES: &[&str] = &[
     "debug",
@@ -42,10 +41,9 @@ fn main() {
     fs::write("public/silcrow.js", &bundle).expect("failed to write silcrow.js");
 
     // Hash for cache-busting
-    let mut hasher = DefaultHasher::new();
-    hasher.write(bundle.as_bytes());
-    let hash = format!("{:x}", hasher.finish());
-    let short = &hash[..8];
+    let mut hasher = Hasher::new();
+    hasher.update(bundle.as_bytes());
+    let hash = format!("{:08x}", hasher.finalize());
 
-    println!("cargo::rustc-env=SILCROW_JS_HASH={short}");
+    println!("cargo::rustc-env=SILCROW_JS_HASH={hash}");
 }
