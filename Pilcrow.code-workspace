@@ -4,5 +4,7 @@
 			"path": "."
 		}
 	],
-	"settings": {}
+	"settings": {
+		"geminicodeassist.outlines.automaticOutlineGeneration": true
+	}
 }
