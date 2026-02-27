@@ -253,6 +253,7 @@ function connectSSE(url, state) {
   });
 
   // Named event: invalidate
+  // Recommendation: Park this. It's a future-proofing concern, not a current bug. When you add SilcrowEvent::invalidate(target) to Rust, fix the JS listener at the same time to parse e.data for a target selector.
   es.addEventListener("invalidate", function () {
     invalidate(state.element);
   });
