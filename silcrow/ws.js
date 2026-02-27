@@ -331,18 +331,27 @@ function sendWs(root, data) {
     return;
   }
 
+  // Deduplicate: send once per hub, not once per subscriber
+  const sentHubs = new Set();
+
   for (const state of states) {
     if (state.protocol !== "ws") {
       warn("Cannot send on SSE connection — use WS for bidirectional");
       continue;
     }
-    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+
+    const hub = state.hub;
+    if (!hub || sentHubs.has(hub)) continue;
+    sentHubs.add(hub);
+
+    if (!hub.socket || hub.socket.readyState !== WebSocket.OPEN) {
       warn("WebSocket not open for send");
       continue;
     }
+
     try {
       const payload = typeof data === "string" ? data : JSON.stringify(data);
-      state.socket.send(payload);
+      hub.socket.send(payload);
     } catch (err) {
       warn("WS send failed: " + err.message);
     }
