@@ -222,7 +222,7 @@ function connectSSE(url, state) {
         payload &&
         typeof payload === "object" &&
         !Array.isArray(payload) &&
-        Object.prototype.hasOwnProperty.call(payload, "data")
+        Object.prototype.hasOwnProperty.call(payload, "target")
       ) {
         data = payload.data;
         if (payload.target) {
