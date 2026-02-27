@@ -104,7 +104,14 @@ function pauseLiveState(state) {
     state.es.close();
     state.es = null;
   }
-  if (state.socket) {
+  // For WS: unsubscribe from hub instead of closing socket directly
+  if (state.protocol === "ws" && state.hub) {
+    state.hub.subscribers.delete(state.element);
+    if (state.hub.subscribers.size === 0) {
+      removeWsHub(state.hub);
+    }
+    state.hub = null;
+  } else if (state.socket) {
     state.socket.close();
     state.socket = null;
   }
@@ -215,7 +222,7 @@ function connectSSE(url, state) {
         payload &&
         typeof payload === "object" &&
         !Array.isArray(payload) &&
-        Object.prototype.hasOwnProperty.call(payload, "data")
+        Object.prototype.hasOwnProperty.call(payload, "target")
       ) {
         data = payload.data;
         if (payload.target) {
@@ -304,14 +311,36 @@ function reconnectLive(root) {
   const states = resolveLiveStates(root);
   if (!states.length) return;
 
+  const reconnectedHubs = new Set();
+
   for (const state of states) {
     state.paused = false;
-    state.backoff = 1000; // Reset backoff
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = null;
+
+    if (state.protocol === "ws") {
+      // Re-subscribe to hub
+      const hub = getOrCreateWsHub(state.url);
+      hub.subscribers.add(state.element);
+      state.hub = hub;
+
+      if (!reconnectedHubs.has(hub)) {
+        reconnectedHubs.add(hub);
+        hub.paused = false;
+        hub.backoff = 1000;
+        if (hub.reconnectTimer) {
+          clearTimeout(hub.reconnectTimer);
+          hub.reconnectTimer = null;
+        }
+        connectWsHub(hub);
+      }
+    } else {
+      // SSE: existing behavior
+      state.backoff = 1000;
+      if (state.reconnectTimer) {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = null;
+      }
+      connectSSE(state.url, state);
     }
-    connectSSE(state.url, state);
   }
 }
 
@@ -321,6 +350,19 @@ function destroyAllLive() {
   }
   liveConnections.clear();
   liveConnectionsByUrl.clear();
+
+  // Clean up any remaining WS hubs
+  for (const hub of wsHubs.values()) {
+    if (hub.reconnectTimer) {
+      clearTimeout(hub.reconnectTimer);
+      hub.reconnectTimer = null;
+    }
+    if (hub.socket) {
+      hub.socket.close();
+      hub.socket = null;
+    }
+  }
+  wsHubs.clear();
 }
 
 // ── Auto-scan for s-live elements on init ──────────────────

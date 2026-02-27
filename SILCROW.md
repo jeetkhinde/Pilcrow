@@ -280,6 +280,15 @@ Prefix the URL with `ws:` to use WebSocket instead of SSE:
 
 Without a prefix, `s-live` defaults to SSE for backward compatibility.
 
+### Connection Sharing
+
+When multiple elements connect to the same WebSocket URL, Silcrow opens a single
+shared connection. Messages with an explicit `target` selector are applied once to
+the matching element. Messages without a target fan out to all subscribed elements.
+
+This is automatic — no configuration needed. If you need isolated connections to the
+same URL (rare), use distinct query parameters: `ws:/ws/chat?room=1` vs `ws:/ws/chat?room=2`.
+
 ### Programmatic with `Silcrow.live()`
 
 ```js
