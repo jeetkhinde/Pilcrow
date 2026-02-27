@@ -200,8 +200,9 @@ The backend can control Silcrow's behavior through response headers. These are s
 | `silcrow-invalidate` | CSS selector — rebuilds binding maps for the target element via `Silcrow.invalidate()`. |
 | `silcrow-navigate` | URL path — triggers a client-side navigation after the swap completes. |
 | `silcrow-sse` | URL path — dispatches a `silcrow:sse` event signaling the client to open an SSE connection. |
+| `silcrow-ws` | URL path — dispatches a silcrow:ws event signaling the client to open a WebSocket connection. |
 
-Side-effect headers execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
+Side-effect headers execute in order: patch → invalidate → navigate → sse/ws. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### Caching
 
@@ -359,85 +360,6 @@ WebSocket messages are JSON objects with a `type` field that matches the Rust `W
 {"type": "navigate", "path": "/dashboard"}
 {"type": "custom", "event": "refresh", "data": {"section": "sidebar"}}
 
-```
-
-**6. Update `silcrow-sse` side-effect header table** — add `silcrow-ws`:
-
-In the "After swap (side effects)" table, add a row:
-
-```md
-| `silcrow-ws` | URL path — dispatches a `silcrow:ws` event signaling the client to open a WebSocket connection. |
-```
-
-And update the ordering sentence:
-
-```md
-Side effects execute in order: patch → invalidate → navigate → sse.
-```
-
-→
-
-```md
-Side effects execute in order: patch → invalidate → navigate → sse/ws.
-```
-
-**7. Update Events table** — add `protocol` to live events, add ws custom event:
-
-Change these rows:
-
-```md
-| `silcrow:live:connect` | `{root, url}` | No | SSE connection opened |
-| `silcrow:live:disconnect` | `{root, url, reconnectIn}` | No | SSE connection lost (with backoff ms) |
-```
-
-→
-
-```md
-| `silcrow:live:connect` | `{root, url, protocol?}` | No | SSE or WebSocket connection opened |
-| `silcrow:live:disconnect` | `{root, url, reconnectIn, protocol?}` | No | SSE or WebSocket connection lost (with backoff ms) |
-| `silcrow:ws:{event}` | `{root, data}` | No | Custom WebSocket event received from server |
-```
-
-**8. Update API Reference — rename "Live (SSE)" section and add `send`:**
-
-```md
-### Live (SSE)
-```
-
-→
-
-```md
-### Live (SSE & WebSocket)
-```
-
-Add row to the table:
-
-```md
-| `Silcrow.send(root, data)` | Send data to server via WebSocket (no-op on SSE) |
-```
-
-**9. Update Compatibility** — add `WebSocket`:
-
-```md
-Silcrow.js requires a modern browser with support for `fetch`, `URL`, `CustomEvent`, `WeakMap`, `queueMicrotask`, `EventSource`, and `<template>`. No polyfills are bundled.
-```
-
-→
-
-```md
-Silcrow.js requires a modern browser with support for `fetch`, `URL`, `CustomEvent`, `WeakMap`, `queueMicrotask`, `EventSource`, `WebSocket`, and `<template>`. No polyfills are bundled.
-```
-
----
-
-**`readme.md` changes:**
-
-**1. Add `.ws()` to the ResponseExt table:**
-
-After the `.sse(route)` row, add:
-
-```md
-| `.ws(route)` | Signals the client to open a WebSocket connection to the given path |
 ```
 
 ---

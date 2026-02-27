@@ -165,6 +165,7 @@ All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implemen
 | `.invalidate_target(selector)` | Rebuilds Silcrow.js binding maps for the target element |
 | `.client_navigate(path)` | Triggers a client-side navigation via Silcrow.js |
 | `.sse(route)` | Signals the client to open an SSE connection to the given path |
+| `.ws(route)` | Signals the client to open a WebSocket connection to the given path |
 
 Toast transport is automatic — HTML responses use a short-lived cookie (`Max-Age=5`, `SameSite=Lax`), JSON responses inject a `_toasts` array into the payload. If the JSON root isn't an object (e.g. you returned a `Vec`), Pilcrow wraps it as `{"data": [...], "_toasts": [...]}`.
 
@@ -187,7 +188,7 @@ pub async fn save_item(req: SilcrowRequest) -> Result<Response, AppError> {
 }
 ```
 
-Side effects execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
+Side effects execute in order: patch → invalidate → navigate → sse/ws. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### 4. Navigation (Redirects)
 
@@ -332,17 +333,6 @@ Router::new()
 
 **Client-side:** Silcrow.js handles connection management, reconnection with exponential backoff, and bidirectional messaging. Use `Silcrow.send(root, data)` to send messages from the client. See the [Silcrow.js docs](SILCROW.md#websocket-with-s-live) for the full client-side API.
 
-**3. Update Public API table** — add WS exports:
-
-After the `sse(stream)` row, add:
-
-```md
-| `WsRoute` | Typed WebSocket route constant |
-| `WsEvent` | Bidirectional WebSocket message enum (`.patch()`, `.html()`, `.invalidate()`, `.navigate()`, `.custom()`) |
-| `WsStream` | Typed WebSocket connection wrapper (`.send()`, `.recv()`, `.close()`) |
-| `ws::ws(upgrade, handler)` | Upgrades HTTP to WebSocket with a typed handler |
-```
-
 ---
 
 ## Asset Serving
@@ -482,20 +472,6 @@ Router::new()
     .route(CHAT_WS.path(), get(chat_handler))
 ```
 
----
-
-That's all the diffs. Make the changes, and Phase 6 is done. After that:
-
-Branch: feat/ws
-Commit(s):
-
-  1. feat(ws): add WsRoute, WsEvent, WsStream, ws() upgrade helper
-  2. feat(response): add .ws() method to ResponseExt
-  3. feat(silcrow): add ws.js WebSocket transport + Silcrow.send()
-  4. docs: add WebSocket sections to readme.md and SILCROW.md
-
-PR title: feat: WebSocket support mirroring SSE architecture
-
 ### Raw Shorthand
 
 When you just need to return a struct without modifiers:
@@ -558,6 +534,10 @@ pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
 | `SseRoute` | Typed SSE route constant |
 | `SilcrowEvent` | Structured SSE event builder (`.patch()`, `.html()`) |
 | `sse(stream)` | Creates an SSE response from a stream with keep-alive |
+| `WsRoute` | Typed WebSocket route constant |
+| `WsEvent` | Bidirectional WebSocket message enum (`.patch()`, `.html()`, `.invalidate()`, `.navigate()`, `.custom()`) |
+| `WsStream` | Typed WebSocket connection wrapper (`.send()`, `.recv()`, `.close()`) |
+| `ws::ws(upgrade, handler)` | Upgrades HTTP to WebSocket with a typed handler |
 | `Responses` | Builder for advanced use cases |
 
 ## Dependencies
