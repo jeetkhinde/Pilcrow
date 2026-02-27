@@ -28,11 +28,11 @@ function normalizeWsEndpoint(rawUrl) {
     return null;
   }
 
-+ const expectedOrigin = location.origin.replace(/^http/, "ws");
-+ if (parsed.origin !== expectedOrigin) {
-+   warn("Rejected cross-origin WebSocket URL: " + parsed.href);
-+   return null;
-+ }
+  const expectedOrigin = location.origin.replace(/^http/, "ws");
+  if (parsed.origin !== expectedOrigin) {
+    warn("Rejected cross-origin WebSocket URL: " + parsed.href);
+    return null;
+  }
 
   return parsed.href;
 }
@@ -131,39 +131,33 @@ function connectWsHub(hub) {
   };
 }
 
+
 function dispatchWsMessage(hub, rawData) {
   try {
     const msg = JSON.parse(rawData);
     const type = msg && msg.type;
 
-    // Targeted messages: resolve selector, apply once
+    let targets;
+    if (msg.target) {
+      const el = document.querySelector(msg.target);
+      targets = el ? [el] : [];
+    } else {
+      targets = hub.subscribers;
+    }
+
     if (type === "patch") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target && msg.data !== undefined) patch(msg.data, target);
-      } else {
-        // Untargeted: fan out to all subscribers
-        for (const el of hub.subscribers) {
-          if (msg.data !== undefined) patch(msg.data, el);
+      if (msg.data !== undefined) {
+        for (const el of targets) {
+          patch(msg.data, el);
         }
       }
     } else if (type === "html") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target) safeSetHTML(target, msg.markup == null ? "" : String(msg.markup));
-      } else {
-        for (const el of hub.subscribers) {
-          safeSetHTML(el, msg.markup == null ? "" : String(msg.markup));
-        }
+      for (const el of targets) {
+        safeSetHTML(el, msg.markup == null ? "" : String(msg.markup));
       }
     } else if (type === "invalidate") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target) invalidate(target);
-      } else {
-        for (const el of hub.subscribers) {
-          invalidate(el);
-        }
+      for (const el of targets) {
+        invalidate(el);
       }
     } else if (type === "navigate") {
       // Navigate runs once, not per subscriber
@@ -185,6 +179,7 @@ function dispatchWsMessage(hub, rawData) {
     warn("Failed to parse WS message: " + err.message);
   }
 }
+
 
 function unsubscribeWs(element) {
   const state = liveConnections.get(element);
