@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════
 // API — public surface & lifecycle
 // ════════════════════════════════════════════════════════════
-
+let liveObserver = null;
 function init() {
   document.addEventListener("click", onClick);
   document.addEventListener("submit", onSubmit);
@@ -21,6 +21,43 @@ function init() {
 
   // Auto-scan for s-live elements
   initLiveElements();
+// Observe DOM for removed live elements
+  liveObserver = new MutationObserver(function (mutations) {
+    for (const mutation of mutations) {
+      for (const removed of mutation.removedNodes) {
+        if (removed.nodeType !== 1) continue;
+
+        // Check the removed node itself
+        const state = liveConnections.get(removed);
+        if (state) {
+          if (state.protocol === "ws") {
+            unsubscribeWs(removed);
+          } else {
+            pauseLiveState(state);
+          }
+          unregisterLiveState(state);
+        }
+
+        // Check descendants of removed node
+        if (removed.querySelectorAll) {
+          for (const child of removed.querySelectorAll("[s-live]")) {
+            const childState = liveConnections.get(child);
+            if (childState) {
+              if (childState.protocol === "ws") {
+                unsubscribeWs(child);
+              } else {
+                pauseLiveState(childState);
+              }
+              unregisterLiveState(childState);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  liveObserver.observe(document.body, {childList: true, subtree: true});
+
 }
 
 function destroy() {
@@ -29,6 +66,10 @@ function destroy() {
   window.removeEventListener("popstate", onPopState);
   document.removeEventListener("mouseenter", onMouseEnter, true);
   document.removeEventListener("silcrow:sse", onSSEEvent);
+  if (liveObserver) {
+    liveObserver.disconnect();
+    liveObserver = null;
+  }
   responseCache.clear();
   preloadInflight.clear();
   destroyAllLive();
