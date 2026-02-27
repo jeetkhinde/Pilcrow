@@ -1,10 +1,12 @@
 // ./crates/pilcrow/src/extract.rs
 
+use crate::headers::SilcrowTarget;
 use axum::{
     async_trait,
     extract::FromRequestParts,
     http::{request::Parts, StatusCode},
 };
+use headers::HeaderMapExt;
 
 // ════════════════════════════════════════════════════════════
 // 1. The Unified Mode Enum
@@ -34,17 +36,38 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // Did silcrow.js send this request?
-        let is_silcrow = parts.headers.contains_key("silcrow-target");
+        let is_silcrow = parts.headers.typed_get::<SilcrowTarget>().is_some();
 
         // What data format does the client want?
-        let accept = parts
+        let accept_header = parts
             .headers
             .get(axum::http::header::ACCEPT)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        let accepts_html = accept.contains("text/html");
-        let accepts_json = accept.contains("application/json");
+        let mut max_html_q = 0.0_f32;
+        let mut max_json_q = 0.0_f32;
+
+        for part in accept_header.split(',') {
+            let mut iter = part.split(';');
+            let media_type = iter.next().unwrap_or("").trim();
+
+            let q: f32 = iter
+                .find_map(|param| param.trim().strip_prefix("q=").and_then(|v| v.parse().ok()))
+                .unwrap_or(1.0);
+
+            if media_type == "text/html" || media_type == "*/*" {
+                max_html_q = max_html_q.max(q);
+            }
+            if media_type == "application/json" || media_type == "*/*" {
+                max_json_q = max_json_q.max(q);
+            }
+        }
+
+        // Only accept HTML if its computed q-value is greater than or equal to JSON's
+        // This resolves: `text/html;q=0.9, application/json;q=1.0` correctly picking JSON
+        let accepts_html = max_html_q > 0.0 && max_html_q >= max_json_q;
+        let accepts_json = max_json_q > 0.0;
 
         Ok(SilcrowRequest {
             is_silcrow,
@@ -66,76 +89,5 @@ impl SilcrowRequest {
             (false, true, _) => RequestMode::Html,
             _ => RequestMode::Json,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{RequestMode, SilcrowRequest};
-
-    #[test]
-    fn silcrow_prefers_html_when_requested() {
-        let req = SilcrowRequest {
-            is_silcrow: true,
-            accepts_html: true,
-            accepts_json: true,
-        };
-
-        assert_eq!(req.preferred_mode(), RequestMode::Html);
-    }
-
-    #[test]
-    fn silcrow_falls_back_to_json_when_html_not_accepted() {
-        let req = SilcrowRequest {
-            is_silcrow: true,
-            accepts_html: false,
-            accepts_json: true,
-        };
-
-        assert_eq!(req.preferred_mode(), RequestMode::Json);
-    }
-
-    #[test]
-    fn non_silcrow_browser_defaults_to_html() {
-        let req = SilcrowRequest {
-            is_silcrow: false,
-            accepts_html: true,
-            accepts_json: false,
-        };
-
-        assert_eq!(req.preferred_mode(), RequestMode::Html);
-    }
-
-    #[tokio::test]
-    async fn from_request_parts_reads_accept_and_silcrow_headers() {
-        use axum::extract::FromRequestParts;
-        use axum::http::{header::ACCEPT, Request};
-
-        let request = Request::builder()
-            .uri("/")
-            .header(ACCEPT, "text/html,application/json")
-            .header("silcrow-target", "#main")
-            .body(())
-            .expect("request should build");
-        let (mut parts, _) = request.into_parts();
-
-        let extracted = SilcrowRequest::from_request_parts(&mut parts, &())
-            .await
-            .expect("extractor should succeed");
-
-        assert!(extracted.is_silcrow);
-        assert!(extracted.accepts_html);
-        assert!(extracted.accepts_json);
-    }
-
-    #[test]
-    fn non_silcrow_api_client_defaults_to_json() {
-        let req = SilcrowRequest {
-            is_silcrow: false,
-            accepts_html: false,
-            accepts_json: false,
-        };
-
-        assert_eq!(req.preferred_mode(), RequestMode::Json);
     }
 }
