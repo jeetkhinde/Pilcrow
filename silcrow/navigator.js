@@ -120,18 +120,19 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   }
 
   if (sideEffects.sse) {
-    const ssePath =
-      typeof normalizeSSEEndpoint === "function"
-        ? normalizeSSEEndpoint(sideEffects.sse)
-        : sideEffects.sse;
+    const ssePath = normalizeSSEEndpoint(sideEffects.sse);
     if (!ssePath) return;
-
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse, target: primaryTarget || null},
+        detail: {path: ssePath, target: primaryTarget || null},
       })
     );
+  }
+
+  if (sideEffects.ws) {
+    const target = primaryTarget || document.body;
+    openWsLive(target, sideEffects.ws);
   }
 }
 
@@ -242,6 +243,7 @@ async function navigate(url, options = {}) {
         invalidate: response.headers.get("silcrow-invalidate"),
         navigate: response.headers.get("silcrow-navigate"),
         sse: response.headers.get("silcrow-sse"),
+        ws: response.headers.get("silcrow-ws"),
       };
 
    
