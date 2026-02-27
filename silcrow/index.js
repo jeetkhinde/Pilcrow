@@ -33,9 +33,10 @@ function init() {
           if (state.protocol === "ws") {
             unsubscribeWs(removed);
           } else {
-            pauseLiveState(state);
+            pauseLiveState(state); 
+            unregisterLiveState(state);
           }
-          unregisterLiveState(state);
+         
         }
 
         // Check descendants of removed node
@@ -47,8 +48,8 @@ function init() {
                 unsubscribeWs(child);
               } else {
                 pauseLiveState(childState);
+                unregisterLiveState(childState);
               }
-              unregisterLiveState(childState);
             }
           }
         }
