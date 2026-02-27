@@ -150,6 +150,17 @@ pub trait ResponseExt: Sized {
         }
         self
     }
+    fn ws(mut self, path: impl AsRef<str>) -> Self
+    where
+        Self: Sized,
+    {
+        if let Ok(value) = HeaderValue::from_str(path.as_ref()) {
+            self.base_mut().headers.insert("silcrow-ws", value);
+        } else {
+            tracing::warn!("Invalid ws path for header: {:?}", path.as_ref());
+        }
+        self
+    }
 }
 // ════════════════════════════════════════════════════════════
 // 3. Response Wrappers & Transport Logic
