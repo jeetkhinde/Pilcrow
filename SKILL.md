@@ -1,6 +1,11 @@
 ---
 name: pilcrow-silcrow
-description: Guide for developing Pilcrow (Rust/Axum response layer) and Silcrow.js (client-side runtime). Use this skill for any work on content negotiation, response building, SSE/WebSocket, DOM patching, client-side navigation, toast systems, or the build pipeline. Trigger whenever the user mentions Pilcrow, Silcrow, respond! macro, ResponseExt, SseRoute, WsRoute, SilcrowEvent, WsEvent, or any of the silcrow/*.js modules.
+description: >
+  Guide for developing Pilcrow (Rust/Axum response layer) and Silcrow.js (client-side runtime). 
+  Use this skill for any work on content negotiation, response building, SSE/WebSocket, DOM patching, 
+  client-side navigation, toast systems, or the build pipeline. Trigger whenever the user mentions 
+  Pilcrow, Silcrow, respond! macro, ResponseExt, SseRoute, WsRoute, SilcrowEvent, WsEvent, or any 
+  of the silcrow/*.js modules.
 ---
 
 # Pilcrow + Silcrow.js

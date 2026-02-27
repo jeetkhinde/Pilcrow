@@ -34,6 +34,33 @@ async fn main() {
 }
 ```
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Dependencies](#dependencies)
+- [Why Pilcrow?](#why-pilcrow)
+- [Core Concepts](#core-concepts)
+  - [1. The Extractor: `SilcrowRequest`](#1-the-extractor-silcrowrequest)
+  - [2. The `respond!` Macro](#2-the-respond-macro)
+  - [3. Modifiers via `ResponseExt`](#3-modifiers-via-responseext)
+  - [Server-Driven Side Effects](#server-driven-side-effects)
+  - [4. Navigation (Redirects)](#4-navigation-redirects)
+  - [5. Server-Sent Events (SSE)](#5-server-sent-events-sse)
+  - [6. WebSocket](#6-websocket)
+- [Asset Serving](#asset-serving)
+- [Examples](#examples)
+- [Public API](#public-api)
+- [License](#license)
+
+## Dependencies
+
+```toml
+[dependencies]
+pilcrow = "0.1"
+```
+
+Pilcrow depends on `axum 0.7`, `serde`, `serde_json`, `cookie`, `urlencoding`, `futures-core`, and `tracing`. No runtime overhead beyond what Axum already requires.
+
 ## Why Pilcrow?
 
 Raw Axum requires manual header parsing and format switching in every handler:
@@ -60,7 +87,7 @@ async fn handler(req: SilcrowRequest) -> Result<Response, StatusCode> {
 }
 ```
 
-Content negotiation, lazy evaluation, and response packaging are handled for you.
+Content negotiation, lazy evaluation, and response packaging are handled for you by Pilcrow.
 
 ## Core Concepts
 
@@ -96,7 +123,7 @@ pilcrow::respond!(req, {
 })
 ```
 
-`raw` is JSON-only. HTML always uses the explicit `html()` constructor.
+`raw` is JSON-only. HTML always uses the explicit `html()` constructor in Pilcrow.
 
 **Shared toasts:** When both arms need the same toast, declare it once:
 
@@ -372,6 +399,7 @@ pub async fn get_profile(
 ) -> Result<Response, AppError> {
     let user: UserProfile = db.fetch_user(123).await?;
 
+    // Example using the Maud templating engine (Pilcrow is template-agnostic)
     let markup = maud::html! {
         div.profile {
             h1 { (user.name) }
@@ -539,15 +567,6 @@ pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
 | `WsStream` | Typed WebSocket connection wrapper (`.send()`, `.recv()`, `.close()`) |
 | `ws::ws(upgrade, handler)` | Upgrades HTTP to WebSocket with a typed handler |
 | `Responses` | Builder for advanced use cases |
-
-## Dependencies
-
-```toml
-[dependencies]
-pilcrow = "0.1"
-```
-
-Pilcrow depends on `axum 0.7`, `serde`, `serde_json`, `cookie`, `urlencoding`, `futures-core`, and `tracing`. No runtime overhead beyond what Axum already requires.
 
 ## License
 

@@ -4,6 +4,20 @@ A lightweight client-side runtime for building hypermedia-driven applications. S
 
 Silcrow.js is the frontend counterpart to [Pilcrow](readme.md) but operates independently as a standalone library. Any backend that speaks HTTP and returns HTML or JSON can drive it.
 
+## Table of Contents
+
+- [Loading](#loading)
+- [Three Systems](#three-systems)
+- [Runtime: Data Binding & DOM Patching](#runtime-data-binding--dom-patching)
+- [Navigator: Client-Side Routing](#navigator-client-side-routing)
+- [Live: SSE, WebSocket & Real-Time Updates](#live-sse-websocket--real-time-updates)
+- [Optimistic Updates](#optimistic-updates)
+- [Toast System](#toast-system)
+- [Events](#events)
+- [Lifecycle](#lifecycle)
+- [API Reference](#api-reference)
+- [Compatibility](#compatibility)
+
 ## Loading
 
 Silcrow.js is a single self-executing IIFE with no dependencies. Include it in your page:
@@ -292,7 +306,7 @@ Silcrow also supports named SSE events for specific actions:
 | `invalidate` | Calls `Silcrow.invalidate()` on the root (no data needed) |
 | `navigate` | `data` field is a URL path — triggers client-side navigation |
 
-```text
+```http
 event: navigate
 data: /dashboard
 
@@ -354,7 +368,7 @@ WebSocket messages are JSON objects with a `type` field that matches the Rust `W
 | `navigate` | `path` | Triggers client-side navigation |
 | `custom` | `event`, `data` | Dispatches `silcrow:ws:{event}` CustomEvent on document |
 
-```json
+```jsonl
 {"type": "patch", "target": "#stats", "data": {"count": 42}}
 {"type": "html", "target": "#slot", "markup": "<p>Updated</p>"}
 {"type": "navigate", "path": "/dashboard"}
@@ -464,7 +478,7 @@ Silcrow.destroy();
 
 ## API Reference
 
-### Runtime
+### [Runtime](#runtime-data-binding--dom-patching)
 
 | Method | Description |
 | --- | --- |
@@ -472,7 +486,7 @@ Silcrow.destroy();
 | `Silcrow.invalidate(root)` | Clear cached binding maps for root |
 | `Silcrow.stream(root)` | Returns microtask-batched updater function |
 
-### Navigation
+### [Navigation](#navigator-client-side-routing)
 
 | Method | Description |
 | --- | --- |
@@ -480,7 +494,7 @@ Silcrow.destroy();
 | `Silcrow.cache.has(path)` | Check if a path is cached |
 | `Silcrow.cache.clear(path?)` | Clear one or all cache entries |
 
-### Live (SSE)
+### [Live (SSE)](#live-sse-websocket--real-time-updates)
 
 | Method | Description |
 | --- | --- |
@@ -488,14 +502,14 @@ Silcrow.destroy();
 | `Silcrow.disconnect(root)` | Pause SSE connection and stop auto-reconnect |
 | `Silcrow.reconnect(root)` | Resume SSE connection with reset backoff |
 
-### Optimistic Methods
+### [Optimistic Methods](#optimistic-updates)
 
 | Method | Description |
 | --- | --- |
 | `Silcrow.optimistic(root, data)` | Snapshot DOM, then patch immediately |
 | `Silcrow.revert(root)` | Restore DOM from snapshot, invalidate bindings |
 
-### Lifecycle Handlers
+### [Lifecycle Handlers](#lifecycle)
 
 | Method | Description |
 | --- | --- |

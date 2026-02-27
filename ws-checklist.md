@@ -1,5 +1,7 @@
 # WebSocket Checklist
 
+**Prerequisites:** Before starting, run a local application with WebSocket integration (e.g., `cd examples/chat && cargo run`) and open your browser's developer tools to monitor the Network (WebSocket tab) and Console.
+
 **JS tests:** Manual verification checklist for when you wire up a real handler:
 
 - [ ] `s-live="ws:/ws/path"` → WebSocket opens, `silcrow:live:connect` fires
