@@ -1,6 +1,6 @@
 # Silcrow.js
 
-A lightweight client-side runtime for building hypermedia-driven applications. Silcrow handles DOM patching, client-side navigation, response caching, live SSE connections, optimistic updates, and server-driven UI orchestration — all from declarative HTML attributes.
+A lightweight client-side runtime for building hypermedia-driven applications. Silcrow handles DOM patching, client-side navigation, response caching, live SSE and WebSocket connections, optimistic updates, and server-driven UI orchestration — all from declarative HTML attributes.
 
 Silcrow.js is the frontend counterpart to [Pilcrow](readme.md) but operates independently as a standalone library. Any backend that speaks HTTP and returns HTML or JSON can drive it.
 
@@ -28,7 +28,7 @@ Silcrow.js has three independent systems exposed through a single `window.Silcro
 
 1. **Runtime** — reactive data binding and DOM patching via `s-bind` and `s-list` attributes
 2. **Navigator** — client-side routing, history management, and response caching via `s-action` attributes
-3. **Live** — SSE connections, optimistic updates, and real-time data streaming via `s-live` attributes
+3. **Live** — SSE and WebSocket connections, optimistic updates, and real-time data streaming via `s-live` attributes
 
 ---
 
@@ -200,8 +200,9 @@ The backend can control Silcrow's behavior through response headers. These are s
 | `silcrow-invalidate` | CSS selector — rebuilds binding maps for the target element via `Silcrow.invalidate()`. |
 | `silcrow-navigate` | URL path — triggers a client-side navigation after the swap completes. |
 | `silcrow-sse` | URL path — dispatches a `silcrow:sse` event signaling the client to open an SSE connection. |
+| `silcrow-ws` | URL path — dispatches a silcrow:ws event signaling the client to open a WebSocket connection. |
 
-Side-effect headers execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
+Side-effect headers execute in order: patch → invalidate → navigate → sse/ws. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### Caching
 
@@ -239,7 +240,7 @@ Navigating to the same target while a GET is in-flight aborts the previous reque
 
 ---
 
-## Live: SSE Connections & Real-Time Updates
+## Live: SSE, WebSocket & Real-Time Updates
 
 ### Declarative with `s-live`
 
@@ -252,6 +253,18 @@ Add `s-live` to any element to automatically open an SSE connection on page load
 ```
 
 Silcrow scans for `s-live` elements during initialization. When the server sends an SSE message, the data is parsed as JSON and piped to `Silcrow.patch()` on that element.
+
+### WebSocket with `s-live`
+
+Prefix the URL with `ws:` to use WebSocket instead of SSE:
+
+```html
+<div id="chat" s-live="ws:/ws/chat">
+  <span s-bind="messages"></span>
+</div>
+```
+
+Without a prefix, `s-live` defaults to SSE for backward compatibility.
 
 ### Programmatic with `Silcrow.live()`
 
@@ -315,6 +328,38 @@ Resumes a disconnected SSE connection. Resets the backoff timer and reconnects i
 
 ```js
 Silcrow.reconnect("#feed");
+```
+
+---
+
+### Sending Messages (WebSocket only)
+
+WebSocket connections are bidirectional. Use `Silcrow.send()` to send data to the server:
+
+```js
+Silcrow.send("#chat", { type: "custom", event: "message", data: { text: "Hello" } });
+```
+
+`send()` is a no-op on SSE connections (SSE is server-to-client only). The connection must be open — if not, a warning is logged.
+
+### WebSocket Message Format
+
+WebSocket messages are JSON objects with a `type` field that matches the Rust `WsEvent` enum:
+
+| Type | Fields | Effect |
+| --- | --- | --- |
+| `patch` | `target`, `data` | Patches JSON data into target element via `Silcrow.patch()` |
+| `html` | `target`, `markup` | Swaps HTML into target element via `safeSetHTML()` |
+| `invalidate` | `target` | Rebuilds binding maps for target element |
+| `navigate` | `path` | Triggers client-side navigation |
+| `custom` | `event`, `data` | Dispatches `silcrow:ws:{event}` CustomEvent on document |
+
+```json
+{"type": "patch", "target": "#stats", "data": {"count": 42}}
+{"type": "html", "target": "#slot", "markup": "<p>Updated</p>"}
+{"type": "navigate", "path": "/dashboard"}
+{"type": "custom", "event": "refresh", "data": {"section": "sidebar"}}
+
 ```
 
 ---

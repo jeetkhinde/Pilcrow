@@ -39,6 +39,7 @@ window.Silcrow = {
   patch,
   invalidate,
   stream,
+  send: sendWs,
   onToast(handler) {
     setToastHandler(handler);
     return this;

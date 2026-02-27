@@ -165,6 +165,7 @@ All response types (`HtmlResponse`, `JsonResponse`, `NavigateResponse`) implemen
 | `.invalidate_target(selector)` | Rebuilds Silcrow.js binding maps for the target element |
 | `.client_navigate(path)` | Triggers a client-side navigation via Silcrow.js |
 | `.sse(route)` | Signals the client to open an SSE connection to the given path |
+| `.ws(route)` | Signals the client to open a WebSocket connection to the given path |
 
 Toast transport is automatic — HTML responses use a short-lived cookie (`Max-Age=5`, `SameSite=Lax`), JSON responses inject a `_toasts` array into the payload. If the JSON root isn't an object (e.g. you returned a `Vec`), Pilcrow wraps it as `{"data": [...], "_toasts": [...]}`.
 
@@ -187,7 +188,7 @@ pub async fn save_item(req: SilcrowRequest) -> Result<Response, AppError> {
 }
 ```
 
-Side effects execute in order: patch → invalidate → navigate → sse. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
+Side effects execute in order: patch → invalidate → navigate → sse/ws. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### 4. Navigation (Redirects)
 
@@ -271,6 +272,68 @@ Router::new()
 ```
 
 **Client-side:** Silcrow.js handles everything — connection management, reconnection with exponential backoff (1s → 2s → 4s → max 30s), and piping events to the right DOM targets. See the [Silcrow.js docs](SILCROW.md#live-sse-connections--real-time-updates) for the full client-side API.
+
+---
+
+### 6. WebSocket
+
+Pilcrow provides typed WebSocket support for bidirectional real-time communication.
+
+**Define a route constant:**
+
+```rust
+use pilcrow::WsRoute;
+
+pub const CHAT_WS: WsRoute = WsRoute::new("/ws/chat");
+```
+
+**Tell the client to connect:**
+
+```rust
+async fn chat_page(req: SilcrowRequest) -> Result<Response, AppError> {
+    pilcrow::respond!(req, {
+        html => html(markup).ws(CHAT_WS),
+        json => json(data),
+    })
+}
+```
+
+**Create the WebSocket endpoint:**
+
+```rust
+use axum::extract::ws::WebSocketUpgrade;
+use pilcrow::ws::{ws, WsEvent, WsStream};
+
+async fn chat_ws(upgrade: WebSocketUpgrade) -> Response {
+    pilcrow::ws::ws(upgrade, |mut stream| async move {
+        // Send a welcome message
+        stream.send(WsEvent::patch(
+            serde_json::json!({"status": "connected"}), "#chat-status"
+        )).await.ok();
+
+        // Echo incoming messages
+        while let Some(Ok(event)) = stream.recv().await {
+            if let WsEvent::Custom { event: name, data } = event {
+                stream.send(WsEvent::patch(data, "#chat")).await.ok();
+            }
+        }
+    })
+}
+```
+
+`WsEvent` has five variants: `patch`, `html`, `invalidate`, `navigate`, and `custom`. All serialize as tagged JSON that Silcrow.js dispatches automatically.
+
+**Register the route:**
+
+```rust
+Router::new()
+    .route("/chat", get(chat_page))
+    .route(CHAT_WS.path(), get(chat_ws))
+```
+
+**Client-side:** Silcrow.js handles connection management, reconnection with exponential backoff, and bidirectional messaging. Use `Silcrow.send(root, data)` to send messages from the client. See the [Silcrow.js docs](SILCROW.md#websocket-with-s-live) for the full client-side API.
+
+---
 
 ## Asset Serving
 
@@ -375,6 +438,40 @@ Router::new()
     .route(DASH_EVENTS.path(), get(dashboard_stream))
 ```
 
+### Real-Time Chat with WebSocket
+
+```rust
+pub const CHAT_WS: WsRoute = WsRoute::new("/ws/chat");
+
+pub async fn chat(req: SilcrowRequest) -> Result<Response, AppError> {
+    let history = db.recent_messages().await?;
+    let markup = render_chat(&history);
+
+    pilcrow::respond!(req, {
+        html => html(markup).ws(CHAT_WS),
+        json => json(history),
+    })
+}
+
+pub async fn chat_handler(upgrade: WebSocketUpgrade) -> Response {
+    pilcrow::ws::ws(upgrade, |mut stream| async move {
+        while let Some(Ok(event)) = stream.recv().await {
+            if let WsEvent::Custom { event: name, data } = event {
+                let saved = db.save_message(&data).await;
+                stream.send(WsEvent::html(
+                    render_message(&saved), "#messages"
+                )).await.ok();
+            }
+        }
+    })
+}
+
+// Router
+Router::new()
+    .route("/chat", get(chat))
+    .route(CHAT_WS.path(), get(chat_handler))
+```
+
 ### Raw Shorthand
 
 When you just need to return a struct without modifiers:
@@ -437,6 +534,10 @@ pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
 | `SseRoute` | Typed SSE route constant |
 | `SilcrowEvent` | Structured SSE event builder (`.patch()`, `.html()`) |
 | `sse(stream)` | Creates an SSE response from a stream with keep-alive |
+| `WsRoute` | Typed WebSocket route constant |
+| `WsEvent` | Bidirectional WebSocket message enum (`.patch()`, `.html()`, `.invalidate()`, `.navigate()`, `.custom()`) |
+| `WsStream` | Typed WebSocket connection wrapper (`.send()`, `.recv()`, `.close()`) |
+| `ws::ws(upgrade, handler)` | Upgrades HTTP to WebSocket with a typed handler |
 | `Responses` | Builder for advanced use cases |
 
 ## Dependencies

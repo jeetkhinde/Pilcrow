@@ -11,7 +11,7 @@ repository = "https://github.com/jeetkhinde/pilcrow"
 name = "pilcrow"
 path = "src/lib.rs"
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 cookie = "0.18"
 futures-core = "0.3"
 serde = { version = "1", features = ["derive"] }
