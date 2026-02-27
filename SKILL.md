@@ -12,7 +12,8 @@ description: Guide for creating and updating Codex skills.
 
 ### File Map
 
-```
+```text
+
 src/lib.rs        — re-exports only
 src/extract.rs    — SilcrowRequest extractor + RequestMode enum
 src/response.rs   — html(), json(), navigate(), ResponseExt trait, BaseResponse
@@ -69,7 +70,7 @@ respond!(req, { json => raw expr, toast => (msg, level) })
 ## ResponseExt Modifiers (chainable, infallible)
 
 | Method | Header set |
-|---|---|
+| --- | --- |
 | `.with_toast(msg, level)` | Cookie (HTML/Navigate), `_toasts` injection (JSON) |
 | `.no_cache()` | `silcrow-cache: no-cache` |
 | `.retarget(selector)` | `silcrow-retarget` |
@@ -95,6 +96,7 @@ pub const FEED: SseRoute = SseRoute::new("/events/feed");
 ## Content Negotiation Logic
 
 `SilcrowRequest::preferred_mode()`:
+
 - Silcrow AJAX (`silcrow-target` header present) → respect `Accept` header
 - Standard browser (no `silcrow-target`) → default HTML
 - No match → JSON fallback
@@ -102,6 +104,7 @@ pub const FEED: SseRoute = SseRoute::new("/events/feed");
 ## Safety Rules (non-negotiable)
 
 **Rust:**
+
 - No `unwrap()` in library code. Use `?` or explicit match.
 - All user strings validated before `HeaderValue::from_str()`.
 - Cookie values URL-encoded via `urlencoding::encode`.
@@ -109,14 +112,40 @@ pub const FEED: SseRoute = SseRoute::new("/events/feed");
 - Async closures in `Responses` builder must be `Send + 'static`.
 
 **JS:**
+
 - All DOM mutation via `safeSetHTML()` or `textContent`. Never raw `innerHTML`.
 - `on*` attributes stripped in all template/HTML paths.
 - Prototype pollution paths (`__proto__`, `constructor`, `prototype`) blocked in `resolvePath()`.
 - Public API on `window.Silcrow` only. Internal functions are IIFE-scoped.
 - `warn()` in production, `throwErr()` only in `s-debug` mode.
 
+## Functional Programming Principles
+
+**Compute pure, apply once.** All data transformations are pure functions returning values.
+Mutation only happens at the Axum boundary — `apply_to_response(&mut Response)` is the
+single imperative seam per response type.
+
+**Patterns:**
+
+- `Option`/`Result` chains over `if/else` trees
+- Small composable functions over repeated inline logic
+- Data in, data out — no `&mut self` in transform functions
+- Side effects (header insertion, cookie append) isolated to named apply functions
+
+**Boundaries:**
+
+- Pure: toast building, JSON merging, header value construction, content negotiation
+- Impure (Axum seam): `apply_to_response(&mut Response)`, `IntoResponse` impls, extractor `from_request_parts`
+
+**Anti-patterns:**
+
+- Serialization inside a modifier chain (separate compute from apply)
+- Duplicated `if let Ok(val) = HeaderValue::from_str(...)` — extract into a shared helper
+- Mixed pure logic and mutation in the same function body
+
 ## Code Style
 
+- Rust: Prefer pure functions returning values; isolate mutation to Axum boundary methods.
 - Rust: `impl Into<String>` for constructors, `&str` for modifier params, `impl AsRef<str>` for both.
 - Rust: Tests in `#[cfg(test)] mod tests` per file. Integration tests in `tests/`.
 - JS: `const` over `let`. No classes. No `this` outside `window.Silcrow` literal. Named functions (not arrows) in event listeners.
@@ -124,6 +153,7 @@ pub const FEED: SseRoute = SseRoute::new("/events/feed");
 ## Common Patterns
 
 ### Dual-mode handler
+
 ```rust
 async fn handler(req: SilcrowRequest, State(db): State<Db>) -> Result<Response, AppError> {
     let data = db.fetch().await?;
@@ -135,6 +165,7 @@ async fn handler(req: SilcrowRequest, State(db): State<Db>) -> Result<Response, 
 ```
 
 ### Multi-target update
+
 ```rust
 html(render_item(&item))
     .patch_target("#count", &json!({"count": count}))
@@ -143,6 +174,7 @@ html(render_item(&item))
 ```
 
 ### Auth guard
+
 ```rust
 if !user.is_admin() {
     return Ok(navigate("/login").with_toast("Unauthorized", "error").into_response());
@@ -150,6 +182,7 @@ if !user.is_admin() {
 ```
 
 ### SSE stream
+
 ```rust
 async fn stream_handler() -> impl IntoResponse {
     let stream = async_stream::stream! {
