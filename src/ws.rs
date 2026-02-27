@@ -90,7 +90,10 @@ impl WsEvent {
     /// stream.send(evt).await?;
     /// ```
     pub fn patch(data: impl serde::Serialize, target: &str) -> Self {
-        let value = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
+        let value = serde_json::to_value(data).unwrap_or_else(|e| {
+            tracing::warn!("WsEvent::patch serialization failed: {e}");
+            serde_json::Value::Null
+        });
         Self::Patch {
             target: target.to_owned(),
             data: value,
@@ -139,7 +142,10 @@ impl WsEvent {
     /// stream.send(evt).await?;
     /// ```
     pub fn custom(event: impl Into<String>, data: impl serde::Serialize) -> Self {
-        let value = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
+        let value = serde_json::to_value(data).unwrap_or_else(|e| {
+            tracing::warn!("WsEvent::custom serialization failed: {e}");
+            serde_json::Value::Null
+        });
         Self::Custom {
             event: event.into(),
             data: value,

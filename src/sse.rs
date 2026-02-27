@@ -71,7 +71,10 @@ enum EventKind {
 impl SilcrowEvent {
     /// Create a patch event that sends JSON data to `Silcrow.patch(data, target)`.
     pub fn patch(data: impl serde::Serialize, target: &str) -> Self {
-        let value = serde_json::to_value(data).unwrap_or(serde_json::Value::Null);
+        let value = serde_json::to_value(data).unwrap_or_else(|e| {
+            tracing::warn!("SilcrowEvent::patch serialization failed: {e}");
+            serde_json::Value::Null
+        });
         Self {
             kind: EventKind::Patch {
                 data: value,
