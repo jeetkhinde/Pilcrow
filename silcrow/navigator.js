@@ -179,6 +179,9 @@ async function navigate(url, options = {}) {
 
     const wantsHTML = sourceEl?.hasAttribute("s-html");
     if (cached) {
+      // Side-effect headers (patch, invalidate, navigate, sse) are intentionally
+      // not cached — they are one-shot triggers that should only fire on the
+      // original server response, not on subsequent cache hits.
       text = cached.text;
       contentType = cached.contentType;
     } else {
@@ -226,6 +229,7 @@ async function navigate(url, options = {}) {
         if (newTarget) options.target = newTarget;
       }
 
+      finalUrl = response.url || fullUrl;
       pushUrl = response.headers.get("silcrow-push-url");
       if (pushUrl) {
         finalUrl = new URL(pushUrl, location.origin).href;
@@ -240,7 +244,7 @@ async function navigate(url, options = {}) {
         sse: response.headers.get("silcrow-sse"),
       };
 
-      finalUrl = response.url || fullUrl;
+   
 
       text = await response.text();
       contentType = response.headers.get("Content-Type") || "";

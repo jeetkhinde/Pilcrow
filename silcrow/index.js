@@ -107,8 +107,6 @@ window.Silcrow = {
   destroy,
 };
 
-// Backward compatibility
-window.SilcrowNavigate = window.Silcrow;
 
 // Auto-init navigation when DOM is ready
 if (document.readyState === "loading") {
