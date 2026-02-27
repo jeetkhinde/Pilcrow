@@ -230,7 +230,7 @@ async function navigate(url, options = {}) {
       }
 
       finalUrl = response.url || fullUrl;
-      pushUrl = response.headers.get("silcrow-push-url");
+      pushUrl = response.headers.get("silcrow-push");
       if (pushUrl) {
         finalUrl = new URL(pushUrl, location.origin).href;
         redirected = true;
