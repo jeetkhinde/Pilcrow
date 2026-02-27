@@ -29,10 +29,7 @@ where
     R: IntoPilcrowHtml<E>,
 {
     fn into_pilcrow_html(self) -> Result<HtmlResponse, E> {
-        match self {
-            Ok(val) => val.into_pilcrow_html(),
-            Err(e) => Err(e),
-        }
+        self.and_then(IntoPilcrowHtml::into_pilcrow_html)
     }
 }
 
@@ -60,10 +57,7 @@ where
     T: IntoPilcrowJson<E>,
 {
     fn into_pilcrow_json(self) -> Result<Response, E> {
-        match self {
-            Ok(val) => val.into_pilcrow_json(),
-            Err(e) => Err(e),
-        }
+        self.and_then(IntoPilcrowJson::into_pilcrow_json)
     }
 }
 
