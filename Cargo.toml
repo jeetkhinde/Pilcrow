@@ -24,7 +24,38 @@ headers = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+async-stream = "0.3"
+tower = "0.5"
+hyper = "1"
 
 [build-dependencies]
 crc32fast = "1"
 minifier = "0.3"
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+
+[[example]]
+name = "content_negotiation"
+path = "examples/content_negotiation.rs"
+
+[[example]]
+name = "toasts_and_headers"
+path = "examples/toasts_and_headers.rs"
+
+[[example]]
+name = "navigation"
+path = "examples/navigation.rs"
+
+[[example]]
+name = "sse_live"
+path = "examples/sse_live.rs"
+
+[[example]]
+name = "websocket"
+path = "examples/websocket.rs"
+
+[[example]]
+name = "full_app"
+path = "examples/full_app.rs"
