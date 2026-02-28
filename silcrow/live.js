@@ -126,7 +126,13 @@ function resolveLiveStates(root) {
       root.startsWith("https://")
     ) {
       const fullUrl = new URL(root, location.origin).href;
-      const states = liveConnectionsByUrl.get(fullUrl);
+      // Try HTTP-scheme first (SSE connections)
+      let states = liveConnectionsByUrl.get(fullUrl);
+      if (!states || states.size === 0) {
+        // Fall back to WS-scheme (WebSocket connections)
+        const wsUrl = fullUrl.replace(/^http(s?)/, "ws$1");
+        states = liveConnectionsByUrl.get(wsUrl);
+      }
       return states ? Array.from(states) : [];
     }
 

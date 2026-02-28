@@ -203,7 +203,7 @@ The backend can control Silcrow's behavior through response headers. These are s
 | --- | --- |
 | `silcrow-trigger` | Fire custom DOM events. JSON object `{"event-name": detail}` or a plain event name string. |
 | `silcrow-retarget` | CSS selector — override where the response is swapped into. |
-| `silcrow-push-url` | Override the URL pushed to browser history. |
+| `silcrow-push` | Override the URL pushed to browser history. |
 | `silcrow-cache` | Set to `no-cache` to prevent this response from being cached. |
 
 **After swap (side effects):**

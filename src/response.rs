@@ -67,8 +67,8 @@ impl BaseResponse {
 pub trait ResponseExt: Sized {
     fn base_mut(&mut self) -> &mut BaseResponse;
 
-    fn with_header(mut self, key: &'static str, value: &'static str) -> Self {
-        if let Ok(val) = HeaderValue::from_str(value) {
+    fn with_header(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        if let Ok(val) = HeaderValue::from_str(&value.into()) {
             self.base_mut().headers.insert(key, val);
         }
         self

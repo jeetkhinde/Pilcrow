@@ -814,18 +814,19 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   }
 
   if (sideEffects.sse) {
-    const ssePath =
-      typeof normalizeSSEEndpoint === "function"
-        ? normalizeSSEEndpoint(sideEffects.sse)
-        : sideEffects.sse;
+    const ssePath = normalizeSSEEndpoint(sideEffects.sse);
     if (!ssePath) return;
-
     document.dispatchEvent(
       new CustomEvent("silcrow:sse", {
         bubbles: true,
-        detail: {path: sideEffects.sse, target: primaryTarget || null},
+        detail: {path: ssePath, target: primaryTarget || null},
       })
     );
+  }
+
+  if (sideEffects.ws) {
+    const target = primaryTarget || document.body;
+    openWsLive(target, sideEffects.ws);
   }
 }
 
@@ -924,7 +925,7 @@ async function navigate(url, options = {}) {
       }
 
       finalUrl = response.url || fullUrl;
-      pushUrl = response.headers.get("silcrow-push-url");
+      pushUrl = response.headers.get("silcrow-push");
       if (pushUrl) {
         finalUrl = new URL(pushUrl, location.origin).href;
         redirected = true;
@@ -936,6 +937,7 @@ async function navigate(url, options = {}) {
         invalidate: response.headers.get("silcrow-invalidate"),
         navigate: response.headers.get("silcrow-navigate"),
         sse: response.headers.get("silcrow-sse"),
+        ws: response.headers.get("silcrow-ws"),
       };
 
    
@@ -1295,7 +1297,14 @@ function pauseLiveState(state) {
     state.es.close();
     state.es = null;
   }
-  if (state.socket) {
+  // For WS: unsubscribe from hub instead of closing socket directly
+  if (state.protocol === "ws" && state.hub) {
+    state.hub.subscribers.delete(state.element);
+    if (state.hub.subscribers.size === 0) {
+      removeWsHub(state.hub);
+    }
+    state.hub = null;
+  } else if (state.socket) {
     state.socket.close();
     state.socket = null;
   }
@@ -1310,7 +1319,13 @@ function resolveLiveStates(root) {
       root.startsWith("https://")
     ) {
       const fullUrl = new URL(root, location.origin).href;
-      const states = liveConnectionsByUrl.get(fullUrl);
+      // Try HTTP-scheme first (SSE connections)
+      let states = liveConnectionsByUrl.get(fullUrl);
+      if (!states || states.size === 0) {
+        // Fall back to WS-scheme (WebSocket connections)
+        const wsUrl = fullUrl.replace(/^http(s?)/, "ws$1");
+        states = liveConnectionsByUrl.get(wsUrl);
+      }
       return states ? Array.from(states) : [];
     }
 
@@ -1406,7 +1421,7 @@ function connectSSE(url, state) {
         payload &&
         typeof payload === "object" &&
         !Array.isArray(payload) &&
-        Object.prototype.hasOwnProperty.call(payload, "data")
+        Object.prototype.hasOwnProperty.call(payload, "target")
       ) {
         data = payload.data;
         if (payload.target) {
@@ -1444,6 +1459,7 @@ function connectSSE(url, state) {
   });
 
   // Named event: invalidate
+  // Recommendation: Park this. It's a future-proofing concern, not a current bug. When you add SilcrowEvent::invalidate(target) to Rust, fix the JS listener at the same time to parse e.data for a target selector.
   es.addEventListener("invalidate", function () {
     invalidate(state.element);
   });
@@ -1494,14 +1510,36 @@ function reconnectLive(root) {
   const states = resolveLiveStates(root);
   if (!states.length) return;
 
+  const reconnectedHubs = new Set();
+
   for (const state of states) {
     state.paused = false;
-    state.backoff = 1000; // Reset backoff
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = null;
+
+    if (state.protocol === "ws") {
+      // Re-subscribe to hub
+      const hub = getOrCreateWsHub(state.url);
+      hub.subscribers.add(state.element);
+      state.hub = hub;
+
+      if (!reconnectedHubs.has(hub)) {
+        reconnectedHubs.add(hub);
+        hub.paused = false;
+        hub.backoff = 1000;
+        if (hub.reconnectTimer) {
+          clearTimeout(hub.reconnectTimer);
+          hub.reconnectTimer = null;
+        }
+        connectWsHub(hub);
+      }
+    } else {
+      // SSE: existing behavior
+      state.backoff = 1000;
+      if (state.reconnectTimer) {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = null;
+      }
+      connectSSE(state.url, state);
     }
-    connectSSE(state.url, state);
   }
 }
 
@@ -1511,6 +1549,19 @@ function destroyAllLive() {
   }
   liveConnections.clear();
   liveConnectionsByUrl.clear();
+
+  // Clean up any remaining WS hubs
+  for (const hub of wsHubs.values()) {
+    if (hub.reconnectTimer) {
+      clearTimeout(hub.reconnectTimer);
+      hub.reconnectTimer = null;
+    }
+    if (hub.socket) {
+      hub.socket.close();
+      hub.socket = null;
+    }
+  }
+  wsHubs.clear();
 }
 
 // ── Auto-scan for s-live elements on init ──────────────────
@@ -1558,7 +1609,171 @@ function normalizeWsEndpoint(rawUrl) {
     return null;
   }
 
+  const expectedOrigin = location.origin.replace(/^http(s?)/, "ws$1");
+  if (parsed.origin !== expectedOrigin) {
+    warn("Rejected cross-origin WebSocket URL: " + parsed.href);
+    return null;
+  }
+
   return parsed.href;
+}
+
+const wsHubs = new Map(); // normalized URL → hub object
+
+function createWsHub(url) {
+  return {
+    url,
+    socket: null,
+    subscribers: new Set(),
+    backoff: 1000,
+    paused: false,
+    reconnectTimer: null,
+  };
+}
+
+function getOrCreateWsHub(url) {
+  let hub = wsHubs.get(url);
+  if (!hub) {
+    hub = createWsHub(url);
+    wsHubs.set(url, hub);
+  }
+  return hub;
+}
+
+function removeWsHub(hub) {
+  if (hub.subscribers.size > 0) return; // safety: don't remove if subscribers exist
+  if (hub.reconnectTimer) {
+    clearTimeout(hub.reconnectTimer);
+    hub.reconnectTimer = null;
+  }
+  if (hub.socket) {
+    hub.socket.close();
+    hub.socket = null;
+  }
+  wsHubs.delete(hub.url);
+}
+
+function connectWsHub(hub) {
+  if (hub.paused) return;
+  if (hub.socket && hub.socket.readyState <= WebSocket.OPEN) return; // already connected/connecting
+
+  const socket = new WebSocket(hub.url);
+  hub.socket = socket;
+
+  socket.onopen = function () {
+    hub.backoff = 1000;
+    document.dispatchEvent(
+      new CustomEvent("silcrow:live:connect", {
+        bubbles: true,
+        detail: {
+          url: hub.url,
+          protocol: "ws",
+          subscribers: Array.from(hub.subscribers),
+        },
+      })
+    );
+  };
+
+  socket.onmessage = function (e) {
+    dispatchWsMessage(hub, e.data);
+  };
+
+  socket.onclose = function () {
+    hub.socket = null;
+    if (hub.paused) return;
+    if (hub.subscribers.size === 0) {
+      removeWsHub(hub);
+      return;
+    }
+
+    const reconnectIn = hub.backoff;
+
+    document.dispatchEvent(
+      new CustomEvent("silcrow:live:disconnect", {
+        bubbles: true,
+        detail: {
+          url: hub.url,
+          protocol: "ws",
+          reconnectIn,
+          subscribers: Array.from(hub.subscribers),
+        },
+      })
+    );
+
+    hub.reconnectTimer = setTimeout(function () {
+      hub.reconnectTimer = null;
+      connectWsHub(hub);
+    }, reconnectIn);
+
+    hub.backoff = Math.min(hub.backoff * 2, MAX_BACKOFF);
+  };
+
+  socket.onerror = function () {
+    // onerror is always followed by onclose per spec
+  };
+}
+
+function dispatchWsMessage(hub, rawData) {
+  try {
+    const msg = JSON.parse(rawData);
+    const type = msg && msg.type;
+
+    let targets;
+    if (msg.target) {
+      const el = document.querySelector(msg.target);
+      targets = el ? [el] : [];
+    } else {
+      targets = hub.subscribers;
+    }
+
+    if (type === "patch") {
+      if (msg.data !== undefined) {
+        for (const el of targets) {
+          patch(msg.data, el);
+        }
+      }
+    } else if (type === "html") {
+      for (const el of targets) {
+        safeSetHTML(el, msg.markup == null ? "" : String(msg.markup));
+      }
+    } else if (type === "invalidate") {
+      for (const el of targets) {
+        invalidate(el);
+      }
+    } else if (type === "navigate") {
+      // Navigate runs once, not per subscriber
+      if (msg.path) {
+        navigate(msg.path.trim(), {trigger: "ws"});
+      }
+    } else if (type === "custom") {
+      // Custom event dispatched once on document
+      document.dispatchEvent(
+        new CustomEvent("silcrow:ws:" + (msg.event || "message"), {
+          bubbles: true,
+          detail: {url: hub.url, data: msg.data},
+        })
+      );
+    } else {
+      warn("Unknown WS event type: " + type);
+    }
+  } catch (err) {
+    warn("Failed to parse WS message: " + err.message);
+  }
+}
+
+function unsubscribeWs(element) {
+  const state = liveConnections.get(element);
+  if (!state || state.protocol !== "ws") return;
+
+  const hub = state.hub;
+  if (hub) {
+    hub.subscribers.delete(element);
+    if (hub.subscribers.size === 0) {
+      removeWsHub(hub);
+    }
+  }
+
+  unregisterLiveState(state);
 }
 
 function openWsLive(root, url) {
@@ -1571,112 +1786,36 @@ function openWsLive(root, url) {
   const fullUrl = normalizeWsEndpoint(url);
   if (!fullUrl) return;
 
-  // Replace existing connection for this root element
+  // Unsubscribe from previous hub if switching URLs
   const existing = liveConnections.get(element);
-  if (existing) {
+  if (existing && existing.protocol === "ws") {
+    unsubscribeWs(element);
+  } else if (existing) {
+    // Was SSE — use existing SSE cleanup
     pauseLiveState(existing);
     unregisterLiveState(existing);
   }
 
+  // Subscribe to hub
+  const hub = getOrCreateWsHub(fullUrl);
+  hub.subscribers.add(element);
+
+  // Register in liveConnections for compatibility with disconnect/reconnect APIs
   const state = {
     es: null,
     socket: null,
     url: fullUrl,
     element,
-    backoff: 1000,
+    backoff: 0,       // backoff is hub-level now
     paused: false,
     reconnectTimer: null,
     protocol: "ws",
+    hub,               // reference to shared hub
   };
   registerLiveState(state);
 
-  connectWS(fullUrl, state);
-}
-
-function connectWS(url, state) {
-  if (state.paused) return;
-  if (liveConnections.get(state.element) !== state) return;
-
-  const socket = new WebSocket(url);
-  state.socket = socket;
-
-  socket.onopen = function () {
-    state.backoff = 1000;
-    document.dispatchEvent(
-      new CustomEvent("silcrow:live:connect", {
-        bubbles: true,
-        detail: {root: state.element, url, protocol: "ws"},
-      })
-    );
-  };
-
-  socket.onmessage = function (e) {
-    try {
-      const msg = JSON.parse(e.data);
-      const type = msg && msg.type;
-
-      if (type === "patch") {
-        const target = msg.target
-          ? document.querySelector(msg.target) || state.element
-          : state.element;
-        if (msg.data !== undefined) {
-          patch(msg.data, target);
-        }
-      } else if (type === "html") {
-        const target = msg.target
-          ? document.querySelector(msg.target) || state.element
-          : state.element;
-        safeSetHTML(target, msg.markup == null ? "" : String(msg.markup));
-      } else if (type === "invalidate") {
-        const target = msg.target
-          ? document.querySelector(msg.target) || state.element
-          : state.element;
-        invalidate(target);
-      } else if (type === "navigate") {
-        if (msg.path) {
-          navigate(msg.path.trim(), {trigger: "ws"});
-        }
-      } else if (type === "custom") {
-        document.dispatchEvent(
-          new CustomEvent("silcrow:ws:" + (msg.event || "message"), {
-            bubbles: true,
-            detail: {root: state.element, data: msg.data},
-          })
-        );
-      } else {
-        warn("Unknown WS event type: " + type);
-      }
-    } catch (err) {
-      warn("Failed to parse WS message: " + err.message);
-    }
-  };
-
-  socket.onclose = function () {
-    state.socket = null;
-
-    if (state.paused) return;
-    if (liveConnections.get(state.element) !== state) return;
-
-    const reconnectIn = state.backoff;
-
-    document.dispatchEvent(
-      new CustomEvent("silcrow:live:disconnect", {
-        bubbles: true,
-        detail: {root: state.element, url, reconnectIn, protocol: "ws"},
-      })
-    );
-
-    state.reconnectTimer = setTimeout(function () {
-      state.reconnectTimer = null;
-      connectWS(url, state);
-    }, reconnectIn);
-
-    state.backoff = Math.min(state.backoff * 2, MAX_BACKOFF);
-  };
-
-  socket.onerror = function () {
-    // onerror is always followed by onclose, so reconnect logic lives there
-  };
+  // Connect hub if not already connected
+  connectWsHub(hub);
 }
 
 function sendWs(root, data) {
@@ -1686,18 +1825,27 @@ function sendWs(root, data) {
     return;
   }
 
+  // Deduplicate: send once per hub, not once per subscriber
+  const sentHubs = new Set();
+
   for (const state of states) {
     if (state.protocol !== "ws") {
       warn("Cannot send on SSE connection — use WS for bidirectional");
       continue;
     }
-    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+
+    const hub = state.hub;
+    if (!hub || sentHubs.has(hub)) continue;
+    sentHubs.add(hub);
+
+    if (!hub.socket || hub.socket.readyState !== WebSocket.OPEN) {
       warn("WebSocket not open for send");
       continue;
     }
+
     try {
       const payload = typeof data === "string" ? data : JSON.stringify(data);
-      state.socket.send(payload);
+      hub.socket.send(payload);
     } catch (err) {
       warn("WS send failed: " + err.message);
     }
@@ -1760,7 +1908,7 @@ function revertOptimistic(root) {
 // ════════════════════════════════════════════════════════════
 // API — public surface & lifecycle
 // ════════════════════════════════════════════════════════════
-
+let liveObserver = null;
 function init() {
   document.addEventListener("click", onClick);
   document.addEventListener("submit", onSubmit);
@@ -1778,6 +1926,36 @@ function init() {
 
   // Auto-scan for s-live elements
   initLiveElements();
+// Observe DOM for removed live elements
+  liveObserver = new MutationObserver(function (mutations) {
+    function cleanupLiveNode(node) {
+      const state = liveConnections.get(node);
+      if (!state) return;
+
+      if (state.protocol === "ws") {
+        unsubscribeWs(node);
+      } else {
+        pauseLiveState(state);
+        unregisterLiveState(state);
+      }
+    }
+
+    for (const mutation of mutations) {
+      for (const removed of mutation.removedNodes) {
+        if (removed.nodeType !== 1) continue;
+
+        cleanupLiveNode(removed);
+
+        if (removed.querySelectorAll) {
+          for (const child of removed.querySelectorAll("[s-live]")) {
+            cleanupLiveNode(child);
+          }
+        }
+      }
+    }
+  });
+  liveObserver.observe(document.body, {childList: true, subtree: true});
+
 }
 
 function destroy() {
@@ -1786,6 +1964,10 @@ function destroy() {
   window.removeEventListener("popstate", onPopState);
   document.removeEventListener("mouseenter", onMouseEnter, true);
   document.removeEventListener("silcrow:sse", onSSEEvent);
+  if (liveObserver) {
+    liveObserver.disconnect();
+    liveObserver = null;
+  }
   responseCache.clear();
   preloadInflight.clear();
   destroyAllLive();
@@ -1864,8 +2046,6 @@ window.Silcrow = {
   destroy,
 };
 
-// Backward compatibility
-window.SilcrowNavigate = window.Silcrow;
 
 // Auto-init navigation when DOM is ready
 if (document.readyState === "loading") {
