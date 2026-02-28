@@ -23,39 +23,32 @@ function init() {
   initLiveElements();
 // Observe DOM for removed live elements
   liveObserver = new MutationObserver(function (mutations) {
+    function cleanupLiveNode(node) {
+      const state = liveConnections.get(node);
+      if (!state) return;
+
+      if (state.protocol === "ws") {
+        unsubscribeWs(node);
+      } else {
+        pauseLiveState(state);
+        unregisterLiveState(state);
+      }
+    }
+
     for (const mutation of mutations) {
       for (const removed of mutation.removedNodes) {
         if (removed.nodeType !== 1) continue;
 
-        // Check the removed node itself
-        const state = liveConnections.get(removed);
-        if (state) {
-          if (state.protocol === "ws") {
-            unsubscribeWs(removed);
-          } else {
-            pauseLiveState(state);
-          }
-          unregisterLiveState(state);
-        }
+        cleanupLiveNode(removed);
 
-        // Check descendants of removed node
         if (removed.querySelectorAll) {
           for (const child of removed.querySelectorAll("[s-live]")) {
-            const childState = liveConnections.get(child);
-            if (childState) {
-              if (childState.protocol === "ws") {
-                unsubscribeWs(child);
-              } else {
-                pauseLiveState(childState);
-              }
-              unregisterLiveState(childState);
-            }
+            cleanupLiveNode(child);
           }
         }
       }
     }
   });
-
   liveObserver.observe(document.body, {childList: true, subtree: true});
 
 }
