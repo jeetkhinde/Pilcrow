@@ -508,6 +508,7 @@ Silcrow.destroy();
 | Method | Description |
 | --- | --- |
 | `Silcrow.live(root, url)` | Open SSE connection, pipe messages to `patch()` |
+| `Silcrow.send(root, data)` | Send data over a WebSocket connection |
 | `Silcrow.disconnect(root)` | Pause SSE connection and stop auto-reconnect |
 | `Silcrow.reconnect(root)` | Resume SSE connection with reset backoff |
 

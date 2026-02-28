@@ -3,44 +3,12 @@
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
 use std::convert::Infallible;
-use std::ops::Deref;
 
 // ════════════════════════════════════════════════════════════
 // 1. SseRoute — typed route constant for SSE endpoints
 // ════════════════════════════════════════════════════════════
 
-/// A compile-time SSE route path. Use as both a route string and header value.
-///
-/// ```ignore
-/// const FEED: SseRoute = SseRoute::new("/events/feed");
-/// // Route:  .route(FEED.path(), get(feed_handler))
-/// // Header: html(markup).sse(FEED)
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SseRoute(&'static str);
-
-impl SseRoute {
-    pub const fn new(path: &'static str) -> Self {
-        Self(path)
-    }
-
-    pub const fn path(&self) -> &'static str {
-        self.0
-    }
-}
-
-impl Deref for SseRoute {
-    type Target = str;
-    fn deref(&self) -> &str {
-        self.0
-    }
-}
-
-impl AsRef<str> for SseRoute {
-    fn as_ref(&self) -> &str {
-        self.0
-    }
-}
+crate::define_route!(SseRoute, "SSE", "/events/feed", "FEED");
 
 // ════════════════════════════════════════════════════════════
 // 2. SilcrowEvent — structured SSE event builder
@@ -71,10 +39,7 @@ enum EventKind {
 impl SilcrowEvent {
     /// Create a patch event that sends JSON data to `Silcrow.patch(data, target)`.
     pub fn patch(data: impl serde::Serialize, target: &str) -> Self {
-        let value = serde_json::to_value(data).unwrap_or_else(|e| {
-            tracing::warn!("SilcrowEvent::patch serialization failed: {e}");
-            serde_json::Value::Null
-        });
+        let value = crate::serialize_or_null(data, "SilcrowEvent::patch");
         Self {
             kind: EventKind::Patch {
                 data: value,

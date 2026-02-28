@@ -32,10 +32,18 @@ impl BaseResponse {
             response.headers_mut().insert(name.clone(), value.clone());
         });
 
-        // 2. Prepare all cookies, including toasts
-        let mut final_jar = self.cookies.clone();
+        // 2. Apply cookies (clone jar only when toasts need to be added)
+        if self.toasts.is_empty() {
+            for cookie in self.cookies.iter() {
+                if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
+                    response
+                        .headers_mut()
+                        .append(axum::http::header::SET_COOKIE, header_value);
+                }
+            }
+        } else {
+            let mut final_jar = self.cookies.clone();
 
-        if !self.toasts.is_empty() {
             if let Ok(json_string) = serde_json::to_string(&self.toasts) {
                 let encoded = urlencoding::encode(&json_string).into_owned();
                 let toast_cookie = Cookie::build(("silcrow_toasts", encoded))
@@ -45,14 +53,13 @@ impl BaseResponse {
                     .build();
                 final_jar = final_jar.add(toast_cookie);
             }
-        }
 
-        // 3. Apply cookies
-        for cookie in final_jar.iter() {
-            if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
-                response
-                    .headers_mut()
-                    .append(axum::http::header::SET_COOKIE, header_value);
+            for cookie in final_jar.iter() {
+                if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
+                    response
+                        .headers_mut()
+                        .append(axum::http::header::SET_COOKIE, header_value);
+                }
             }
         }
     }
@@ -61,8 +68,6 @@ impl BaseResponse {
 // ════════════════════════════════════════════════════════════
 // 2. The Modifier Trait
 // ════════════════════════════════════════════════════════════
-
-// In src/response.rs, update the ResponseExt trait:
 
 pub trait ResponseExt: Sized {
     fn base_mut(&mut self) -> &mut BaseResponse;

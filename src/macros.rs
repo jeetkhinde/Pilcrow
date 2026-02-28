@@ -2,8 +2,7 @@
 
 /// Ergonomic macro for content negotiation responses.
 ///
-/// Expands to `req.select(Responses::new()...).await` with automatic
-/// closure wrapping. Supports shared toasts applied to whichever branch runs.
+/// Supports shared toasts applied to whichever branch runs.
 ///
 /// # Usage
 ///
@@ -37,136 +36,89 @@
 ///     json => json(user),
 /// })
 /// ```
+/// Internal: wrap an expression in Ok(IntoResponse::into_response(...))
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __respond_ok {
+    ($expr:expr) => {
+        Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response($expr))
+    };
+}
+
+/// Internal: apply toast if provided, otherwise pass through
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __respond_with_toast {
+    ($expr:expr, ($msg:expr, $lvl:expr)) => {
+        $crate::ResponseExt::with_toast($expr, $msg, $lvl)
+    };
+    ($expr:expr,) => {
+        $expr
+    };
+}
+
+/// Internal: 406 response for unsupported content type
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __respond_406 {
+    ($label:expr) => {
+        $crate::__respond_ok!((axum::http::StatusCode::NOT_ACCEPTABLE, $label))
+    };
+}
+
 #[macro_export]
 macro_rules! respond {
-    ($req:expr, { html => $html:expr, json => raw $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+    // ── Both arms (html + json) ──────────────────────────────
+    // With raw JSON
+    ($req:expr, { html => $html:expr, json => raw $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($html, $( ($msg, $lvl) )?))
             }
             $crate::extract::RequestMode::Json => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($crate::json($json), $( ($msg, $lvl) )?))
             }
         }
     };
-    ($req:expr, { html => $html:expr, json => $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+    // With pre-wrapped JSON
+    ($req:expr, { html => $html:expr, json => $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($html, $( ($msg, $lvl) )?))
             }
             $crate::extract::RequestMode::Json => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($json, $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($json, $( ($msg, $lvl) )?))
             }
         }
     };
 
-    // ── Both arms, no shared toast ───────────────────────────
-    ($req:expr, { html => $html:expr, json => raw $json:expr $(,)? }) => {
-        match $req.preferred_mode() {
-            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($html),
-            ),
-            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($crate::json($json)),
-            ),
-        }
-    };
-    ($req:expr, { html => $html:expr, json => $json:expr $(,)? }) => {
-        match $req.preferred_mode() {
-            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($html),
-            ),
-            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($json),
-            ),
-        }
-    };
-
-    // ── HTML-only + shared toast ─────────────────────────────
-    ($req:expr, { html => $html:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+    // ── HTML-only ────────────────────────────────────────────
+    ($req:expr, { html => $html:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($html, $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($html, $( ($msg, $lvl) )?))
             }
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "HTML required",
-            ))),
+            _ => $crate::__respond_406!("HTML required"),
         }
     };
 
-    // ── JSON-only + shared toast ─────────────────────────────
-    ($req:expr, { json => raw $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+    // ── JSON-only (raw) ──────────────────────────────────────
+    ($req:expr, { json => raw $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Json => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($crate::json($json), $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($crate::json($json), $( ($msg, $lvl) )?))
             }
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "JSON required",
-            ))),
+            _ => $crate::__respond_406!("JSON required"),
         }
     };
-    ($req:expr, { json => $json:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+
+    // ── JSON-only (pre-wrapped) ──────────────────────────────
+    ($req:expr, { json => $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Json => {
-                Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response(
-                    $crate::ResponseExt::with_toast($json, $msg, $lvl),
-                ))
+                $crate::__respond_ok!($crate::__respond_with_toast!($json, $( ($msg, $lvl) )?))
             }
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "JSON required",
-            ))),
-        }
-    };
-
-    // ── HTML-only, no toast ──────────────────────────────────
-    ($req:expr, { html => $html:expr $(,)? }) => {
-        match $req.preferred_mode() {
-            $crate::extract::RequestMode::Html => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($html),
-            ),
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "HTML required",
-            ))),
-        }
-    };
-
-    // ── JSON-only, no toast ──────────────────────────────────
-    ($req:expr, { json => raw $json:expr $(,)? }) => {
-        match $req.preferred_mode() {
-            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($crate::json($json)),
-            ),
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "JSON required",
-            ))),
-        }
-    };
-    ($req:expr, { json => $json:expr $(,)? }) => {
-        match $req.preferred_mode() {
-            $crate::extract::RequestMode::Json => Ok::<_, axum::response::Response>(
-                axum::response::IntoResponse::into_response($json),
-            ),
-            _ => Ok::<_, axum::response::Response>(axum::response::IntoResponse::into_response((
-                axum::http::StatusCode::NOT_ACCEPTABLE,
-                "JSON required",
-            ))),
+            _ => $crate::__respond_406!("JSON required"),
         }
     };
 }

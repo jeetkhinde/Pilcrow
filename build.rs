@@ -4,6 +4,7 @@ use std::fs;
 
 const MODULES: &[&str] = &[
     "debug",
+    "url-safety",
     "patcher",
     "safety",
     "toasts",

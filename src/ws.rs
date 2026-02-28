@@ -3,44 +3,12 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use std::future::Future;
-use std::ops::Deref;
 
 // ════════════════════════════════════════════════════════════
 // 1. WsRoute — typed route constant for WS endpoints
 // ════════════════════════════════════════════════════════════
 
-/// A compile-time WebSocket route path. Use as both a route string and header value.
-///
-/// ```ignore
-/// const CHAT: WsRoute = WsRoute::new("/ws/chat");
-/// // Route:  .route(CHAT.path(), get(chat_handler))
-/// // Header: html(markup).ws(CHAT)
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WsRoute(&'static str);
-
-impl WsRoute {
-    pub const fn new(path: &'static str) -> Self {
-        Self(path)
-    }
-
-    pub const fn path(&self) -> &'static str {
-        self.0
-    }
-}
-
-impl Deref for WsRoute {
-    type Target = str;
-    fn deref(&self) -> &str {
-        self.0
-    }
-}
-
-impl AsRef<str> for WsRoute {
-    fn as_ref(&self) -> &str {
-        self.0
-    }
-}
+crate::define_route!(WsRoute, "WebSocket", "/ws/chat", "CHAT");
 
 // ════════════════════════════════════════════════════════════
 // 2. WsEvent — bidirectional message enum
@@ -90,10 +58,7 @@ impl WsEvent {
     /// stream.send(evt).await?;
     /// ```
     pub fn patch(data: impl serde::Serialize, target: &str) -> Self {
-        let value = serde_json::to_value(data).unwrap_or_else(|e| {
-            tracing::warn!("WsEvent::patch serialization failed: {e}");
-            serde_json::Value::Null
-        });
+        let value = crate::serialize_or_null(data, "WsEvent::patch");
         Self::Patch {
             target: target.to_owned(),
             data: value,
@@ -142,10 +107,7 @@ impl WsEvent {
     /// stream.send(evt).await?;
     /// ```
     pub fn custom(event: impl Into<String>, data: impl serde::Serialize) -> Self {
-        let value = serde_json::to_value(data).unwrap_or_else(|e| {
-            tracing::warn!("WsEvent::custom serialization failed: {e}");
-            serde_json::Value::Null
-        });
+        let value = crate::serialize_or_null(data, "WsEvent::custom");
         Self::Custom {
             event: event.into(),
             data: value,

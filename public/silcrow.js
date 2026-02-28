@@ -14,6 +14,60 @@ function throwErr(msg) {
   if (DEBUG) throw new Error("[silcrow] " + msg);
 }
 
+// silcrow/url-safety.js
+// ════════════════════════════════════════════════════════════
+// URL Safety — shared protocol & URL validation primitives
+// ════════════════════════════════════════════════════════════
+
+const URL_SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+const URL_ATTRS = new Set([
+  "action",
+  "background",
+  "cite",
+  "formaction",
+  "href",
+  "poster",
+  "src",
+  "xlink:href",
+]);
+
+const SAFE_DATA_IMAGE_RE =
+  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i;
+
+function hasSafeProtocol(raw, allowDataImage) {
+  const value = String(raw || "").trim();
+  if (!value) return true;
+
+  const compact = value.replace(/[\u0000-\u0020\u007F]+/g, "");
+  if (/^(?:javascript|vbscript|file):/i.test(compact)) return false;
+
+  if (/^data:/i.test(compact)) {
+    return allowDataImage && SAFE_DATA_IMAGE_RE.test(compact);
+  }
+
+  try {
+    const parsed = new URL(value, location.origin);
+    return URL_SAFE_PROTOCOLS.has(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
+}
+
+function hasSafeSrcSet(raw) {
+  const parts = String(raw || "").split(",");
+  for (const part of parts) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    const idx = candidate.search(/\s/);
+    const url = idx === -1 ? candidate : candidate.slice(0, idx);
+    if (!hasSafeProtocol(url, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // ./public/silcrow/patcher.js
 // ════════════════════════════════════════════════════════════
 // Patcher — reactive data binding & DOM patching
@@ -49,66 +103,18 @@ const knownProps = {
   selectedIndex: "number",
 };
 
-const URL_PROPS = new Set([
-  "action",
-  "background",
-  "cite",
-  "formaction",
-  "href",
-  "poster",
-  "src",
-  "xlink:href",
-]);
-
-const SAFE_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
-const PATCH_SAFE_DATA_IMAGE_RE =
-  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i;
-
-function hasSafeBoundProtocol(raw, allowDataImage) {
-  const value = String(raw || "").trim();
-  if (!value) return true;
-
-  const compact = value.replace(/[\u0000-\u0020\u007F]+/g, "");
-  if (/^(?:javascript|vbscript|file):/i.test(compact)) return false;
-
-  if (/^data:/i.test(compact)) {
-    return allowDataImage && PATCH_SAFE_DATA_IMAGE_RE.test(compact);
-  }
-
-  try {
-    const parsed = new URL(value, location.origin);
-    return SAFE_URL_PROTOCOLS.has(parsed.protocol);
-  } catch (e) {
-    return false;
-  }
-}
-
-function hasSafeBoundSrcSet(raw) {
-  const parts = String(raw || "").split(",");
-  for (const part of parts) {
-    const candidate = part.trim();
-    if (!candidate) continue;
-    const idx = candidate.search(/\s/);
-    const url = idx === -1 ? candidate : candidate.slice(0, idx);
-    if (!hasSafeBoundProtocol(url, false)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function isUnsafeBoundUrl(el, prop, value) {
   const name = String(prop || "").toLowerCase();
   if (!name) return false;
 
   if (name === "srcset") {
-    return !hasSafeBoundSrcSet(value);
+    return !hasSafeSrcSet(value);
   }
 
-  if (!URL_PROPS.has(name)) return false;
+  if (!URL_ATTRS.has(name)) return false;
 
   const allowDataImage = name === "src" && el.tagName === "IMG";
-  return !hasSafeBoundProtocol(value, allowDataImage);
+  return !hasSafeProtocol(value, allowDataImage);
 }
 
 function setValue(el, prop, value) {
@@ -534,54 +540,6 @@ const FORBIDDEN_HTML_TAGS = new Set([
   "style",
 ]);
 
-const URL_ATTRS = new Set([
-  "action",
-  "background",
-  "cite",
-  "formaction",
-  "href",
-  "poster",
-  "src",
-  "xlink:href",
-]);
-
-const SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:"]);
-const SAFE_DATA_IMAGE_RE =
-  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+=*$/i;
-
-function hasSafeProtocol(raw, allowDataImage) {
-  const value = String(raw || "").trim();
-  if (!value) return true;
-
-  const compact = value.replace(/[\u0000-\u0020\u007F]+/g, "");
-  if (/^(?:javascript|vbscript|file):/i.test(compact)) return false;
-
-  if (/^data:/i.test(compact)) {
-    return allowDataImage && SAFE_DATA_IMAGE_RE.test(compact);
-  }
-
-  try {
-    const parsed = new URL(value, location.origin);
-    return SAFE_PROTOCOLS.has(parsed.protocol);
-  } catch (e) {
-    return false;
-  }
-}
-
-function hasSafeSrcSet(raw) {
-  const parts = String(raw || "").split(",");
-  for (const part of parts) {
-    const candidate = part.trim();
-    if (!candidate) continue;
-    const idx = candidate.search(/\s/);
-    const url = idx === -1 ? candidate : candidate.slice(0, idx);
-    if (!hasSafeProtocol(url, false)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function hardenBlankTargets(node) {
   if (node.tagName !== "A") return;
   if (String(node.getAttribute("target") || "").toLowerCase() !== "_blank") return;
@@ -830,6 +788,119 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   }
 }
 
+// ── Fetch Request Construction ─────────────────────────────
+function buildFetchOptions(method, body, wantsHTML, signal) {
+  const opts = {
+    method,
+    headers: {
+      "silcrow-target": "true",
+      "Accept": wantsHTML ? "text/html" : "application/json",
+    },
+    signal,
+  };
+
+  if (body) {
+    if (body instanceof FormData) {
+      opts.body = body;
+    } else {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+  }
+
+  return opts;
+}
+
+// ── Response Header Processing ─────────────────────────────
+function processResponseHeaders(response, fullUrl) {
+  const result = {
+    redirected: response.redirected,
+    finalUrl: response.url || fullUrl,
+    pushUrl: null,
+    retargetSelector: null,
+    sideEffects: {
+      patch: response.headers.get("silcrow-patch"),
+      invalidate: response.headers.get("silcrow-invalidate"),
+      navigate: response.headers.get("silcrow-navigate"),
+      sse: response.headers.get("silcrow-sse"),
+      ws: response.headers.get("silcrow-ws"),
+    },
+  };
+
+  // Fire trigger events
+  const triggerHeader = response.headers.get("silcrow-trigger");
+  if (triggerHeader) {
+    try {
+      const triggers = JSON.parse(triggerHeader);
+      Object.entries(triggers).forEach(([evt, detail]) => {
+        document.dispatchEvent(new CustomEvent(evt, {bubbles: true, detail}));
+      });
+    } catch (e) {
+      document.dispatchEvent(new CustomEvent(triggerHeader, {bubbles: true}));
+    }
+  }
+
+  // Retarget
+  result.retargetSelector = response.headers.get("silcrow-retarget");
+
+  // Push URL override
+  result.pushUrl = response.headers.get("silcrow-push");
+  if (result.pushUrl) {
+    result.finalUrl = new URL(result.pushUrl, location.origin).href;
+    result.redirected = true;
+  }
+
+  return result;
+}
+
+// ── Swap Content Preparation ───────────────────────────────
+function prepareSwapContent(text, contentType, targetSelector) {
+  const isJSON = contentType.includes("application/json");
+  let swapContent;
+
+  if (isJSON) {
+    swapContent = JSON.parse(text);
+    processToasts(true, swapContent);
+  } else {
+    const isFullPage = !targetSelector;
+    swapContent = extractHTML(text, targetSelector, isFullPage);
+    processToasts(false);
+  }
+
+  return {swapContent, isJSON};
+}
+
+// ── Post-Swap Finalization ─────────────────────────────────
+function finalizeNavigation(ctx) {
+  const {pushUrl, redirected, finalUrl, fullUrl, shouldPushHistory,
+         trigger, targetSelector, targetEl, sideEffects} = ctx;
+
+  processSideEffectHeaders(sideEffects, targetEl);
+
+  const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
+  if (shouldPushHistory && trigger !== "popstate") {
+    history.pushState(
+      {silcrow: true, url: finalHistoryUrl, targetSelector},
+      "",
+      finalHistoryUrl
+    );
+  }
+
+  if (trigger === "popstate") {
+    const saved = (history.state || {}).scrollY;
+    window.scrollTo(0, saved || 0);
+  } else if (shouldPushHistory) {
+    window.scrollTo(0, 0);
+  }
+
+  document.dispatchEvent(
+    new CustomEvent("silcrow:load", {
+      bubbles: true,
+      detail: {url: finalUrl, target: targetEl, redirected},
+    })
+  );
+}
+
 // ── Core Navigate ──────────────────────────────────────────
 async function navigate(url, options = {}) {
   const {
@@ -842,9 +913,8 @@ async function navigate(url, options = {}) {
   } = options;
 
   const fullUrl = new URL(url, location.origin).href;
-  const targetEl = target || document.body;
+  let targetEl = target || document.body;
   const targetSelector = sourceEl?.getAttribute("s-target") || null;
-
   const shouldPushHistory = !skipHistory && !targetSelector && method === "GET";
 
   const event = new CustomEvent("silcrow:navigate", {
@@ -854,6 +924,7 @@ async function navigate(url, options = {}) {
   });
   if (!document.dispatchEvent(event)) return;
 
+  // Abort previous in-flight GET to the same target
   const prevAbort = abortMap.get(targetEl);
   if (prevAbort && prevAbort.method === "GET") {
     prevAbort.controller.abort();
@@ -862,7 +933,8 @@ async function navigate(url, options = {}) {
   abortMap.set(targetEl, {controller, method});
 
   const timeout = getTimeout(sourceEl);
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, timeout);
 
   showLoading(targetEl);
 
@@ -874,73 +946,29 @@ async function navigate(url, options = {}) {
 
     const wantsHTML = sourceEl?.hasAttribute("s-html");
     if (cached) {
-      // Side-effect headers (patch, invalidate, navigate, sse) are intentionally
-      // not cached — they are one-shot triggers that should only fire on the
-      // original server response, not on subsequent cache hits.
+      // Side-effect headers are intentionally not cached — they are
+      // one-shot triggers that should only fire on the original response.
       text = cached.text;
       contentType = cached.contentType;
     } else {
-      const fetchOptions = {
-        method,
-        headers: {
-          "silcrow-target": "true",
-          "Accept": wantsHTML ? "text/html" : "application/json",
-        },
-        signal: controller.signal,
-      };
-
-      if (body) {
-        if (body instanceof FormData) {
-          fetchOptions.body = body;
-        } else {
-          fetchOptions.headers["Content-Type"] = "application/json";
-          fetchOptions.body = JSON.stringify(body);
-        }
-      }
-
-      const response = await fetch(fullUrl, fetchOptions);
+      const fetchOpts = buildFetchOptions(method, body, wantsHTML, controller.signal);
+      const response = await fetch(fullUrl, fetchOpts);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      redirected = response.redirected;
+      const headerResult = processResponseHeaders(response, fullUrl);
+      redirected = headerResult.redirected;
+      finalUrl = headerResult.finalUrl;
+      pushUrl = headerResult.pushUrl;
+      sideEffects = headerResult.sideEffects;
 
-      const triggerHeader = response.headers.get("silcrow-trigger");
-      if (triggerHeader) {
-        try {
-          const triggers = JSON.parse(triggerHeader);
-          Object.entries(triggers).forEach(([evt, detail]) => {
-            document.dispatchEvent(new CustomEvent(evt, {bubbles: true, detail}));
-          });
-        } catch (e) {
-          document.dispatchEvent(new CustomEvent(triggerHeader, {bubbles: true}));
-        }
+      // Apply retarget
+      if (headerResult.retargetSelector) {
+        const newTarget = document.querySelector(headerResult.retargetSelector);
+        if (newTarget) targetEl = newTarget;
       }
-
-      const retarget = response.headers.get("silcrow-retarget");
-      if (retarget) {
-        const newTarget = document.querySelector(retarget);
-        if (newTarget) options.target = newTarget;
-      }
-
-      finalUrl = response.url || fullUrl;
-      pushUrl = response.headers.get("silcrow-push");
-      if (pushUrl) {
-        finalUrl = new URL(pushUrl, location.origin).href;
-        redirected = true;
-      }
-
-      // Capture side-effect headers for post-swap processing
-      sideEffects = {
-        patch: response.headers.get("silcrow-patch"),
-        invalidate: response.headers.get("silcrow-invalidate"),
-        navigate: response.headers.get("silcrow-navigate"),
-        sse: response.headers.get("silcrow-sse"),
-        ws: response.headers.get("silcrow-ws"),
-      };
-
-   
 
       text = await response.text();
       contentType = response.headers.get("Content-Type") || "";
@@ -955,16 +983,11 @@ async function navigate(url, options = {}) {
       }
     }
 
+    // Route handler middleware
     if (routeHandler) {
       const handled = await routeHandler({
-        url: fullUrl,
-        finalUrl,
-        redirected,
-        method,
-        trigger,
-        response: text,
-        contentType,
-        target: targetEl,
+        url: fullUrl, finalUrl, redirected, method,
+        trigger, response: text, contentType, target: targetEl,
       });
       if (handled === false) {
         hideLoading(targetEl);
@@ -972,6 +995,7 @@ async function navigate(url, options = {}) {
       }
     }
 
+    // Save scroll position before pushing
     if (shouldPushHistory && trigger !== "popstate") {
       const current = history.state || {};
       history.replaceState(
@@ -981,17 +1005,8 @@ async function navigate(url, options = {}) {
       );
     }
 
-    let swapContent;
-    const isJSON = contentType.includes("application/json");
-
-    if (isJSON) {
-      swapContent = JSON.parse(text);
-      processToasts(true, swapContent);
-    } else {
-      const isFullPage = !targetSelector;
-      swapContent = extractHTML(text, targetSelector, isFullPage);
-      processToasts(false);
-    }
+    // Prepare and execute swap
+    const {swapContent, isJSON} = prepareSwapContent(text, contentType, targetSelector);
 
     let swapExecuted = false;
     const proceed = () => {
@@ -1007,47 +1022,22 @@ async function navigate(url, options = {}) {
     const beforeSwap = new CustomEvent("silcrow:before-swap", {
       bubbles: true,
       cancelable: true,
-      detail: {
-        url: finalUrl,
-        target: targetEl,
-        content: swapContent,
-        isJSON,
-        proceed,
-      },
+      detail: {url: finalUrl, target: targetEl, content: swapContent, isJSON, proceed},
     });
 
     if (!document.dispatchEvent(beforeSwap)) return;
-
     if (!swapExecuted) proceed();
 
-    // Process side-effect headers after the main swap
-    processSideEffectHeaders(sideEffects, targetEl);
+    // Finalize: side-effects, history, scroll, load event
+    finalizeNavigation({
+      pushUrl, redirected, finalUrl, fullUrl,
+      shouldPushHistory, trigger, targetSelector, targetEl,
+      sideEffects,
+    });
 
-    const finalHistoryUrl = pushUrl || (redirected ? finalUrl : fullUrl);
-    if (shouldPushHistory && trigger !== "popstate") {
-      history.pushState(
-        {silcrow: true, url: finalHistoryUrl, targetSelector},
-        "",
-        finalHistoryUrl
-      );
-    }
-
-    if (trigger === "popstate") {
-      const saved = (history.state || {}).scrollY;
-      window.scrollTo(0, saved || 0);
-    } else if (shouldPushHistory) {
-      window.scrollTo(0, 0);
-    }
-
-    document.dispatchEvent(
-      new CustomEvent("silcrow:load", {
-        bubbles: true,
-        detail: {url: finalUrl, target: targetEl, redirected},
-      })
-    );
   } catch (err) {
     if (err.name === "AbortError") {
-      if (controller.signal.aborted) {
+      if (timedOut) {
         const timeoutErr = new Error(
           `[silcrow] Request timed out after ${timeout}ms`
         );
@@ -1992,6 +1982,7 @@ window.Silcrow = {
       target: options.target
         ? document.querySelector(options.target)
         : null,
+      skipHistory: options.skipHistory || false,
       trigger: "api",
     });
   },

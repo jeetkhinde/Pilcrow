@@ -87,6 +87,7 @@ window.Silcrow = {
       target: options.target
         ? document.querySelector(options.target)
         : null,
+      skipHistory: options.skipHistory || false,
       trigger: "api",
     });
   },
