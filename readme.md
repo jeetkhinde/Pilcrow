@@ -1,6 +1,6 @@
 # Pilcrow
 
-A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handlers into multi-modal engines — one handler serves HTML to browsers and JSON to API clients via content negotiation, lazy evaluation, and server-side orchestration of the [Silcrow.js](SILCROW.md) frontend runtime.
+A response layer for [Axum](https://github.com/tokio-rs/axum) that turns handlers into multi-modal engines — one handler serves HTML to browsers and JSON to API clients via content negotiation, lazy evaluation, and server-side orchestration of the [Silcrow.js](docs/silcrow.md) frontend runtime.
 
 ## Quick Start
 
@@ -298,7 +298,7 @@ Router::new()
     .route(DASHBOARD_EVENTS.path(), get(dashboard_events))
 ```
 
-**Client-side:** Silcrow.js handles everything — connection management, reconnection with exponential backoff (1s → 2s → 4s → max 30s), and piping events to the right DOM targets. See the [Silcrow.js docs](SILCROW.md#live-sse-connections--real-time-updates) for the full client-side API.
+**Client-side:** Silcrow.js handles everything — connection management, reconnection with exponential backoff (1s → 2s → 4s → max 30s), and piping events to the right DOM targets. See the [Silcrow.js docs](docs/silcrow.md#live-sse-connections--real-time-updates) for the full client-side API.
 
 ---
 
@@ -358,7 +358,7 @@ Router::new()
     .route(CHAT_WS.path(), get(chat_ws))
 ```
 
-**Client-side:** Silcrow.js handles connection management, reconnection with exponential backoff, and bidirectional messaging. Use `Silcrow.send(root, data)` to send messages from the client. See the [Silcrow.js docs](SILCROW.md#websocket-with-s-live) for the full client-side API.
+**Client-side:** Silcrow.js handles connection management, reconnection with exponential backoff, and bidirectional messaging. Use `Silcrow.send(root, data)` to send messages from the client. See the [Silcrow.js docs](docs/silcrow.md#websocket-with-s-live) for the full client-side API.
 
 ---
 
