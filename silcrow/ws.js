@@ -28,14 +28,15 @@ function normalizeWsEndpoint(rawUrl) {
     return null;
   }
 
-+ const expectedOrigin = location.origin.replace(/^http/, "ws");
-+ if (parsed.origin !== expectedOrigin) {
-+   warn("Rejected cross-origin WebSocket URL: " + parsed.href);
-+   return null;
-+ }
+  const expectedOrigin = location.origin.replace(/^http(s?)/, "ws$1");
+  if (parsed.origin !== expectedOrigin) {
+    warn("Rejected cross-origin WebSocket URL: " + parsed.href);
+    return null;
+  }
 
   return parsed.href;
 }
+
 const wsHubs = new Map(); // normalized URL → hub object
 
 function createWsHub(url) {
@@ -136,34 +137,27 @@ function dispatchWsMessage(hub, rawData) {
     const msg = JSON.parse(rawData);
     const type = msg && msg.type;
 
-    // Targeted messages: resolve selector, apply once
+    let targets;
+    if (msg.target) {
+      const el = document.querySelector(msg.target);
+      targets = el ? [el] : [];
+    } else {
+      targets = hub.subscribers;
+    }
+
     if (type === "patch") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target && msg.data !== undefined) patch(msg.data, target);
-      } else {
-        // Untargeted: fan out to all subscribers
-        for (const el of hub.subscribers) {
-          if (msg.data !== undefined) patch(msg.data, el);
+      if (msg.data !== undefined) {
+        for (const el of targets) {
+          patch(msg.data, el);
         }
       }
     } else if (type === "html") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target) safeSetHTML(target, msg.markup == null ? "" : String(msg.markup));
-      } else {
-        for (const el of hub.subscribers) {
-          safeSetHTML(el, msg.markup == null ? "" : String(msg.markup));
-        }
+      for (const el of targets) {
+        safeSetHTML(el, msg.markup == null ? "" : String(msg.markup));
       }
     } else if (type === "invalidate") {
-      if (msg.target) {
-        const target = document.querySelector(msg.target);
-        if (target) invalidate(target);
-      } else {
-        for (const el of hub.subscribers) {
-          invalidate(el);
-        }
+      for (const el of targets) {
+        invalidate(el);
       }
     } else if (type === "navigate") {
       // Navigate runs once, not per subscriber
@@ -201,7 +195,6 @@ function unsubscribeWs(element) {
   unregisterLiveState(state);
 }
 
-
 function openWsLive(root, url) {
   const element = typeof root === "string" ? document.querySelector(root) : root;
   if (!element) {
@@ -212,12 +205,6 @@ function openWsLive(root, url) {
   const fullUrl = normalizeWsEndpoint(url);
   if (!fullUrl) return;
 
-  const parsed = new URL(fullUrl);
-  if (parsed.origin !== location.origin.replace(/^http/, 'ws')) {
-    warn("Rejected cross-origin WebSocket URL: " + fullUrl);
-    return;
-  }
-  
   // Unsubscribe from previous hub if switching URLs
   const existing = liveConnections.get(element);
   if (existing && existing.protocol === "ws") {
@@ -249,7 +236,6 @@ function openWsLive(root, url) {
   // Connect hub if not already connected
   connectWsHub(hub);
 }
-
 
 function sendWs(root, data) {
   const states = resolveLiveStates(root);
