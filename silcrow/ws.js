@@ -28,9 +28,14 @@ function normalizeWsEndpoint(rawUrl) {
     return null;
   }
 
++ const expectedOrigin = location.origin.replace(/^http/, "ws");
++ if (parsed.origin !== expectedOrigin) {
++   warn("Rejected cross-origin WebSocket URL: " + parsed.href);
++   return null;
++ }
+
   return parsed.href;
 }
-
 const wsHubs = new Map(); // normalized URL → hub object
 
 function createWsHub(url) {
@@ -207,6 +212,12 @@ function openWsLive(root, url) {
   const fullUrl = normalizeWsEndpoint(url);
   if (!fullUrl) return;
 
+  const parsed = new URL(fullUrl);
+  if (parsed.origin !== location.origin.replace(/^http/, 'ws')) {
+    warn("Rejected cross-origin WebSocket URL: " + fullUrl);
+    return;
+  }
+  
   // Unsubscribe from previous hub if switching URLs
   const existing = liveConnections.get(element);
   if (existing && existing.protocol === "ws") {
