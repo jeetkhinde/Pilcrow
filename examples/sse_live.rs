@@ -69,7 +69,7 @@ async fn stats_stream() -> impl IntoResponse {
             tick += 1;
 
             // Alternate: send an HTML event every 5 ticks
-            if tick % 5 == 0 {
+            if tick.is_multiple_of(5) {
                 yield Ok::<_, Infallible>(
                     SilcrowEvent::html(
                         format!("<p>HTML update at tick {tick}</p>"),
