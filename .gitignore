@@ -1,12 +1,16 @@
 # Compiled output
-/target/
-/public/*
+core/target/
+sandbox/target/
+core/public/
+sandbox/public/
+target/
+public/
+
 # Cargo lock file (for libraries)
 /Cargo.lock
 # IDE / Editor files
 .idea/
 .vscode/
-
 # Environment variables
 .env
 .env.local
