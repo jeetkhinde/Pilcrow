@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ════════════════════════════════════════════════════════════
 // 1. Shared State & Modifiers
 // ════════════════════════════════════════════════════════════
-
+pub type ErrorResponse = Response;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Toast {
     pub message: String,

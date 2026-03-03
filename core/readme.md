@@ -49,6 +49,7 @@ async fn main() {
   - [6. WebSocket](#6-websocket)
 - [Asset Serving](#asset-serving)
 - [Examples](#examples)
+- [Custom Error Types](#custom-error-types)
 - [Public API](#public-api)
 - [License](#license)
 
@@ -96,7 +97,7 @@ Content negotiation, lazy evaluation, and response packaging are handled for you
 An Axum extractor that reads the `Accept` and `silcrow-target` headers to determine what the client wants. Use it as a handler argument — Axum injects it automatically.
 
 ```rust
-pub async fn handler(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn handler(req: SilcrowRequest) -> Result<Response, StatusCode> {
     // req.preferred_mode() returns RequestMode::Html or RequestMode::Json
 }
 ```
@@ -201,7 +202,7 @@ Toast transport is automatic — HTML responses use a short-lived cookie (`Max-A
 The last four modifiers above are server-driven — the response header tells Silcrow.js to perform an action after the main swap completes. This lets you orchestrate complex UI updates from a single response:
 
 ```rust
-pub async fn save_item(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn save_item(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let item = db.save_item(&payload).await?;
     let count = db.item_count().await?;
 
@@ -222,7 +223,7 @@ Side effects execute in order: patch → invalidate → navigate → sse/ws. Thi
 Redirects are imperative — they're not negotiated. Use `navigate()` for early returns like auth guards:
 
 ```rust
-pub async fn admin(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn admin(req: SilcrowRequest) -> Result<Response, StatusCode> {
     if !user.is_admin() {
         return Ok(navigate("/login")
             .with_toast("Unauthorized", "error")
@@ -254,7 +255,7 @@ pub const DASHBOARD_EVENTS: SseRoute = SseRoute::new("/events/dashboard");
 **Tell the client to connect:**
 
 ```rust
-async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
+async fn dashboard(req: SilcrowRequest) -> Result<Response, StatusCode> {
     pilcrow::respond!(req, {
         html => html(markup).sse(DASHBOARD_EVENTS),
         json => json(data),
@@ -317,7 +318,7 @@ pub const CHAT_WS: WsRoute = WsRoute::new("/ws/chat");
 **Tell the client to connect:**
 
 ```rust
-async fn chat_page(req: SilcrowRequest) -> Result<Response, AppError> {
+async fn chat_page(req: SilcrowRequest) -> Result<Response, StatusCode> {
     pilcrow::respond!(req, {
         html => html(markup).ws(CHAT_WS),
         json => json(data),
@@ -396,7 +397,7 @@ struct UserProfile {
 pub async fn get_profile(
     req: SilcrowRequest,
     State(db): State<DbPool>,
-) -> Result<Response, AppError> {
+) -> Result<Response, StatusCode> {
     let user: UserProfile = db.fetch_user(123).await?;
 
     // Example using the Maud templating engine (Pilcrow is template-agnostic)
@@ -421,7 +422,7 @@ Only the matching closure executes. The data fetch runs before `respond!` — it
 When a single action needs to update multiple parts of the page:
 
 ```rust
-pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let item = db.toggle_favorite(item_id).await?;
     let count = db.favorites_count(user_id).await?;
 
@@ -439,7 +440,7 @@ pub async fn toggle_favorite(req: SilcrowRequest) -> Result<Response, AppError> 
 ```rust
 pub const DASH_EVENTS: SseRoute = SseRoute::new("/events/dash");
 
-pub async fn dashboard(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn dashboard(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let stats = db.get_stats().await?;
     let markup = render_dashboard(&stats);
 
@@ -471,7 +472,7 @@ Router::new()
 ```rust
 pub const CHAT_WS: WsRoute = WsRoute::new("/ws/chat");
 
-pub async fn chat(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn chat(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let history = db.recent_messages().await?;
     let markup = render_chat(&history);
 
@@ -505,7 +506,7 @@ Router::new()
 When you just need to return a struct without modifiers:
 
 ```rust
-pub async fn get_user(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn get_user(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let user = db.fetch_user(123).await?;
     let markup = render_user(&user);
 
@@ -528,7 +529,7 @@ enum ApiResponse {
     Error { reason: String },
 }
 
-pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
+pub async fn create_item(req: SilcrowRequest) -> Result<Response, StatusCode> {
     let result = db.create_item().await;
 
     let (markup, payload) = match result {
@@ -548,6 +549,51 @@ pub async fn create_item(req: SilcrowRequest) -> Result<Response, AppError> {
     })
 }
 ```
+
+## Custom Error Types
+
+Pilcrow doesn't provide an error type — that's your application's concern. The examples above use `StatusCode` for simplicity, but you can define a richer error type in your own crate.
+
+Create `src/errors.rs`:
+
+```rust
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+
+pub enum AppError {
+    NotFound,
+    Unauthorized,
+    Internal(anyhow::Error),
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let status = match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        status.into_response()
+    }
+}
+```
+
+Then use it in your handlers:
+
+```rust
+pub async fn get_profile(req: SilcrowRequest) -> Result<Response, AppError> {
+    let user = db.fetch_user(123).await.map_err(AppError::Internal)?;
+
+    pilcrow::respond!(req, {
+        html => html(render_user(&user)),
+        json => raw user,
+    })
+}
+```
+
+Any type implementing `IntoResponse` works as the `Err` variant — Pilcrow doesn't constrain it.
 
 ## Public API
 

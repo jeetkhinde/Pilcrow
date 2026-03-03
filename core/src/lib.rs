@@ -59,3 +59,5 @@ pub use ws::{WsEvent, WsRoute, WsStream};
 pub use axum;
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
+
+pub use response::ErrorResponse;
