@@ -1,12 +1,13 @@
 use axum::{
     extract::{Extension, Path},
+    http::StatusCode,
     response::{IntoResponse, Response},
     Form,
 };
 use pilcrow::*;
 
-use super::models::{AppState, CreateTask};
-use super::templates::{render_task_dashboard, render_task_list};
+use super::models::{AppState, CreateTask, Task};
+use super::templates::render_task_dashboard;
 
 pub async fn list_tasks(
     req: SilcrowRequest,
@@ -31,7 +32,7 @@ pub async fn create_task(
     }
 
     let mut next_id = state.next_id.lock().unwrap();
-    let task = super::models::Task {
+    let task = Task {
         id: *next_id,
         title: payload.title.clone(),
         completed: false,
@@ -42,16 +43,15 @@ pub async fn create_task(
 
     let tasks = state.tasks.lock().unwrap().clone();
 
-    respond!(req, {
-        html => html(render_task_list(&tasks).into_string())
-            .trigger_event("task:created")
-            .with_header(
-                "silcrow-trigger",
-                r#"{"toast": {"msg": "Task created!", "level": "success"}, "task:created": {}}"#,
-            )
-            .retarget("#task-list"),
-        json => json(&task),
-    })
+    let mut res = respond!(req, {
+        json => json(&serde_json::json!({"tasks": tasks})),
+        toast => ("Task created!", "success"),
+    })?;
+    res.headers_mut().insert(
+        "silcrow-trigger",
+        axum::http::HeaderValue::from_static(r#"{"task:created": {}}"#),
+    );
+    Ok(res)
 }
 
 pub async fn toggle_task(
@@ -61,31 +61,23 @@ pub async fn toggle_task(
 ) -> Result<Response, ErrorResponse> {
     let mut tasks = state.tasks.lock().unwrap();
     let mut modified = false;
-    let mut updated_task = None;
     for t in tasks.iter_mut() {
         if t.id == id {
             t.completed = !t.completed;
             modified = true;
-            updated_task = Some(t.clone());
             break;
         }
     }
 
     if !modified {
-        return Err((axum::http::StatusCode::NOT_FOUND, "Task not found").into_response());
+        return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
     }
 
     let cloned_tasks = tasks.clone();
-    let updated_task = updated_task.unwrap();
 
     respond!(req, {
-        html => html(render_task_list(&cloned_tasks).into_string())
-            .with_header(
-                "silcrow-trigger",
-                r#"{"toast": {"msg": "Task toggled.", "level": "success"}}"#,
-            )
-            .retarget("#task-list"),
-        json => json(&updated_task),
+        json => json(&serde_json::json!({"tasks": cloned_tasks})),
+        toast => ("Task toggled.", "success"),
     })
 }
 
@@ -99,18 +91,13 @@ pub async fn delete_task(
     tasks.retain(|t| t.id != id);
 
     if tasks.len() == len_before {
-        return Err((axum::http::StatusCode::NOT_FOUND, "Task not found").into_response());
+        return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
     }
 
     let cloned_tasks = tasks.clone();
 
     respond!(req, {
-        html => html(render_task_list(&cloned_tasks).into_string())
-            .with_header(
-                "silcrow-trigger",
-                r#"{"toast": {"msg": "Task deleted.", "level": "info"}}"#,
-            )
-            .retarget("#task-list"),
-        json => json(&serde_json::json!({"deleted": true})),
+        json => json(&serde_json::json!({"tasks": cloned_tasks})),
+        toast => ("Task deleted.", "info"),
     })
 }

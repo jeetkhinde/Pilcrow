@@ -45,7 +45,20 @@ pub fn layout(content: Markup) -> Markup {
                             });
                             document.addEventListener('change', (e) => {
                                 if (e.target.matches('.task-checkbox')) {
-                                    e.target.form.requestSubmit();
+                                    const item = e.target.closest('.task-item');
+                                    const id = item ? item.getAttribute('data-id') : null;
+                                    if (id && window.Silcrow) {
+                                        window.Silcrow.go(`/examples/tasks/${id}/toggle`, { method: 'POST', target: '#dashboard' });
+                                    }
+                                }
+                            });
+                            document.addEventListener('click', (e) => {
+                                if (e.target.matches('.task-delete-btn')) {
+                                    const item = e.target.closest('.task-item');
+                                    const id = item ? item.getAttribute('data-id') : null;
+                                    if (id && window.Silcrow) {
+                                        window.Silcrow.go(`/examples/tasks/${id}/delete`, { method: 'DELETE', target: '#dashboard' });
+                                    }
                                 }
                             });
                         });
