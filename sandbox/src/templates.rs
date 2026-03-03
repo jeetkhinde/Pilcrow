@@ -27,7 +27,7 @@ pub fn render_profile(profile: &Profile) -> Markup {
             "Sidebar loaded for ID: " (profile.id)
         }
         hr;
-        form s-action="/profile" method="POST" s-html {
+        form s-action="/profile" POST {
             input type="text" name="name" value=(profile.name);
             button type="submit" { "Update Profile" }
         }

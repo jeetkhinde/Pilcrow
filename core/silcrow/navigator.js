@@ -45,7 +45,7 @@ function getTarget(el) {
     const target = document.querySelector(sel);
     if (target) return target;
   }
-  return el;
+  return null;
 }
 
 // ── Timeout Resolution ─────────────────────────────────────
@@ -430,6 +430,7 @@ async function onClick(e) {
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   if (e.button !== 0) return;
 
+  if (!e.target || typeof e.target.closest !== "function") return;
   const el = e.target.closest("[s-action]");
   if (!el || el.tagName === "FORM") return;
 
@@ -452,6 +453,7 @@ async function onClick(e) {
 
 // ── Form Handler (opt-in: only form[s-action]) ─────────────
 function onSubmit(e) {
+  if (!e.target || typeof e.target.closest !== "function") return;
   const form = e.target.closest("form[s-action]");
   if (!form) return;
 
@@ -506,6 +508,7 @@ function onPopState(e) {
 
 // ── Preload Handler ────────────────────────────────────────
 function onMouseEnter(e) {
+  if (!e.target || typeof e.target.closest !== "function") return;
   const el = e.target.closest("[s-preload]");
   if (!el) return;
 
