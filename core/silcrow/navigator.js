@@ -150,6 +150,9 @@ function buildFetchOptions(method, body, wantsHTML, signal) {
   if (body) {
     if (body instanceof FormData) {
       opts.body = body;
+    } else if (body instanceof URLSearchParams) {
+      opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
+      opts.body = body;
     } else {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -463,15 +466,17 @@ function onSubmit(e) {
       actionUrl.searchParams.append(k, v);
     }
     navigate(actionUrl.href, {
-      method: "GET",
+      method,
       target: getTarget(form),
       sourceEl: form,
       trigger: "submit",
     });
   } else {
+    const hasFiles = [...formData.values()].some(v => v instanceof File);
+    
     navigate(form.getAttribute("s-action"), {
       method,
-      body: formData,
+      body: hasFiles ? formData : new URLSearchParams(formData),
       target: getTarget(form),
       sourceEl: form,
       trigger: "submit",
