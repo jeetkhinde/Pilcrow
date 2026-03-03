@@ -230,10 +230,10 @@ function reconcile(container, items, resolveTemplate) {
     return;
   }
 
-  const existing = new Map();
+   const existing = new Map();
   for (const child of container.children) {
-    if (child.dataset && child.hasAttribute("s-key")) {
-      existing.set(child.dataset.key, child);
+    if (child.hasAttribute && child.hasAttribute("s-key")) {
+      existing.set(child.getAttribute("s-key"), child);
     }
   }
 
@@ -265,11 +265,11 @@ function reconcile(container, items, resolveTemplate) {
 
     let node = existing.get(key);
 
-    if (!node) {
+   if (!node) {
       node = resolveTemplate(item);
-      node.dataset.key = key;
-      node.setAttribute("s-key", "");
+      node.setAttribute("s-key",key);
     }
+
 
     patchItem(node, item);
 
