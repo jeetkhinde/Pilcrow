@@ -20,8 +20,9 @@ pub fn layout(content: Markup) -> Markup {
 /// Renders the profile view with an edit form.
 pub fn render_profile(profile: &Profile) -> Markup {
     html! {
-        div #header s-bind="name" {
-            "Current Name: " (profile.name)
+        div #header {
+            "Current Name: "
+            span s-bind="name" { (profile.name) }
         }
         div #sidebar {
             "Sidebar loaded for ID: " (profile.id)
