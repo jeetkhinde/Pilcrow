@@ -157,12 +157,32 @@ Add `s-action` to any element to make it navigate on click:
 | Attribute | Purpose | Default |
 | --- | --- | --- |
 | `s-action` | URL to request | *(required)* |
-| `s-target` | CSS selector — swap response into this element | The triggering element itself |
+| `s-target` | CSS selector — swap response into this element | Closest `[s-key]` parent, or the triggering element itself |
 | `s-html` | Request `text/html` instead of `application/json` | JSON |
 | `s-skip-history` | Don't push to browser history | Push for full-page GETs |
 | `s-preload` | Preload on mouse hover | Off |
 | `s-timeout` | Request timeout in ms | `30000` |
 | `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | HTTP method (as attribute) | `GET` (or `POST` for forms) |
+
+### Actions within Lists (s-key Context)
+
+When building actions inside `s-list` templates, Silcrow provides two ergonomic features to eliminate boilerplate and avoid unnecessary `<form>` wrappers for simple actions:
+
+1. **`{s-key}` Interpolation:** Any `{s-key}` string in your `s-action` or `s-target` attributes is automatically replaced with the value of the closest parent's `s-key` attribute.
+2. **Implicit Local Targeting:** If you omit the `s-target` attribute, the action will automatically target the closest `[s-key]` parent container.
+
+This allows you to write perfectly minimal, form-less action buttons inside your collections:
+
+```html
+<ul s-list="tasks">
+  <template>
+    <li>
+      <span s-bind=".title"></span>
+      
+      <button s-action="/tasks/{s-key}/delete" DELETE>Delete</button>
+    </li>
+  </template>
+</ul>
 
 ### Forms
 

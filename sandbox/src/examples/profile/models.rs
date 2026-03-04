@@ -1,8 +1,6 @@
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
 
-// ─── User ──────────────────────────────────────────────────────────
-
 #[derive(Clone)]
 pub struct User {
     pub id: i64,
@@ -15,8 +13,6 @@ impl User {
     }
 }
 
-// ─── Profile ───────────────────────────────────────────────────────
-
 #[derive(Serialize)]
 pub struct Profile {
     pub id: i64,
@@ -27,8 +23,6 @@ pub struct Profile {
 pub struct UpdateProfile {
     pub name: String,
 }
-
-// ─── Mock Database ─────────────────────────────────────────────────
 
 pub struct Db;
 
