@@ -41,6 +41,7 @@ function resolveUrl(el) {
   try {
     return new URL(raw, location.origin).href;
   } catch (e) {
+    console.error(e);
     return null;
   }
 }
