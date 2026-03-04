@@ -29,23 +29,40 @@ function getMethod(el) {
 
 // ── URL Resolution ─────────────────────────────────────────
 function resolveUrl(el) {
-  const raw = el.getAttribute("s-action");
+  let raw = el.getAttribute("s-action");
   if (!raw) return null;
+  
+  // 1. Contextual Interpolation: Auto-inject the ID into the URL
+  if (raw.includes("{s-key}")) {
+    const closest = el.closest("[s-key]");
+    if (closest) raw = raw.replace(/{s-key}/g, closest.getAttribute("s-key"));
+  }
+  
   try {
     return new URL(raw, location.origin).href;
   } catch (e) {
     return null;
   }
 }
-
 // ── Target Resolution ──────────────────────────────────────
 function getTarget(el) {
-  const sel = el.getAttribute("s-target");
+  let sel = el.getAttribute("s-target");
+  
   if (sel) {
+    // If they explicitly provide a target, support interpolation there too
+    if (sel.includes("{s-key}")) {
+      const closest = el.closest("[s-key]");
+      if (closest) sel = sel.replace(/{s-key}/g, closest.getAttribute("s-key"));
+    }
     const target = document.querySelector(sel);
     if (target) return target;
   }
-  return null;
+  
+  // 2. Implicit Local Targeting: Fallback to the closest list item!
+  const localTarget = el.closest("[s-key]");
+  if (localTarget) return localTarget;
+
+  return el; // Ultimate fallback: target the button itself
 }
 
 // ── Timeout Resolution ─────────────────────────────────────
