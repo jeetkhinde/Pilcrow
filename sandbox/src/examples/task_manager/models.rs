@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Task {
-    #[serde(rename = "key")]
     pub id: i64,
     pub title: String,
     pub completed: bool,
