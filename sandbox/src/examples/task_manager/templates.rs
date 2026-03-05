@@ -1,5 +1,5 @@
 use super::models::Task;
-use maud::{html, Markup};
+use maud::{Markup, html};
 
 pub fn render_task_dashboard(tasks: &[Task]) -> Markup {
     html! {
@@ -20,12 +20,14 @@ pub fn render_task_dashboard(tasks: &[Task]) -> Markup {
                                 input type="checkbox"
                                     class="task-checkbox"
                                     s-bind=".completed:checked"
+                                    s-action={"/examples/tasks/" (task.id) "/toggle"} PATCH
                                     checked[task.completed];
                                 span s-bind=".title" { (task.title) }
                             }
 
                             div class="task-item-right" {
-                                button type="button" class="task-delete-btn" {
+                                button type="button" class="task-delete-btn"
+                                    s-action={"/examples/tasks/" (task.id) "/delete"} DELETE {
                                     "Delete"
                                 }
                             }
@@ -47,11 +49,14 @@ fn render_task_template() -> Markup {
             // Silcrow injects s-key automatically here on clone!
             li class="task-item" s-key=".id" {
                 div class="task-item-left" {
-                    input type="checkbox" class="task-checkbox" s-bind=".completed:checked";
+                    input type="checkbox" class="task-checkbox"
+                        s-action={"/examples/tasks/{s-key}/toggle"} PATCH
+                        s-bind=".completed:checked";
                     span s-bind=".title" {}
                 }
                 div class="task-item-right" {
-                    button type="button" class="task-delete-btn" {
+                    button type="button" class="task-delete-btn"
+                        s-action={"/examples/tasks/{s-key}/delete"} DELETE {
                         "Delete"
                     }
                 }
