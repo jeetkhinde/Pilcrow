@@ -1,8 +1,8 @@
 use crate::headers::*;
 use axum::{
+    Json,
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
-    Json,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use cookie::time::Duration;
@@ -120,7 +120,7 @@ pub trait ResponseExt: Sized {
 
     /// Server-driven patch: tells Silcrow.js to patch JSON data into a specific root element.
     fn patch_target(mut self, selector: &str, data: &impl serde::Serialize) -> Self {
-        let payload = serde_json::json!({ "target": selector, "data": data });
+        let payload = serde_json::json!({ "data": data, "target": selector });
         self.base_mut()
             .headers
             .typed_insert(SilcrowPatch(payload.to_string()));

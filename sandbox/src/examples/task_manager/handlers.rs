@@ -5,7 +5,7 @@ use axum::{
 };
 use pilcrow::*;
 
-use super::models::{AppState, CreateTask, Task};
+use super::models::{AppState, CreateTask, Task, TaskStats};
 use super::templates::render_task_dashboard;
 
 pub async fn list_tasks(
@@ -30,17 +30,27 @@ pub async fn create_task(
             .into_response());
     }
 
-    let mut next_id = state.next_id.lock().unwrap();
-    let task = Task {
-        id: *next_id,
-        title: payload.title.clone(),
-        completed: true,
-    };
-    *next_id += 1;
+    let task = {
+        let mut next_id = state.next_id.lock().unwrap();
+        let id = *next_id;
+        *next_id += 1;
 
-    state.tasks.lock().unwrap().push(task.clone());
+        Task {
+            id,
+            title: payload.title,
+            completed: false,
+        }
+    };
+
+    let stats_data = {
+        let mut tasks = state.tasks.lock().unwrap();
+        tasks.push(task.clone());
+        tasks.clone()
+    };
+    let stats = TaskStats::from(&stats_data);
     respond!(req, {
-        json => json(serde_json::json!({ "tasks": task })).with_header("silcrow-trigger", "task:created"),
+        json => json(serde_json::json!({ "tasks": task }))
+            .patch_target("#stats", &stats)
     })
 }
 
@@ -59,11 +69,13 @@ pub async fn toggle_task(
 
     task.completed = !task.completed;
     let payload = serde_json::json!({ "tasks": { "id": task.id, "completed": task.completed } });
+    let stats = TaskStats::from(&tasks);
 
     drop(tasks); // release the lock before responding
 
     respond!(req, {
-        json => json(&payload),
+        json => json(&payload)
+            .patch_target("#stats", &stats),
     })
 }
 
@@ -80,7 +92,11 @@ pub async fn delete_task(
         return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
     }
 
+    let stats = TaskStats::from(&tasks);
+    drop(tasks);
+
     respond!(req, {
-        json => json(&serde_json::json!({ "tasks": { "id": id, "_remove": true } })),
+        json => json(&serde_json::json!({ "tasks": { "id": id, "_remove": true } }))
+                        .patch_target("#stats", &stats),
     })
 }
