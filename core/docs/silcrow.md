@@ -57,7 +57,8 @@ The second argument is a root — either a CSS selector string or a DOM Element.
 
 ### **Collection Rendering with s-list**
 
-Render arrays of keyed objects into a container. Each item **must** have a key property.  
+Render collections of keyed objects into a container. Each item **must** have a `key` property.
+
 \<ul s-list="todos" s-template="todo-tpl"\>  
 \</ul\>
 
@@ -68,12 +69,31 @@ Render arrays of keyed objects into a container. Each item **must** have a key p
   \</li\>  
 \</template\>
 
+**s-list dispatches on the shape of the value you patch:**
+
+| Value shape | Mode | Behavior |
+| --- | --- | --- |
+| Array `[...]` | **Full sync** | Reconcile entire list — add new items, update existing, remove stale, reorder |
+| Keyed object `{key, ...}` | **Merge** | Append or update a single item. All other items in the DOM are untouched. |
+
+**Full sync** (initial load, delete, reorder):  
 Silcrow.patch({  
   todos: \[  
     { key: "1", text: "Buy milk", done: false },  
     { key: "2", text: "Write docs", done: true },  
   \]  
 }, "\#app");
+
+**Merge** (create or update a single item — no need to send the full list):  
+Silcrow.patch({  
+  todos: { key: "3", text: "Ship it", done: false }  
+}, "\#app");
+
+The new item is appended; existing items with keys "1" and "2" are untouched. If an item with key "3" already exists, it is updated in-place.
+
+**Direct targeting:** `s-target` can point directly to the `[s-list]` element (not its parent):  
+\<form s-action="/todos" POST s-target="\#todo-list"\>...\</form\>  
+\<ul id="todo-list" s-list="todos" s-template="todo-tpl"\>...\</ul\>
 
 **Local bindings** use a leading dot (.text, .done) — they bind to fields on the individual item, not the global data object.  
 **Reconciliation:** Silcrow uses keyed reconciliation. Existing DOM nodes are reused by key, new items are created from the template, removed items are deleted, and order is maintained by repositioning. Duplicate keys are rejected.  
