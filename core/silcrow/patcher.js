@@ -434,6 +434,23 @@ function mergeItem(container, item, resolveTemplate, keyField) {
   patchItem(node, item, keyField);
 }
 
+// Remove a single keyed item from the container.
+// Called when s-list receives {keyField: ..., _remove: true}.
+function removeItem(container, item, keyField) {
+  if (item == null || typeof item !== "object" || item[keyField] == null) {
+    warn("removeItem: item must be a non-null object with a '" + keyField + "' field");
+    return;
+  }
+  const key = String(item[keyField]);
+  for (const child of container.children) {
+    if (child.hasAttribute("s-key") && child.getAttribute("s-key") === key) {
+      child.remove();
+      return;
+    }
+  }
+  warn("removeItem: no child found with s-key='" + key + "'");
+}
+
 function applyPatch(data, scalarMap, collectionMap) {
   for (const [path, bindings] of scalarMap.entries()) {
     const value = resolvePath(data, path);
@@ -449,6 +466,9 @@ function applyPatch(data, scalarMap, collectionMap) {
     if (Array.isArray(value)) {
       // Array → full sync: reconcile, reorder, remove stale items
       reconcile(container, value, resolveTemplate, keyField);
+    } else if (value !== null && typeof value === "object" && keyField in value && value._remove === true) {
+      // Tombstone → remove: delete single keyed item from the list
+      removeItem(container, value, keyField);
     } else if (value !== null && typeof value === "object" && keyField in value) {
       // Keyed object → merge: append/update single item, leave others untouched
       mergeItem(container, value, resolveTemplate, keyField);

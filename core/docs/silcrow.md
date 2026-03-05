@@ -175,15 +175,14 @@ Add `s-action` to any element to make it navigate on click:
 
 ### **Attributes**
 
-|  
 | **Attribute** | **Purpose** | **Default** |  
-| s-action | URL to request | *(required)* |  
-| s-target | CSS selector — swap response into this element | Closest \[s-key\] parent, or the triggering element itself |  
-| s-html | Request text/html instead of application/json | JSON |  
-| s-skip-history | Don't push to browser history | Push for full-page GETs |  
-| s-preload | Preload on mouse hover | Off |  
-| s-timeout | Request timeout in ms | 30000 |  
-| GET, POST, PUT, PATCH, DELETE | HTTP method (as attribute) | GET (or POST for forms) |
+| `s-action` | URL to request | *(required)* |  
+| `s-target` | CSS selector — swap response into this element | Closest \[s-key\] parent, or the triggering element itself |  
+| `s-html` | Request text/html instead of application/json | JSON |  
+| `s-skip-history` | Don't push to browser history | Push for full-page GETs |  
+| `s-preload` | Preload on mouse hover | Off |  
+| `s-timeout` | Request timeout in ms | 30000 |  
+| `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | HTTP method (as attribute) | `GET` (or `POST` for forms) |
 
 ### **Actions within Lists (s-key Context)**
 

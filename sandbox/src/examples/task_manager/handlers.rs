@@ -80,10 +80,8 @@ pub async fn delete_task(
         return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
     }
 
-    let cloned_tasks = tasks.clone();
-
     respond!(req, {
-        json => json(&serde_json::json!({"tasks": cloned_tasks})),
+        json => json(&serde_json::json!({ "tasks": { "id": id, "_remove": true } })),
         toast => ("Task deleted.", "info"),
     })
 }
