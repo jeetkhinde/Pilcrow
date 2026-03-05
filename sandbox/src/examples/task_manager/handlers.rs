@@ -82,6 +82,5 @@ pub async fn delete_task(
 
     respond!(req, {
         json => json(&serde_json::json!({ "tasks": { "id": id, "_remove": true } })),
-        toast => ("Task deleted.", "info"),
     })
 }

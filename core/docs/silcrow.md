@@ -5,17 +5,17 @@ Silcrow.js is the frontend counterpart to [Pilcrow](https://www.google.com/searc
 
 ## **Table of Contents**
 
-* [Loading](https://www.google.com/search?q=%23loading)  
-* [Three Systems](https://www.google.com/search?q=%23three-systems)  
-* [Runtime: Data Binding & DOM Patching](https://www.google.com/search?q=%23runtime-data-binding--dom-patching)  
-* [Navigator: Client-Side Routing](https://www.google.com/search?q=%23navigator-client-side-routing)  
-* [Live: SSE, WebSocket & Real-Time Updates](https://www.google.com/search?q=%23live-sse-websocket--real-time-updates)  
-* [Optimistic Updates](https://www.google.com/search?q=%23optimistic-updates)  
-* [Toast System](https://www.google.com/search?q=%23toast-system)  
-* [Events](https://www.google.com/search?q=%23events)  
-* [Lifecycle](https://www.google.com/search?q=%23lifecycle)  
-* [API Reference](https://www.google.com/search?q=%23api-reference)  
-* [Compatibility](https://www.google.com/search?q=%23compatibility)
+* [Loading](#loading)  
+* [Three Systems](#three-systems)  
+* [Runtime: Data Binding & DOM Patching](#runtime-data-binding--dom-patching)  
+* [Navigator: Client-Side Routing](#navigator-client-side-routing)  
+* [Live: SSE, WebSocket & Real-Time Updates](#live-sse-websocket--real-time-updates)  
+* [Optimistic Updates](#optimistic-updates)  
+* [Toast System](#toast-system)  
+* [Events](#events)  
+* [Lifecycle](#lifecycle)  
+* [API Reference](#api-reference)  
+* [Compatibility](#compatibility)
 
 ## **Loading**
 
@@ -39,21 +39,22 @@ This enables console warnings and throws on template validation errors.
 
 Silcrow.js has three independent systems exposed through a single window.Silcrow API:
 
-1. **Runtime** — reactive data binding and DOM patching via s-bind and s-list attributes  
-2. **Navigator** — client-side routing, history management, and response caching via s-action attributes  
+1. **Runtime** — reactive data binding and DOM patching via s-bind and s-list attributes
+2. **Navigator** — client-side routing, history management, and response caching via s-action attributes
 3. **Live** — SSE and WebSocket connections, optimistic updates, and real-time data streaming via s-live attributes
 
 ## **Runtime: Data Binding & DOM Patching**
 
 ### **Scalar Binding with s-bind**
 
-Bind any element to a data path. The format is s-bind="path" for text content or s-bind="path:property" for element properties.  
+Bind any element to a data path. The format is s-bind="path" for text content or s-bind="path:property" for element properties.
 
 ```html
 <h1 s-bind="user.name"></h1>
 <input s-bind="user.email:value" />
 <img s-bind="user.avatar:src" />
 <button s-bind="user.banned:disabled"></button>
+
 ```
 
 Patch data into the DOM:
@@ -62,10 +63,13 @@ Patch data into the DOM:
 Silcrow.patch({
   user: { name: "Alice", email: "a@b.com", avatar: "/img/alice.png", banned: false }
 }, "#app");
+
 ```
 
-The second argument is a root — either a CSS selector string or a DOM Element. Silcrow only patches bindings within that root.  
-**Known properties** (value, checked, disabled, selected, src, href, selectedIndex) are set as DOM properties. Everything else is set as an attribute. null or undefined values reset properties to their type default or remove attributes.  
+The second argument is a root — either a CSS selector string or a DOM Element. Silcrow only patches bindings within that root.
+
+**Known properties** (value, checked, disabled, selected, src, href, selectedIndex) are set as DOM properties. Everything else is set as an attribute. null or undefined values reset properties to their type default or remove attributes.
+
 **Security:** Binding to event handler attributes (onclick, onload, etc.) is rejected. Text content is set via textContent, never innerHTML.
 
 ### **Collection Rendering with s-list**
@@ -82,6 +86,7 @@ Render collections of keyed objects into a container. Each item **must** have a 
     <input type="checkbox" s-bind=".done:checked" />
   </li>
 </template>
+
 ```
 
 **s-list dispatches on the shape of the value you patch:**
@@ -90,6 +95,7 @@ Render collections of keyed objects into a container. Each item **must** have a 
 | --- | --- | --- |
 | Array `[...]` | **Full sync** | Reconcile entire list — add new items, update existing, remove stale, reorder |
 | Keyed object `{key, ...}` | **Merge** | Append or update a single item. All other items in the DOM are untouched. |
+| Keyed object with `_remove: true` | **Remove** | Delete the single item matching the key. All other items are untouched. |
 
 **Full sync** (initial load, delete, reorder):
 
@@ -100,6 +106,7 @@ Silcrow.patch({
     { key: "2", text: "Write docs", done: true },
   ]
 }, "#app");
+
 ```
 
 **Merge** (create or update a single item — no need to send the full list):
@@ -112,11 +119,22 @@ Silcrow.patch({
 
 The new item is appended; existing items with keys "1" and "2" are untouched. If an item with key "3" already exists, it is updated in-place.
 
+**Remove** (delete a single item — no need to send the full list):
+
+```javascript
+Silcrow.patch({
+  todos: { key: "2", _remove: true }
+}, "#app");
+```
+
+The item with key "2" is removed from the DOM. All other items are untouched. The `_remove` field is a reserved tombstone sentinel — any other fields in the object are ignored.
+
 **Direct targeting:** `s-target` can point directly to the `[s-list]` element (not its parent):
 
 ```html
-<form s-action="/todos" POST s-target="\#todo-list">...</form>
+<form s-action="/todos" POST s-target="#todo-list">...</form>
 <ul id="todo-list" s-list="todos" s-template="todo-tpl">...</ul>
+
 ```
 
 **Local bindings** use a leading dot (.text, .done) — they bind to fields on the individual item, not the global data object.
@@ -129,15 +147,19 @@ The new item is appended; existing items with keys "1" and "2" are untouched. If
 1. Item key prefix — if key is `special#3`, Silcrow looks for `<template id="special">`
 2. `s-template` attribute on the container
 3. Inline <template> child of the container
+
 ```
 
 **Template rules:** Templates must contain exactly one element child. Scripts and event handler attributes inside templates are rejected during validation.
+
+**Server-Rendered Lists (Hydration):**
+Silcrow seamlessly handles collections that are pre-rendered by the server. If an item exists in the DOM with an `s-key` but was not created dynamically via Silcrow's `<template>` cloning, Silcrow will lazily scan and cache its `[s-bind]` attributes on the first patch. This allows you to serve fully populated HTML on initial load and effortlessly transition to client-side patches.
 
 ### **Silcrow.patch(data, root, options?)**
 
 The core patching function. Options:
 
-* invalidate: true — rebuilds the binding map from scratch (use after DOM mutations)  
+* invalidate: true — rebuilds the binding map from scratch (use after DOM mutations)
 * silent: true — suppresses the silcrow:patched custom event
 
 After each patch, a silcrow:patched event fires on the root with detail.paths listing all bound paths.
@@ -155,6 +177,7 @@ const update = Silcrow.stream("#dashboard");
 update({ count: 1 });
 update({ count: 2 });
 update({ count: 3 }); // only this patch executes
+
 ```
 
 ### **Path Resolution**
@@ -171,17 +194,19 @@ Add `s-action` to any element to make it navigate on click:
 <a s-action="/dashboard">Dashboard</a>
 <button s-action="/api/save" POST>Save</button>
 <button s-action="/items/5" DELETE s-target="#item-5">Remove</button>
+
 ```
 
 ### **Attributes**
 
-| **Attribute** | **Purpose** | **Default** |  
-| `s-action` | URL to request | *(required)* |  
-| `s-target` | CSS selector — swap response into this element | Closest \[s-key\] parent, or the triggering element itself |  
-| `s-html` | Request text/html instead of application/json | JSON |  
-| `s-skip-history` | Don't push to browser history | Push for full-page GETs |  
-| `s-preload` | Preload on mouse hover | Off |  
-| `s-timeout` | Request timeout in ms | 30000 |  
+| **Attribute** | **Purpose** | **Default** |
+| --- | --- | --- |
+| `s-action` | URL to request | *(required)* |
+| `s-target` | CSS selector — swap response into this element | Closest $$s-key$$ parent, or the triggering element itself |
+| `s-html` | Request text/html instead of application/json | JSON |
+| `s-skip-history` | Don't push to browser history | Push for full-page GETs |
+| `s-preload` | Preload on mouse hover | Off |
+| `s-timeout` | Request timeout in ms | 30000 |
 | `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | HTTP method (as attribute) | `GET` (or `POST` for forms) |
 
 ### **Actions within Lists (s-key Context)**
@@ -189,7 +214,7 @@ Add `s-action` to any element to make it navigate on click:
 When building actions inside `s-list` templates, Silcrow provides two ergonomic features to eliminate boilerplate and avoid unnecessary `<form>` wrappers for simple actions:
 
 1. **`{s-key}` Interpolation:** Any `{s-key}` string in your `s-action` or `s-target` attributes is automatically replaced with the value of the closest parent's `s-key` attribute.
-2. **Implicit Local Targeting:** If you omit the `s-target` attribute, the action will automatically target the closest `[s-key]` parent container.
+2. **Implicit List Targeting:** If you omit the `s-target` attribute, the action will automatically bubble up to target the parent `[s-list]` container (falling back to the `[s-key]` item if orphaned). This perfectly aligns with `s-list` merge behavior: your server can return a single updated JSON object or an HTML fragment, and Silcrow will route it to the list container to append or update the item without needing explicit `s-target` wiring.
 
 This allows you to write perfectly minimal, form-less action buttons inside your collections:
 
@@ -202,22 +227,31 @@ This allows you to write perfectly minimal, form-less action buttons inside your
     </li>
   </template>
 </ul>
+
 ```
 
 #### **Forms vs. Pure Buttons for Mutations**
 
-Because of {s-key} interpolation and implicit targeting, you have two distinct tools depending on whether your mutation requires a request body. While the HTTP specification builds POST, PUT, and PATCH to carry bodies, it does *not* mandate them.  
-**1\. When you NEED a body → Use a \<form\>** If the user is submitting new data (like typing a task title), you must use a form. Silcrow relies on the form boundary to serialize inputs into a FormData request body.  
-\<\!-- Requires a body (the new title). Must be a form\! \--\>  
-\<form s-action="/tasks/{s-key}/edit" method="PUT"\>  
-  \<input type="text" name="title" s-bind=".title" /\>  
-  \<button type="submit"\>Save\</button\>  
-\</form\>
+Because of {s-key} interpolation and implicit targeting, you have two distinct tools depending on whether your mutation requires a request body. While the HTTP specification builds POST, PUT, and PATCH to carry bodies, it does *not* mandate them.
 
-**2\. When you DON'T need a body → Use a Pure \<button\>** If the action is binary and the URL itself contains all the required context (via the ID), you don't need a body. You can use form-less buttons for POST, PUT, and PATCH just like you do for DELETE.  
-\<\!-- No body needed\! The URL tells the server exactly what to do. \--\>  
-\<button s-action="/tasks/{s-key}/toggle" PATCH\>Toggle Complete\</button\>  
-\<button s-action="/tasks/{s-key}/upvote" POST\>Upvote\</button\>
+**1. When you NEED a body → Use a `<form>`** If the user is submitting new data (like typing a task title), you must use a form. Silcrow relies on the form boundary to serialize inputs into a FormData request body.
+
+```html
+<form s-action="/tasks/{s-key}/edit" method="PUT">  
+  <input type="text" name="title" s-bind=".title" />  
+  <button type="submit">Save</button>  
+</form>
+
+```
+
+**2. When you DON'T need a body → Use a Pure `<button>`**
+
+If the action is binary and the URL itself contains all the required context (via the ID), you don't need a body. You can use form-less buttons for POST, PUT, and PATCH just like you do for DELETE.
+
+```html
+<button s-action="/tasks/{s-key}/toggle" PATCH>Toggle Complete</button>  
+<button s-action="/tasks/{s-key}/upvote" POST>Upvote</button>
+```
 
 **The Architect's Rule of Thumb:**
 
@@ -225,7 +259,9 @@ Because of {s-key} interpolation and implicit targeting, you have two distinct t
 * Use `POST` / `PUT` / `PATCH` (pure button) to trigger a specific, parameter-less action (like "star", "archive", "toggle").
 * Use `<form method="...">` only when sending user input fields.
 
-**Server-Side Example (Axum):** For a pure button, the backend handler simply extracts the ID from the path and processes the action without expecting a body, returning the updated fragment directly to the targeted `{s-key}` item.
+**Server-Side Example (Axum):**
+
+For a pure button, the backend handler simply extracts the ID from the path and processes the action without expecting a body, returning the updated fragment directly to the targeted `{s-key}` item.
 
 ```rust
 use axum::extract::Path;
@@ -245,6 +281,7 @@ pub async fn upvote_task(
         json => json(&updated_task),
     })
 }
+
 ```
 
 ### **Forms**
@@ -256,6 +293,7 @@ Forms with `s-action` are intercepted automatically. GET forms append FormData a
   <input name="q" />
   <button>Search</button>
 </form>
+
 ```
 
 ### **Programmatic Navigation**
@@ -263,35 +301,45 @@ Forms with `s-action` are intercepted automatically. GET forms append FormData a
 ```javascript
 Silcrow.go("/dashboard");
 Silcrow.go("/api/items", { method: "POST", body: { name: "New" }, target: "#list" });
+
 ```
 
 ### **Response Processing**
 
 The navigator reads the Content-Type header to decide how to handle the response:
 
-* **JSON** (application/json) — parsed and passed to Silcrow.patch() on the target element  
+* **JSON** (application/json) — parsed and passed to Silcrow.patch() on the target element
 * **HTML** (text/html) — sanitized and swapped into the target element's innerHTML
 
 For HTML responses, if the response is a full page (`<!DOCTYPE` or `<html>`), Silcrow extracts the `<title>` and the matching `s-target` selector content (or `<body>` as fallback).
 
-**HTML sanitization:** Silcrow uses the Sanitizer API (`el.setHTML()`) when available. When it isn't, a DOMParser fallback strips all `<script>` elements and event handler attributes (`on*`) before insertion.
+**HTML sanitization:**
+
+Silcrow uses the Sanitizer API (`el.setHTML()`) when available. When it isn't, a DOMParser fallback strips all `<script>` elements and event handler attributes (`on*`) before insertion.
 
 ### **Server-Driven Headers**
 
-The backend can control Silcrow's behavior through response headers. These are split into two phases: headers processed during the fetch, and side-effect headers executed after the main swap.  
-**During fetch:**  
-| **Header** | **Effect** |  
-| silcrow-trigger | Fire custom DOM events. JSON object {"event-name": detail} or a plain event name string. |  
-| silcrow-retarget | CSS selector — override where the response is swapped into. |  
-| silcrow-push | Override the URL pushed to browser history. |  
-| silcrow-cache | Set to no-cache to prevent this response from being cached. |  
-**After swap (side effects):**  
-| **Header** | **Effect** |  
-| silcrow-patch | JSON {"target": "\#el", "data": {...}} — patches data into a secondary element via Silcrow.patch(). |  
-| silcrow-invalidate | CSS selector — rebuilds binding maps for the target element via Silcrow.invalidate(). |  
-| silcrow-navigate | URL path — triggers a client-side navigation after the swap completes. |  
-| silcrow-sse | URL path — dispatches a silcrow:sse event signaling the client to open an SSE connection. |  
-| silcrow-ws | URL path — dispatches a silcrow:ws event signaling the client to open a WebSocket connection. |  
+The backend can control Silcrow's behavior through response headers. These are split into two phases: headers processed during the fetch, and side-effect headers executed after the main swap.
+
+**During fetch:**
+
+| **Header** | **Effect** |
+| --- | --- |
+| `silcrow-trigger` | Fire custom DOM events. JSON object `{"event-name": detail}` or a plain event name string. |
+| `silcrow-retarget` | CSS selector — override where the response is swapped into. |
+| `silcrow-push` | Override the URL pushed to browser history. |
+| `silcrow-cache` | Set to `no-cache` to prevent this response from being cached. |
+
+**After swap (side effects):**
+
+| **Header** | **Effect** |
+| --- | --- |
+| `silcrow-patch` | JSON `{"target": "#el", "data": {...}}` — patches data into a secondary element via `Silcrow.patch()`. |
+| `silcrow-invalidate` | CSS selector — rebuilds binding maps for the target element via `Silcrow.invalidate()`. |
+| `silcrow-navigate` | URL path — triggers a client-side navigation after the swap completes. |
+| `silcrow-sse` | URL path — dispatches a `silcrow:sse` event signaling the client to open an SSE connection. |
+| `silcrow-ws` | URL path — dispatches a `silcrow:ws` event signaling the client to open a WebSocket connection. |
+
 Side-effect headers execute in order: patch → invalidate → navigate → sse/ws. This lets a single response update the primary target, patch a secondary counter, rebuild a sidebar, and trigger a follow-up navigation.
 
 ### **Caching**
@@ -338,6 +386,7 @@ Add `s-live` to any element to automatically open an SSE connection on page load
 <div id="feed" s-live="/events/feed">
   <span s-bind="count"></span> items
 </div>
+
 ```
 
 Silcrow scans for s-live elements during initialization. When the server sends an SSE message, the data is parsed as JSON and piped to Silcrow.patch() on that element.
@@ -350,19 +399,22 @@ Prefix the URL with `ws:` to use WebSocket instead of SSE:
 <div id="chat" s-live="ws:/ws/chat">
   <span s-bind="messages"></span>
 </div>
+
 ```
 
 Without a prefix, s-live defaults to SSE for backward compatibility.
 
 ### **Connection Sharing**
 
-When multiple elements connect to the same WebSocket URL, Silcrow opens a single shared connection. Messages with an explicit target selector are applied once to the matching element. Messages without a target fan out to all subscribed elements.  
+When multiple elements connect to the same WebSocket URL, Silcrow opens a single shared connection. Messages with an explicit target selector are applied once to the matching element. Messages without a target fan out to all subscribed elements.
+
 This is automatic — no configuration needed. If you need isolated connections to the same URL (rare), use distinct query parameters: ws:/ws/chat?room=1 vs ws:/ws/chat?room=2.
 
 ### **Programmatic with Silcrow.live()**
 
 ```javascript
 Silcrow.live("#dashboard", "/events/dashboard");
+
 ```
 
 Opens an EventSource to the given URL. Every message event is parsed as JSON and passed to Silcrow.patch() on the root element.
@@ -373,15 +425,18 @@ The server sends standard SSE messages. The data field must be valid JSON:
 
 ```sse
 data: {"count": 42, "status": "online"}
+
 ```
 
-Silcrow also supports named SSE events for specific actions:  
-| **Event Name** | **Effect** |  
-| message (default) | Parsed as JSON, passed to Silcrow.patch() on the root |  
-| patch | Parsed and patched. Supports direct payload ({...} / \[...\]) on root, or {target, data} to patch a specific selector |  
-| html | Swaps HTML via safeSetHTML(). Supports {target, html}; empty html clears target content |  
-| invalidate | Calls Silcrow.invalidate() on the root (no data needed) |  
-| navigate | data field is a URL path — triggers client-side navigation |
+Silcrow also supports named SSE events for specific actions:
+
+| **Event Name** | **Effect** |
+| --- | --- |
+| `message` (default) | Parsed as JSON, passed to `Silcrow.patch()` on the root |
+| `patch` | Parsed and patched. Supports direct payload on root, or `{target, data}` to patch a specific selector |
+| `html` | Swaps HTML via `safeSetHTML()`. Supports `{target, html}`; empty `html` clears target content |
+| `invalidate` | Calls `Silcrow.invalidate()` on the root (no data needed) |
+| `navigate` | `data` field is a URL path — triggers client-side navigation |
 
 ```sse
 event: navigate
@@ -398,6 +453,7 @@ data: {"target":"#dashboard","data":{"count":42}}
 
 event: html
 data: {"target":"#slot","html":"<p>Updated</p>"}
+
 ```
 
 ### **Reconnection**
@@ -410,6 +466,7 @@ Pauses the SSE connection for a root. The connection is closed and automatic rec
 
 ```javascript
 Silcrow.disconnect("#feed");
+
 ```
 
 ### **Silcrow.reconnect(root)**
@@ -418,6 +475,7 @@ Resumes a disconnected SSE connection. Resets the backoff timer and reconnects i
 
 ```javascript
 Silcrow.reconnect("#feed");
+
 ```
 
 ### **Sending Messages (WebSocket only)**
@@ -426,25 +484,29 @@ WebSocket connections are bidirectional. Use `Silcrow.send()` to send data to th
 
 ```javascript
 Silcrow.send("#chat", { type: "custom", event: "message", data: { text: "Hello" } });
+
 ```
 
 send() is a no-op on SSE connections (SSE is server-to-client only). The connection must be open — if not, a warning is logged.
 
 ### **WebSocket Message Format**
 
-WebSocket messages are JSON objects with a type field that matches the Rust WsEvent enum:  
-| **Type** | **Fields** | **Effect** |  
-| patch | target, data | Patches JSON data into target element via Silcrow.patch() |  
-| html | target, markup | Swaps HTML into target element via safeSetHTML() |  
-| invalidate | target | Rebuilds binding maps for target element |  
-| navigate | path | Triggers client-side navigation |
-| custom | event, data | Dispatches `silcrow:ws:{event}` CustomEvent on `document` |
+WebSocket messages are JSON objects with a `type` field that matches the Rust `WsEvent` enum:
+
+| **Type** | **Fields** | **Effect** |
+| --- | --- | --- |
+| `patch` | `target`, `data` | Patches JSON data into target element via `Silcrow.patch()` |
+| `html` | `target`, `markup` | Swaps HTML into target element via `safeSetHTML()` |
+| `invalidate` | `target` | Rebuilds binding maps for target element |
+| `navigate` | `path` | Triggers client-side navigation |
+| `custom` | `event`, `data` | Dispatches `silcrow:ws:{event}` CustomEvent on `document` |
 
 ```json
 {"type": "patch", "target": "#stats", "data": {"count": 42}}
 {"type": "html", "target": "#slot", "markup": "<p>Updated</p>"}
 {"type": "navigate", "path": "/dashboard"}
 {"type": "custom", "event": "refresh", "data": {"section": "sidebar"}}
+
 ```
 
 ## **Optimistic Updates**
@@ -459,6 +521,7 @@ Silcrow.optimistic("#post-42", { likes: currentLikes + 1, liked: true });
 
 // Send to server
 Silcrow.go("/api/posts/42/like", { method: "POST", target: "#post-42" });
+
 ```
 
 ### **Silcrow.revert(root)**
@@ -472,11 +535,12 @@ try {
   Silcrow.revert("#post-42");
   showError("Failed to save");
 }
+
 ```
 
 revert() restores the element's innerHTML and calls Silcrow.invalidate() to rebuild binding maps since the DOM was replaced.
 
-### **Optimistic \+ Error Handler Pattern**
+### **Optimistic + Error Handler Pattern**
 
 Combine optimistic updates with the error handler for a clean pattern:
 
@@ -485,6 +549,7 @@ Silcrow.onError((err, { url, target }) => {
   // Revert any optimistic updates on the failed target
   Silcrow.revert(target);
 });
+
 ```
 
 ## **Toast System**
@@ -495,6 +560,7 @@ Register a toast handler to receive toast notifications from both JSON payloads 
 Silcrow.onToast((message, level) => {
   showNotification(message, level); // your UI
 });
+
 ```
 
 **JSON responses:** Toasts are read from the `_toasts` array in the payload, then removed before patching. If the payload was wrapped by the server (non-object root with toasts), Silcrow unwraps it.
@@ -503,18 +569,21 @@ Silcrow.onToast((message, level) => {
 
 ## **Events**
 
-All events bubble and are dispatched on document (except silcrow:patched which fires on the root element).  
-| **Event** | **Detail** | **Cancelable** | **When** |  
-| silcrow:navigate | {url, method, trigger, target} | Yes | Before any fetch |  
-| silcrow:before-swap | {url, target, content, isJSON, proceed} | Yes | After fetch, before DOM update |  
-| silcrow:load | {url, target, redirected} | No | After successful swap |  
-| silcrow:error | {error, url} | No | On fetch error or timeout |  
-| silcrow:patched | {paths} | No | After patch() completes |  
-| silcrow:sse | {path} | No | When server sends silcrow-sse header |  
-| silcrow:live:connect | {root, url} | No | SSE connection opened |  
-| silcrow:live:disconnect | {root, url, reconnectIn} | No | SSE connection lost (with backoff ms) |  
-| silcrow:optimistic | {root, data} | No | After optimistic patch applied |  
-| silcrow:revert | {root} | No | After DOM reverted to snapshot |  
+All events bubble and are dispatched on document (except `silcrow:patched` which fires on the root element).
+
+| **Event** | **Detail** | **Cancelable** | **When** |
+| --- | --- | --- | --- |
+| `silcrow:navigate` | `{url, method, trigger, target}` | Yes | Before any fetch |
+| `silcrow:before-swap` | `{url, target, content, isJSON, proceed}` | Yes | After fetch, before DOM update |
+| `silcrow:load` | `{url, target, redirected}` | No | After successful swap |
+| `silcrow:error` | `{error, url}` | No | On fetch error or timeout |
+| `silcrow:patched` | `{paths}` | No | After `patch()` completes |
+| `silcrow:sse` | `{path}` | No | When server sends `silcrow-sse` header |
+| `silcrow:live:connect` | `{root, url}` | No | SSE connection opened |
+| `silcrow:live:disconnect` | `{root, url, reconnectIn}` | No | SSE connection lost (with backoff ms) |
+| `silcrow:optimistic` | `{root, data}` | No | After optimistic patch applied |
+| `silcrow:revert` | `{root}` | No | After DOM reverted to snapshot |
+
 **Transition hook:** Listen to `silcrow:before-swap` and call `event.detail.proceed()` manually to control when the DOM update happens (e.g., after a CSS transition). If no listener calls `proceed()`, Silcrow executes it automatically.
 
 ## **Lifecycle**
@@ -532,45 +601,51 @@ Silcrow
 
 // Teardown — removes all event listeners, clears caches, closes SSE connections
 Silcrow.destroy();
+
 ```
 
 ## **API Reference**
 
-### [**Runtime**](https://www.google.com/search?q=%23runtime-data-binding--dom-patching)
+### **[Runtime](#runtime-data-binding--dom-patching)**
 
-| **Method** | **Description** |  
-| Silcrow.patch(data, root, options?) | Patch data into bound elements under root |  
-| Silcrow.invalidate(root) | Clear cached binding maps for root |  
-| Silcrow.stream(root) | Returns microtask-batched updater function |
+| **Method** | **Description** |
+| --- | --- |
+| `Silcrow.patch(data, root, options?)` | Patch data into bound elements under root |
+| `Silcrow.invalidate(root)` | Clear cached binding maps for root |
+| `Silcrow.stream(root)` | Returns microtask-batched updater function |
 
-### [**Navigation**](https://www.google.com/search?q=%23navigator-client-side-routing)
+### **[Navigation](#navigator-client-side-routing)**
 
-| **Method** | **Description** |  
-| Silcrow.go(path, options?) | Programmatic navigation |  
-| Silcrow.cache.has(path) | Check if a path is cached |  
-| Silcrow.cache.clear(path?) | Clear one or all cache entries |
+| **Method** | **Description** |
+| --- | --- |
+| `Silcrow.go(path, options?)` | Programmatic navigation |
+| `Silcrow.cache.has(path)` | Check if a path is cached |
+| `Silcrow.cache.clear(path?)` | Clear one or all cache entries |
 
-### [**Live (SSE)**](https://www.google.com/search?q=%23live-sse-websocket--real-time-updates)
+### **[Live (SSE)](#live-sse-websocket--real-time-updates)**
 
-| **Method** | **Description** |  
-| Silcrow.live(root, url) | Open SSE connection, pipe messages to patch() |  
-| Silcrow.send(root, data) | Send data over a WebSocket connection |  
-| Silcrow.disconnect(root) | Pause SSE connection and stop auto-reconnect |  
-| Silcrow.reconnect(root) | Resume SSE connection with reset backoff |
+| **Method** | **Description** |
+| --- | --- |
+| `Silcrow.live(root, url)` | Open SSE connection, pipe messages to `patch()` |
+| `Silcrow.send(root, data)` | Send data over a WebSocket connection |
+| `Silcrow.disconnect(root)` | Pause SSE connection and stop auto-reconnect |
+| `Silcrow.reconnect(root)` | Resume SSE connection with reset backoff |
 
-### [**Optimistic Methods**](https://www.google.com/search?q=%23optimistic-updates)
+### **[Optimistic Methods](#optimistic-updates)**
 
-| **Method** | **Description** |  
-| Silcrow.optimistic(root, data) | Snapshot DOM, then patch immediately |  
-| Silcrow.revert(root) | Restore DOM from snapshot, invalidate bindings |
+| **Method** | **Description** |
+| --- | --- |
+| `Silcrow.optimistic(root, data)` | Snapshot DOM, then patch immediately |
+| `Silcrow.revert(root)` | Restore DOM from snapshot, invalidate bindings |
 
-### [**Lifecycle Handlers**](https://www.google.com/search?q=%23lifecycle)
+### **[Lifecycle Handlers](#lifecycle)**
 
-| **Method** | **Description** |  
-| Silcrow.onToast(handler) | Register toast callback (chainable) |  
-| Silcrow.onRoute(handler) | Register route middleware (chainable) |  
-| Silcrow.onError(handler) | Register error handler (chainable) |  
-| Silcrow.destroy() | Teardown all listeners, caches, and SSE connections |
+| **Method** | **Description** |
+| --- | --- |
+| `Silcrow.onToast(handler)` | Register toast callback (chainable) |
+| `Silcrow.onRoute(handler)` | Register route middleware (chainable) |
+| `Silcrow.onError(handler)` | Register error handler (chainable) |
+| `Silcrow.destroy()` | Teardown all listeners, caches, and SSE connections |
 
 `window.SilcrowNavigate` is available as a backward-compatible alias for `window.Silcrow`.
 
