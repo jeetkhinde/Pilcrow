@@ -188,14 +188,37 @@ function cloneTemplate(tpl, scalarMap) {
   return node;
 }
 
-function makeTemplateResolver(container, scalarMap) {
+// Reads the key field name from the s-key attribute on the template root element.
+// s-key=".id"     → "id"
+// s-key=".userId" → "userId"
+// Falls back to "key" if the template can't be found or s-key has no dot-prefix.
+function getKeyField(container) {
+  const templateId = container.getAttribute("s-template");
+  let tpl = null;
+  if (templateId) tpl = document.getElementById(templateId);
+  if (!tpl) tpl = container.querySelector(":scope > template");
+  if (!tpl) return "key";
+
+  const elements = [];
+  for (const n of tpl.content.children) {
+    if (n.nodeType === 1) elements.push(n);
+  }
+  if (elements.length !== 1) return "key";
+
+  const sKey = elements[0].getAttribute("s-key");
+  if (!sKey || !sKey.startsWith(".")) return "key";
+  return sKey.substring(1); // strip leading "."
+}
+
+function makeTemplateResolver(container, scalarMap, keyField) {
   const templateId = container.getAttribute("s-template");
 
   return function resolve(item) {
     let tpl = null;
 
-    if (item && item.key != null) {
-      const keyStr = String(item.key);
+    // Key-prefix template resolution: "special#3" → looks for <template id="special">
+    if (item && item[keyField] != null) {
+      const keyStr = String(item[keyField]);
       const hashIdx = keyStr.indexOf("#");
       if (hashIdx !== -1) {
         const tplName = keyStr.substring(0, hashIdx);
@@ -215,22 +238,22 @@ function makeTemplateResolver(container, scalarMap) {
   };
 }
 
-function isValidCollectionArray(items) {
+function isValidCollectionArray(items, keyField) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (item == null || typeof item !== "object" || Array.isArray(item)) return false;
-    if (!("key" in item)) return false;
+    if (!(keyField in item)) return false;
   }
   return true;
 }
 
-function reconcile(container, items, resolveTemplate) {
-  if (!isValidCollectionArray(items)) {
-    warn("Collection array contains invalid items, discarding");
+function reconcile(container, items, resolveTemplate, keyField) {
+  if (!isValidCollectionArray(items, keyField)) {
+    warn("Collection array contains invalid items (missing '" + keyField + "' field), discarding");
     return;
   }
 
-   const existing = new Map();
+  const existing = new Map();
   for (const child of container.children) {
     if (child.hasAttribute && child.hasAttribute("s-key")) {
       existing.set(child.getAttribute("s-key"), child);
@@ -239,8 +262,8 @@ function reconcile(container, items, resolveTemplate) {
 
   const validItems = [];
   for (const item of items) {
-    if (item.key == null) {
-      warn("Collection item missing key, skipping");
+    if (item[keyField] == null) {
+      warn("Collection item missing '" + keyField + "' field, skipping");
       continue;
     }
     validItems.push(item);
@@ -248,7 +271,7 @@ function reconcile(container, items, resolveTemplate) {
 
   const seen = new Set();
   for (const item of validItems) {
-    const k = String(item.key);
+    const k = String(item[keyField]);
     if (seen.has(k)) {
       warn("Duplicate key: " + k);
       return;
@@ -260,18 +283,17 @@ function reconcile(container, items, resolveTemplate) {
   let prevNode = null;
 
   for (const item of validItems) {
-    const key = String(item.key);
+    const key = String(item[keyField]);
     nextKeys.add(key);
 
     let node = existing.get(key);
 
-   if (!node) {
+    if (!node) {
       node = resolveTemplate(item);
-      node.setAttribute("s-key",key);
+      node.setAttribute("s-key", key);
     }
 
-
-    patchItem(node, item);
+    patchItem(node, item, keyField);
 
     if (prevNode) {
       if (prevNode.nextElementSibling !== node) {
@@ -293,12 +315,12 @@ function reconcile(container, items, resolveTemplate) {
   }
 }
 
-function patchItem(node, item) {
+function patchItem(node, item, keyField) {
   const bindings = localBindingsCache.get(node);
   if (!bindings) return;
 
   for (const field in item) {
-    if (field === "key") continue;
+    if (field === keyField) continue;
     const targets = bindings.get(field);
     if (!targets) continue;
     for (const {el, prop} of targets) {
@@ -339,9 +361,11 @@ function buildMaps(root) {
   if (root.hasAttribute && root.hasAttribute("s-list") && !root.closest("template")) {
     const listName = root.getAttribute("s-list");
     if (isValidPath(listName)) {
+      const keyField = getKeyField(root);
       collectionMap.set(listName, {
         container: root,
-        resolveTemplate: makeTemplateResolver(root, scalarMap),
+        resolveTemplate: makeTemplateResolver(root, scalarMap, keyField),
+        keyField,
       });
     } else {
       throwErr("Invalid collection name on root: " + listName);
@@ -356,9 +380,11 @@ function buildMaps(root) {
       continue;
     }
 
+    const keyField = getKeyField(container);
     collectionMap.set(listName, {
       container,
-      resolveTemplate: makeTemplateResolver(container, scalarMap),
+      resolveTemplate: makeTemplateResolver(container, scalarMap, keyField),
+      keyField,
     });
   }
 
@@ -366,14 +392,14 @@ function buildMaps(root) {
 }
 
 // Append or update a single keyed item without touching existing siblings.
-// Called when s-list receives a plain object (not array) with a "key" field.
-function mergeItem(container, item, resolveTemplate) {
-  if (item == null || typeof item !== "object" || item.key == null) {
-    warn("mergeItem: item must be a non-null object with a 'key' field");
+// Called when s-list receives a plain object (not array) with the key field present.
+function mergeItem(container, item, resolveTemplate, keyField) {
+  if (item == null || typeof item !== "object" || item[keyField] == null) {
+    warn("mergeItem: item must be a non-null object with a '" + keyField + "' field");
     return;
   }
 
-  const key = String(item.key);
+  const key = String(item[keyField]);
 
   // Find existing DOM node for this key
   let node = null;
@@ -391,7 +417,7 @@ function mergeItem(container, item, resolveTemplate) {
     container.appendChild(node);
   }
 
-  patchItem(node, item);
+  patchItem(node, item, keyField);
 }
 
 function applyPatch(data, scalarMap, collectionMap) {
@@ -404,14 +430,14 @@ function applyPatch(data, scalarMap, collectionMap) {
     }
   }
 
-  for (const [path, {container, resolveTemplate}] of collectionMap.entries()) {
+  for (const [path, {container, resolveTemplate, keyField}] of collectionMap.entries()) {
     const value = resolvePath(data, path);
     if (Array.isArray(value)) {
       // Array → full sync: reconcile, reorder, remove stale items
-      reconcile(container, value, resolveTemplate);
-    } else if (value !== null && typeof value === "object" && "key" in value) {
+      reconcile(container, value, resolveTemplate, keyField);
+    } else if (value !== null && typeof value === "object" && keyField in value) {
       // Keyed object → merge: append/update single item, leave others untouched
-      mergeItem(container, value, resolveTemplate);
+      mergeItem(container, value, resolveTemplate, keyField);
     } else if (value !== undefined) {
       warn("Collection value must be an array (full sync) or keyed object (merge): " + path);
     }

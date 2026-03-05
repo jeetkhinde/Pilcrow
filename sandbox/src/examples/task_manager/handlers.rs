@@ -32,7 +32,6 @@ pub async fn create_task(
 
     let mut next_id = state.next_id.lock().unwrap();
     let task = Task {
-        key: *next_id,
         id: *next_id,
         title: payload.title.clone(),
         completed: true,

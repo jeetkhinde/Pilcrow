@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Task {
-    pub key: i64,
     pub id: i64,
     pub title: String,
     pub completed: bool,
@@ -24,13 +23,11 @@ impl AppState {
         Self {
             tasks: std::sync::Arc::new(std::sync::Mutex::new(vec![
                 Task {
-                    key: 1,
                     id: 1,
                     title: "Learn Axum".into(),
                     completed: true,
                 },
                 Task {
-                    key: 2,
                     id: 2,
                     title: "Build Pilcrow".into(),
                     completed: false,
