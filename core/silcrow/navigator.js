@@ -59,10 +59,13 @@ function getTarget(el) {
     if (target) return target;
   }
   
-  // 2. Implicit Local Targeting: Fallback to the closest list item!
-  const localTarget = el.closest("[s-key]");
-  if (localTarget) return localTarget;
-
+   // Walk up: if inside a list item, target the list container
+  const listItem = el.closest("[s-key]");
+  if (listItem) {
+    const listContainer = listItem.closest("[s-list]");
+    if (listContainer) return listContainer;  // ← the fix
+    return listItem; // fallback if somehow orphaned
+  }
   return el; // Ultimate fallback: target the button itself
 }
 

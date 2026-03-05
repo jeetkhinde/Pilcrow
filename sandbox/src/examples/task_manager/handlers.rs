@@ -1,7 +1,7 @@
 use axum::{
+    Form,
     extract::{Extension, Path},
     response::{IntoResponse, Response},
-    Form,
 };
 use pilcrow::*;
 
@@ -50,24 +50,20 @@ pub async fn toggle_task(
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
     let mut tasks = state.tasks.lock().unwrap();
-    let mut modified = false;
-    for t in tasks.iter_mut() {
-        if t.id == id {
-            t.completed = !t.completed;
-            modified = true;
-            break;
-        }
-    }
 
-    if !modified {
+    let task = tasks.iter_mut().find(|t| t.id == id);
+
+    let Some(task) = task else {
         return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
-    }
+    };
 
-    let cloned_tasks = tasks.clone();
+    task.completed = !task.completed;
+    let payload = serde_json::json!({ "tasks": { "id": task.id, "completed": task.completed } });
+
+    drop(tasks); // release the lock before responding
 
     respond!(req, {
-        json => json(&serde_json::json!({"tasks": cloned_tasks})),
-        toast => ("Task toggled.", "success"),
+        json => json(&payload),
     })
 }
 

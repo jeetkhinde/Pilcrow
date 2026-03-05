@@ -316,8 +316,22 @@ function reconcile(container, items, resolveTemplate, keyField) {
 }
 
 function patchItem(node, item, keyField) {
-  const bindings = localBindingsCache.get(node);
-  if (!bindings) return;
+  let bindings = localBindingsCache.get(node);
+
+  // Fallback for server-rendered nodes not created via cloneTemplate —
+  // scan their [s-bind] attributes and cache the result.
+  if (!bindings) {
+    bindings = new Map();
+    for (const el of scanBindableNodes(node)) {
+      const parsed = parseBind(el);
+      if (parsed?.path.startsWith('.')) {
+        const field = parsed.path.substring(1);
+        if (!bindings.has(field)) bindings.set(field, []);
+        bindings.get(field).push({el, prop: parsed.prop});
+      }
+    }
+    localBindingsCache.set(node, bindings);
+  }
 
   for (const field in item) {
     if (field === keyField) continue;
