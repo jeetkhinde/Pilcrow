@@ -8,7 +8,8 @@ pub fn render_task_dashboard(tasks: &[Task]) -> Markup {
             h1 { "Task Manager" }
 
             form id="task-form" class="task-form" s-action="/examples/tasks" POST s-target="#task-list" {
-                input id="task-input" class="task-input" type="text" name="title" placeholder="What needs to be done?" required;
+                input id="task-input" class="task-input" type="text" name="title"
+                      placeholder="What needs to be done?" autocomplete="off" required;
                 button class="task-btn" type="submit" {"Add Task"}
             }
             div #task-list-container {

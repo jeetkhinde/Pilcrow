@@ -38,7 +38,7 @@ pub fn layout(content: Markup) -> Markup {
                     "))
                 }
             }
-            body s-debug {
+            body {
                 (content)
             }
         }
