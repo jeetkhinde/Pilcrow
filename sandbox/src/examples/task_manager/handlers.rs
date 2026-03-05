@@ -1,6 +1,5 @@
 use axum::{
     extract::{Extension, Path},
-    http::StatusCode,
     response::{IntoResponse, Response},
     Form,
 };
@@ -24,7 +23,7 @@ pub async fn create_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
     Form(payload): Form<CreateTask>,
-) -> Result<Response, Response> {
+) -> Result<Response, ErrorResponse> {
     if payload.title.trim().is_empty() {
         return Ok(navigate("/examples/tasks")
             .with_toast("Title cannot be empty", "error")
@@ -33,25 +32,17 @@ pub async fn create_task(
 
     let mut next_id = state.next_id.lock().unwrap();
     let task = Task {
+        key: *next_id,
         id: *next_id,
         title: payload.title.clone(),
-        completed: false,
+        completed: true,
     };
     *next_id += 1;
 
     state.tasks.lock().unwrap().push(task.clone());
-
-    let tasks = state.tasks.lock().unwrap().clone();
-
-    let mut res = respond!(req, {
-        json => json(&serde_json::json!({"tasks": tasks})),
-        toast => ("Task created!", "success"),
-    })?;
-    res.headers_mut().insert(
-        "silcrow-trigger",
-        axum::http::HeaderValue::from_static(r#"{"task:created": {}}"#),
-    );
-    Ok(res)
+    respond!(req, {
+        json => json(serde_json::json!({ "tasks": task })).with_header("silcrow-trigger", "task:created"),
+    })
 }
 
 pub async fn toggle_task(

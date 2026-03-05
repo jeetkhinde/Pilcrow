@@ -334,6 +334,20 @@ function buildMaps(root) {
     registerBinding(root, scalarMap);
   }
 
+  // Check root itself for s-list — allows targeting the list element directly
+  // (e.g. s-target="#task-list" where #task-list IS the [s-list] container)
+  if (root.hasAttribute && root.hasAttribute("s-list") && !root.closest("template")) {
+    const listName = root.getAttribute("s-list");
+    if (isValidPath(listName)) {
+      collectionMap.set(listName, {
+        container: root,
+        resolveTemplate: makeTemplateResolver(root, scalarMap),
+      });
+    } else {
+      throwErr("Invalid collection name on root: " + listName);
+    }
+  }
+
   const lists = root.querySelectorAll("[s-list]");
   for (const container of lists) {
     const listName = container.getAttribute("s-list");
@@ -351,6 +365,35 @@ function buildMaps(root) {
   return {scalarMap, collectionMap};
 }
 
+// Append or update a single keyed item without touching existing siblings.
+// Called when s-list receives a plain object (not array) with a "key" field.
+function mergeItem(container, item, resolveTemplate) {
+  if (item == null || typeof item !== "object" || item.key == null) {
+    warn("mergeItem: item must be a non-null object with a 'key' field");
+    return;
+  }
+
+  const key = String(item.key);
+
+  // Find existing DOM node for this key
+  let node = null;
+  for (const child of container.children) {
+    if (child.hasAttribute("s-key") && child.getAttribute("s-key") === key) {
+      node = child;
+      break;
+    }
+  }
+
+  if (!node) {
+    // New item — clone template, set key, append
+    node = resolveTemplate(item);
+    node.setAttribute("s-key", key);
+    container.appendChild(node);
+  }
+
+  patchItem(node, item);
+}
+
 function applyPatch(data, scalarMap, collectionMap) {
   for (const [path, bindings] of scalarMap.entries()) {
     const value = resolvePath(data, path);
@@ -364,9 +407,13 @@ function applyPatch(data, scalarMap, collectionMap) {
   for (const [path, {container, resolveTemplate}] of collectionMap.entries()) {
     const value = resolvePath(data, path);
     if (Array.isArray(value)) {
+      // Array → full sync: reconcile, reorder, remove stale items
       reconcile(container, value, resolveTemplate);
-    } else if (value !== undefined && DEBUG) {
-      warn("Collection value is not an array: " + path);
+    } else if (value !== null && typeof value === "object" && "key" in value) {
+      // Keyed object → merge: append/update single item, leave others untouched
+      mergeItem(container, value, resolveTemplate);
+    } else if (value !== undefined) {
+      warn("Collection value must be an array (full sync) or keyed object (merge): " + path);
     }
   }
 }
