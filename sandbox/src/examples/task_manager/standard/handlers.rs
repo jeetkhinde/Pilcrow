@@ -5,8 +5,9 @@ use axum::{
 };
 use pilcrow::*;
 
-use super::models::{AppState, CreateTask, Task, TaskStats};
-use super::templates::render_task_dashboard;
+use super::model::{AppState, CreateTask, Task, TaskStats};
+use crate::examples::task_manager::sse::model::AppStateSse;
+use crate::examples::task_manager::templates::render_task_dashboard;
 
 pub async fn list_tasks(
     req: SilcrowRequest,
@@ -22,6 +23,7 @@ pub async fn list_tasks(
 pub async fn create_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
+    Extension(sse_state): Extension<AppStateSse>,
     Form(payload): Form<CreateTask>,
 ) -> Result<Response, ErrorResponse> {
     if payload.title.trim().is_empty() {
@@ -48,6 +50,7 @@ pub async fn create_task(
         tasks.clone()
     };
     let stats = TaskStats::from(&stats_data);
+    let _ = sse_state.tx.send(stats.clone());
     respond!(req, {
         json => json(serde_json::json!({ "tasks": task }))
             .patch_target("#stats", &stats)
@@ -57,6 +60,7 @@ pub async fn create_task(
 pub async fn toggle_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
+    Extension(sse_state): Extension<AppStateSse>,
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
     let mut tasks = state.tasks.lock().unwrap();
@@ -70,6 +74,7 @@ pub async fn toggle_task(
     task.completed = !task.completed;
     let payload = serde_json::json!({ "tasks": { "id": task.id, "completed": task.completed } });
     let stats = TaskStats::from(&tasks);
+    let _ = sse_state.tx.send(stats.clone());
 
     drop(tasks); // release the lock before responding
 
@@ -82,6 +87,7 @@ pub async fn toggle_task(
 pub async fn delete_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
+    Extension(sse_state): Extension<AppStateSse>,
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
     let mut tasks = state.tasks.lock().unwrap();
@@ -93,6 +99,7 @@ pub async fn delete_task(
     }
 
     let stats = TaskStats::from(&tasks);
+    let _ = sse_state.tx.send(stats.clone());
     drop(tasks);
 
     respond!(req, {

@@ -7,12 +7,12 @@ pub struct Task {
     pub completed: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TaskStats {
     pub tasks: TaskCounts,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TaskCounts {
     pub length: usize,
     pub pending: usize,

@@ -1,8 +1,9 @@
 mod examples;
 mod templates;
 use crate::examples::profile::models::User;
-use crate::examples::task_manager::models::*;
-use axum::{routing::get, Extension, Router};
+use crate::examples::task_manager::sse::model::AppStateSse;
+use crate::examples::task_manager::standard::model::*;
+use axum::{Extension, Router, routing::get};
 
 #[tokio::main]
 async fn main() {
@@ -12,6 +13,7 @@ async fn main() {
     };
 
     let app_state = AppState::new();
+    let app_state_sse = AppStateSse::new();
 
     let app = Router::new()
         .route(
@@ -24,7 +26,8 @@ async fn main() {
         .merge(examples::task_manager::router())
         // Global Extension Configurations
         .layer(Extension(mock_user))
-        .layer(Extension(app_state));
+        .layer(Extension(app_state))
+        .layer(Extension(app_state_sse));
 
     println!("Listening on http://127.0.0.1:3000/examples/profile");
     println!("Tasks Dashboard on http://127.0.0.1:3000/examples/tasks");
