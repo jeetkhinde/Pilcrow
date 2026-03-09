@@ -70,42 +70,10 @@ function applyLivePatchPayload(payload, fallbackTarget) {
   patch(payload, fallbackTarget);
 }
 
-function registerLiveState(state) {
-  liveConnections.set(state.element, state);
 
-  let byUrl = liveConnectionsByUrl.get(state.url);
-  if (!byUrl) {
-    byUrl = new Set();
-    liveConnectionsByUrl.set(state.url, byUrl);
-  }
-  byUrl.add(state);
-}
-
-function unregisterLiveState(state) {
-  if (liveConnections.get(state.element) === state) {
-    liveConnections.delete(state.element);
-  }
-
-  const byUrl = liveConnectionsByUrl.get(state.url);
-  if (!byUrl) return;
-
-  byUrl.delete(state);
-  if (byUrl.size === 0) {
-    liveConnectionsByUrl.delete(state.url);
-  }
-}
 
 function pauseLiveState(state) {
   state.paused = true;
-  if (state.reconnectTimer) {
-    clearTimeout(state.reconnectTimer);
-    state.reconnectTimer = null;
-  }
-  if (state.es) {
-    state.es.close();
-    state.es = null;
-  }
-  // For WS: unsubscribe from hub instead of closing socket directly
   if (state.protocol !== "ws" && state.hub) {
     state.paused = true;
     state.hub.paused = true;
@@ -156,6 +124,39 @@ function onSSEEvent(e) {
 
   const root = e?.detail?.target || document.body;
   openLive(root, path);
+}
+
+function createSseHub(url) {
+  return {
+    url,
+    es: null,
+    subscribers: new Set(),
+    backoff: 1000,
+    paused: false,
+    reconnectTimer: null,
+  };
+}
+
+function getOrCreateSseHub(url) {
+  let hub = sseHubs.get(url);
+  if (!hub) {
+    hub = createSseHub(url);
+    sseHubs.set(url, hub);
+  }
+  return hub;
+}
+
+function removeSseHub(hub) {
+  if (hub.subscribers.size > 0) return;
+  if (hub.reconnectTimer) {
+    clearTimeout(hub.reconnectTimer);
+    hub.reconnectTimer = null;
+  }
+  if (hub.es) {
+    hub.es.close();
+    hub.es = null;
+  }
+  sseHubs.delete(hub.url);
 }
 
 function openLive(root, url) {
