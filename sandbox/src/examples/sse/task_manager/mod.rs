@@ -4,6 +4,17 @@ pub mod templates;
 
 use axum::Router;
 use axum::routing::{delete, get, patch};
+use pilcrow::SseRoute;
+
+/// Compile-time SSE route constant.
+///
+/// Used in three places — all referencing the same value:
+///   1. Route registration: `.route(EVENTS.path(), get(handlers::events))`
+///   2. Response modifier: `.sse(EVENTS)` sets the `silcrow-sse` header
+///   3. Template:          `s-live=(events_path)` on DOM elements
+///
+/// One constant, zero drift.
+pub const EVENTS: SseRoute = SseRoute::new("/examples/sse/tasks/events");
 
 pub fn router() -> Router {
     Router::new()
@@ -19,10 +30,5 @@ pub fn router() -> Router {
             "/examples/sse/tasks/:id/delete",
             delete(handlers::delete_task),
         )
-        // SSE version events
-        .route("/examples/sse/tasks/events", get(handlers::task_events))
-        .route(
-            "/examples/sse/tasks/list-events",
-            get(handlers::task_list_events),
-        )
+        .route(EVENTS.path(), get(handlers::events))
 }

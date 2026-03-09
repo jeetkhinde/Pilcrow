@@ -1,7 +1,7 @@
 mod examples;
 mod templates;
 use crate::examples::profile::models::User;
-use crate::examples::sse::task_manager::model::{AppState as AppStateSseModel, AppStateSse};
+use crate::examples::sse::task_manager::model::AppState as SseAppState;
 use crate::examples::standard::task_manager::model::*;
 use axum::{Extension, Router, routing::get};
 
@@ -13,8 +13,7 @@ async fn main() {
     };
 
     let app_state = AppState::new();
-    let app_state_sse = AppStateSse::new();
-    let app_state_sse_model = AppStateSseModel::new();
+    let sse_state = SseAppState::new();
 
     let app = Router::new()
         .route(
@@ -26,11 +25,7 @@ async fn main() {
         // Standard Task Manager Example Routes
         .merge(examples::standard::task_manager::router().layer(Extension(app_state)))
         // SSE Task Manager Example Routes
-        .merge(
-            examples::sse::task_manager::router()
-                .layer(Extension(app_state_sse_model))
-                .layer(Extension(app_state_sse)),
-        )
+        .merge(examples::sse::task_manager::router().layer(Extension(sse_state)))
         // Global Extension Configurations
         .layer(Extension(mock_user));
 

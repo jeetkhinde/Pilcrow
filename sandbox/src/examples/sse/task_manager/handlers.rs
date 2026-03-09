@@ -1,13 +1,13 @@
-use axum::{
-    Form,
-    extract::{Extension, Path},
-    response::{IntoResponse, Response},
-};
+use axum::{Form, extract::Extension, extract::Path, response::IntoResponse};
 use pilcrow::*;
+use tokio_stream::StreamExt as _;
+use tokio_stream::wrappers::BroadcastStream;
 
-use super::model::{AppState, AppStateSse, CreateTask, Task, TaskListEvent, TaskStats};
-use super::templates::render_task_dashboard;
-use tokio_stream::StreamExt;
+use super::EVENTS;
+use super::model::{AppState, CreateTask, Task};
+use super::templates::render_dashboard;
+use crate::templates::layout;
+// ── HTTP handlers ─────────────────────────────────────────────
 
 pub async fn list_tasks(
     req: SilcrowRequest,
@@ -15,7 +15,7 @@ pub async fn list_tasks(
 ) -> Result<Response, ErrorResponse> {
     let tasks = state.tasks.lock().unwrap().clone();
     respond!(req, {
-        html => html(crate::templates::layout(render_task_dashboard(&tasks))),
+        html => html(layout(render_dashboard(&tasks, EVENTS.path()))).sse(EVENTS),
         json => json(&tasks),
     })
 }
@@ -23,173 +23,128 @@ pub async fn list_tasks(
 pub async fn create_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
-    Extension(sse_state): Extension<AppStateSse>,
-    Form(payload): Form<CreateTask>,
+    Form(form): Form<CreateTask>,
 ) -> Result<Response, ErrorResponse> {
-    let title = payload.title.trim().to_string();
+    let title = form.title.trim().to_owned();
     if title.is_empty() {
-        return Ok(navigate("/examples/sse/tasks")
-            .with_toast("Title cannot be empty", "error")
-            .into_response());
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, "Title cannot be empty").into_response());
     }
-    let task = {
+
+    // Allocate ID before mutate() to avoid nesting next_id lock inside tasks lock.
+    let id = {
         let mut next_id = state.next_id.lock().unwrap();
         let id = *next_id;
         *next_id += 1;
+        id
+    };
 
-        Task {
+    state.mutate(|tasks| {
+        tasks.push(Task {
             id,
             title,
             completed: false,
-        }
-    };
+        });
+    });
 
-    let stats_data = {
-        let mut tasks = state.tasks.lock().unwrap();
-        tasks.push(task.clone());
-        tasks.clone()
-    };
-    let stats = TaskStats::from(&stats_data);
-    let _ = sse_state.tx.send(stats.clone());
-    let _ = sse_state.list_tx.send(TaskListEvent::Added(task.clone()));
     respond!(req, {
-        json => Ok::<_, ErrorResponse>(axum::http::StatusCode::NO_CONTENT.into_response()),
+        json => status(StatusCode::CREATED),
     })
 }
 
 pub async fn toggle_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
-    Extension(sse_state): Extension<AppStateSse>,
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
-    let mut tasks = state.tasks.lock().unwrap();
+    let mut found = false;
 
-    let task = tasks.iter_mut().find(|t| t.id == id);
+    state.mutate(|tasks| {
+        if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
+            task.completed = !task.completed;
+            found = true;
+        }
+    });
 
-    let Some(task) = task else {
+    if !found {
         return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
-    };
-
-    task.completed = !task.completed;
-    let toggle_event = TaskListEvent::Toggled {
-        id: task.id,
-        completed: task.completed,
-    };
-    let stats = TaskStats::from(&tasks);
-    let _ = sse_state.tx.send(stats.clone());
-    let _ = sse_state.list_tx.send(toggle_event);
-
-    drop(tasks); // release the lock before responding
+    }
 
     respond!(req, {
-        json => Ok::<_, ErrorResponse>(axum::http::StatusCode::NO_CONTENT.into_response()),
+        json => status(StatusCode::NO_CONTENT),
     })
 }
 
 pub async fn delete_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
-    Extension(sse_state): Extension<AppStateSse>,
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
-    let mut tasks = state.tasks.lock().unwrap();
-    let len_before = tasks.len();
-    tasks.retain(|t| t.id != id);
+    let mut deleted = false;
 
-    if tasks.len() == len_before {
+    state.mutate(|tasks| {
+        let before = tasks.len();
+        tasks.retain(|t| t.id != id);
+        deleted = tasks.len() < before;
+    });
+
+    if !deleted {
         return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
     }
 
-    let stats = TaskStats::from(&tasks);
-    let _ = sse_state.tx.send(stats.clone());
-    let _ = sse_state
-        .list_tx
-        .send(TaskListEvent::Removed { id, _remove: true });
-    drop(tasks);
-
     respond!(req, {
-        json => Ok::<_, ErrorResponse>(axum::http::StatusCode::NO_CONTENT.into_response()),
+        json => status(StatusCode::NO_CONTENT),
     })
 }
 
-// SSE version events
-use async_stream::stream;
-use pilcrow::{PilcrowStreamExt, sse_stream};
-use std::convert::Infallible;
-use tokio::sync::broadcast::error::RecvError::{Closed, Lagged};
+// ── SSE stream handler ────────────────────────────────────────
 
-use tokio_stream::wrappers::BroadcastStream;
+/// Single unified SSE endpoint.
+///
+/// Both `#live-stats` and `#task-list` point to this same URL via `s-live`.
+/// The Silcrow SSE hub multiplexes them over a single `EventSource` — regardless
+/// of how many DOM elements share the URL, the browser opens exactly one connection.
+///
+/// Pattern:
+///   1. Seed: client gets current state immediately on connect. No blank panels.
+///   2. `combine!` drives two independent streams concurrently:
+///      - `watch`     → stats     (always delivers latest, never misses an update)
+///      - `broadcast` → task list (full snapshot after every mutation, drops Lagged)
+///   3. `with_id` sets `Last-Event-ID` — reconnecting clients resume from a known
+///      point rather than re-requesting full state from the server.
+///   4. Either stream returning `Err` disconnects the client cleanly via `?`.
+pub async fn events(Extension(state): Extension<AppState>) -> impl IntoResponse {
+    // Capture seeds before the async boundary.
+    let seed_stats = state.stats_rx.borrow().clone();
+    let seed_tasks = state.tasks.lock().unwrap().clone();
 
-pub async fn task_events(
-    Extension(state): Extension<AppState>,
-    Extension(sse_state): Extension<AppStateSse>,
-) -> impl IntoResponse {
-    let mut rx = sse_state.tx.subscribe();
-    let stream = stream! {
-        let current_stats = {
-            let tasks = state.tasks.lock().unwrap();
-            TaskStats::from(&tasks)
-        };
-        yield Ok::<_, Infallible>(
-            SilcrowEvent::patch(&current_stats, "#live-stats").into()
-        );
-        loop {
-            match rx.recv().await {
-                Ok(stats) => {
-                    yield Ok::<_, Infallible>(
-                        SilcrowEvent::patch(&stats, "#live-stats").into()
-                    );
-                }
-                Err(Lagged(_)) => {
-                }
-                Err(Closed) => {
-                    break;
-                }
-            }
-        }
-    };
-    pilcrow::sse_raw(stream)
-}
-
-pub async fn task_list_events(
-    Extension(state): Extension<AppState>,
-    Extension(sse_state): Extension<AppStateSse>,
-) -> impl IntoResponse {
-    let mut rx = sse_state.list_tx.subscribe();
-    let stream = stream! {
-        // On connect, send the full current task list so the client is in sync.
-        let current_tasks = {
-            let tasks = state.tasks.lock().unwrap();
-            tasks.clone()
-        };
-        yield Ok::<_, Infallible>(
-            SilcrowEvent::patch(
-                serde_json::json!({ "tasks": current_tasks }),
-                "#task-list",
-            ).into()
-        );
-        // Then relay individual mutation events as they arrive.
-        while let Ok(event) = rx.recv().await {
-            let payload = serde_json::json!({ "tasks": event });
-            yield Ok::<_, Infallible>(
-                SilcrowEvent::patch(payload, "#task-list").into()
-            );
-        }
-    };
-    pilcrow::sse_raw(stream)
-}
-
-#[allow(dead_code)]
-pub async fn sse_handler(Extension(state): Extension<AppStateSse>) -> impl IntoResponse {
-    let stats_rx = BroadcastStream::new(state.tx.subscribe()).filter_map(|r| r.ok()); // ignore lagged errors
-
-    let list_rx = BroadcastStream::new(state.list_tx.subscribe()).filter_map(|r| r.ok());
+    // Subscribe to channels before entering the closure. This closes the race
+    // between seed delivery and the first mutation: any event fired between
+    // subscribe() and the seed send will be re-delivered by the watch stream.
+    let stats_stream = pilcrow::watch(state.stats_rx.clone());
+    let list_stream =
+        BroadcastStream::new(state.list_tx.subscribe()).filter_map(|result| result.ok()); // Lagged: drop stale snapshots, client has latest via seed
 
     sse_stream(|emit| async move {
+        // ── Seed: immediate state on connect ─────────────────────
+        emit.send(SilcrowEvent::patch(&seed_stats, "#live-stats").with_id("seed-stats"))
+            .await?;
+
+        emit.send(
+            SilcrowEvent::patch(serde_json::json!({ "tasks": seed_tasks }), "#task-list")
+                .with_id("seed-list"),
+        )
+        .await?;
+
+        // ── Live updates: two streams, one connection, two targets ──
+        //
+        // Other SilcrowEvent variants available for richer flows:
+        //
+        //   emit.send(SilcrowEvent::invalidate("#sidebar")).await?;
+        //   emit.send(SilcrowEvent::navigate("/dashboard")).await?;
+        //   emit.send(SilcrowEvent::custom("task:milestone", &json!({"count": 10}))).await?;
         pilcrow::combine!(
-            stats_rx.json("#live-stats", &emit),
-            list_rx.json("#task-list", &emit),
+            stats_stream.json("#live-stats", &emit),
+            list_stream.json("#task-list", &emit),
         )
         .await
     })

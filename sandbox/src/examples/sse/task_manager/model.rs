@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use tokio::sync::{broadcast, watch};
+
+// ── Domain types ─────────────────────────────────────────────
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -20,7 +24,7 @@ pub struct TaskCounts {
 }
 
 impl TaskStats {
-    pub fn from(tasks: &[Task]) -> Self {
+    pub fn from_tasks(tasks: &[Task]) -> Self {
         Self {
             tasks: TaskCounts {
                 length: tasks.len(),
@@ -36,60 +40,79 @@ pub struct CreateTask {
     pub title: String,
 }
 
+// ── Application state ─────────────────────────────────────────
+
+/// Unified application state for the SSE task manager.
+///
+/// One instance. One set of channels. All mutations go through `mutate()`,
+/// which recomputes stats and fans out to every active SSE connection automatically.
 #[derive(Clone)]
 pub struct AppState {
-    pub tasks: std::sync::Arc<std::sync::Mutex<Vec<Task>>>,
-    pub next_id: std::sync::Arc<std::sync::Mutex<i64>>,
+    pub tasks: Arc<Mutex<Vec<Task>>>,
+    pub next_id: Arc<Mutex<i64>>,
+
+    /// Watch channel for stats: late subscribers always receive the latest value.
+    /// Ideal for derived/aggregate state — no events are ever missed.
+    pub stats_tx: watch::Sender<TaskStats>,
+    pub stats_rx: watch::Receiver<TaskStats>,
+
+    /// Broadcast channel for task list: delivers a full snapshot after each mutation.
+    /// Pre-serialized as JSON for zero-copy forwarding to SSE clients.
+    pub list_tx: broadcast::Sender<serde_json::Value>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        let initial_tasks = vec![
+            Task {
+                id: 1,
+                title: "Learn Axum".into(),
+                completed: true,
+            },
+            Task {
+                id: 2,
+                title: "Build Pilcrow".into(),
+                completed: true,
+            },
+            Task {
+                id: 3,
+                title: "Ship feat/sse-hardening".into(),
+                completed: false,
+            },
+            Task {
+                id: 4,
+                title: "Write the SSE example".into(),
+                completed: false,
+            },
+        ];
+        let initial_stats = TaskStats::from_tasks(&initial_tasks);
+        let (stats_tx, stats_rx) = watch::channel(initial_stats);
+        let (list_tx, _) = broadcast::channel(64);
+
         Self {
-            tasks: std::sync::Arc::new(std::sync::Mutex::new(vec![
-                Task {
-                    id: 1,
-                    title: "Learn Axum".into(),
-                    completed: true,
-                },
-                Task {
-                    id: 2,
-                    title: "Build Pilcrow SSE".into(),
-                    completed: false,
-                },
-            ])),
-            next_id: std::sync::Arc::new(std::sync::Mutex::new(3)),
+            tasks: Arc::new(Mutex::new(initial_tasks)),
+            next_id: Arc::new(Mutex::new(5)),
+            stats_tx,
+            stats_rx,
+            list_tx,
         }
     }
-    // the SSE controller doesn't need its own hardcoded initial state block since it is initialized differently
-}
 
-use tokio::sync::broadcast;
+    /// Apply a mutation, recompute stats, and broadcast to all SSE subscribers.
+    ///
+    /// This is the single entry point for all state changes. Every handler calls this;
+    /// the SSE streams receive the update automatically with no extra wiring.
+    ///
+    /// The closure receives `&mut Vec<Task>` and may also capture `&mut` locals
+    /// from the caller to communicate results back (e.g. whether an item was found).
+    pub fn mutate(&self, f: impl FnOnce(&mut Vec<Task>)) {
+        let mut tasks = self.tasks.lock().unwrap();
+        f(&mut tasks);
+        let stats = TaskStats::from_tasks(&tasks);
+        let list_patch = serde_json::json!({ "tasks": *tasks });
+        drop(tasks);
 
-/// Represents the minimal payload pushed to `#task-list` SSE subscribers
-/// for each kind of mutation.
-#[derive(Clone, Serialize)]
-#[serde(untagged)]
-pub enum TaskListEvent {
-    /// A new task was added.
-    Added(Task),
-    /// A task's `completed` field was toggled.
-    Toggled { id: i64, completed: bool },
-    /// A task was deleted.
-    Removed { id: i64, _remove: bool },
-}
-
-#[derive(Clone)]
-pub struct AppStateSse {
-    /// Broadcasts new `TaskStats` to every connected `#live-stats` SSE stream.
-    pub tx: broadcast::Sender<TaskStats>,
-    /// Broadcasts task-list mutations to every connected `#task-list` SSE stream.
-    pub list_tx: broadcast::Sender<TaskListEvent>,
-}
-
-impl AppStateSse {
-    pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(100);
-        let (list_tx, _) = broadcast::channel(100);
-        Self { tx, list_tx }
+        let _ = self.stats_tx.send(stats);
+        let _ = self.list_tx.send(list_patch);
     }
 }

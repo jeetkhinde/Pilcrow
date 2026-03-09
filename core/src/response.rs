@@ -256,6 +256,10 @@ pub fn html(data: impl Into<String>) -> HtmlResponse {
     }
 }
 
+// pilcrow::status(StatusCode::CREATED)
+pub fn status(code: StatusCode) -> Response {
+    code.into_response()
+}
 pub fn json<T>(data: T) -> JsonResponse<T> {
     JsonResponse {
         data,
