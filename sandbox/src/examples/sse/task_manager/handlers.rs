@@ -48,6 +48,7 @@ pub async fn create_task(
 
     respond!(req, {
         json => json(serde_json::json!({ "title": "" })),
+        status => StatusCode::CREATED,
     })
 }
 
@@ -93,7 +94,7 @@ pub async fn delete_task(
     }
 
     respond!(req, {
-        json => json(serde_json::json!({ "tasks": { "id": id, "_remove": true } })),
+        json => json(serde_json::json!({ "tasks": { "id": id, "_remove": true } })).with_status(StatusCode::NO_CONTENT),
     })
 }
 
