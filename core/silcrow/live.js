@@ -3,8 +3,9 @@
 // Live — SSE connections & real-time updates
 // ════════════════════════════════════════════════════════════
 
-const liveConnections = new Map(); // element -> state
-const liveConnectionsByUrl = new Map(); // url -> Set<state>
+const liveConnections = new Map();      // element → state (SSE) or hub-state (WS compat)
+const liveConnectionsByUrl = new Map(); // url → Set<state>  (kept for resolveLiveStates compat)
+const sseHubs = new Map();              // normalized url → SseHub
 const MAX_BACKOFF = 30000;
 const LIVE_HTTP_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -105,15 +106,17 @@ function pauseLiveState(state) {
     state.es = null;
   }
   // For WS: unsubscribe from hub instead of closing socket directly
-  if (state.protocol === "ws" && state.hub) {
-    state.hub.subscribers.delete(state.element);
-    if (state.hub.subscribers.size === 0) {
-      removeWsHub(state.hub);
+  if (state.protocol !== "ws" && state.hub) {
+    state.paused = true;
+    state.hub.paused = true;
+    if (state.hub.reconnectTimer) {
+      clearTimeout(state.hub.reconnectTimer);
+      state.hub.reconnectTimer = null;
     }
-    state.hub = null;
-  } else if (state.socket) {
-    state.socket.close();
-    state.socket = null;
+    if (state.hub.es) {
+      state.hub.es.close();
+      state.hub.es = null;
+    }
   }
 }
 
@@ -165,99 +168,112 @@ function openLive(root, url) {
   const fullUrl = normalizeSSEEndpoint(url);
   if (!fullUrl) return;
 
-  // Replace existing connection for this root element
+  // Unsubscribe from existing SSE hub if switching
   const existing = liveConnections.get(element);
-  if (existing) {
-    pauseLiveState(existing);
-    unregisterLiveState(existing);
+  if (existing && existing.protocol !== "ws") {
+    unsubscribeSse(element);
   }
 
+  const hub = getOrCreateSseHub(fullUrl);
+  hub.subscribers.add(element);
+
   const state = {
-    es: null,
-    socket: null,
     url: fullUrl,
     element,
-    backoff: 1000,
     paused: false,
-    reconnectTimer: null,
     protocol: "sse",
+    hub,
   };
-  registerLiveState(state);
+  liveConnections.set(element, state);
 
-  connectSSE(fullUrl, state);
+  let byUrl = liveConnectionsByUrl.get(fullUrl);
+  if (!byUrl) {
+    byUrl = new Set();
+    liveConnectionsByUrl.set(fullUrl, byUrl);
+  }
+  byUrl.add(state);
+
+  connectSseHub(hub);
 }
 
-function connectSSE(url, state) {
-  if (state.paused) return;
-  if (liveConnections.get(state.element) !== state) return;
+function unsubscribeSse(element) {
+  const state = liveConnections.get(element);
+  if (!state || state.protocol === "ws") return;
 
-  const es = new EventSource(url);
-  state.es = es;
+  const hub = state.hub;
+  if (hub) {
+    hub.subscribers.delete(element);
+    if (hub.subscribers.size === 0) removeSseHub(hub);
+  }
+
+  if (liveConnections.get(element) === state) liveConnections.delete(element);
+
+  const byUrl = liveConnectionsByUrl.get(state.url);
+  if (byUrl) {
+    byUrl.delete(state);
+    if (byUrl.size === 0) liveConnectionsByUrl.delete(state.url);
+  }
+}
+
+
+function connectSseHub(hub) {
+  if (hub.paused || hub.subscribers.size === 0) return;
+  if (hub.es && hub.es.readyState < EventSource.CLOSED) return;
+
+  const es = new EventSource(hub.url);
+  hub.es = es;
 
   es.onopen = function () {
-    state.backoff = 1000; // Reset backoff on successful connect
-    document.dispatchEvent(
-      new CustomEvent("silcrow:live:connect", {
+    hub.backoff = 1000;
+    hub.subscribers.forEach(function (el) {
+      document.dispatchEvent(new CustomEvent("silcrow:live:connect", {
         bubbles: true,
-        detail: {root: state.element, url},
-      })
-    );
+        detail: {root: el, url: hub.url, protocol: "sse"},
+      }));
+    });
   };
 
-  // Default message event → patch
   es.onmessage = function (e) {
     try {
       const payload = JSON.parse(e.data);
-      applyLivePatchPayload(payload, state.element);
+      const fallback = hub.subscribers.size > 0
+        ? hub.subscribers.values().next().value
+        : document.body;
+      applyLivePatchPayload(payload, fallback);
     } catch (err) {
       warn("Failed to parse SSE message: " + err.message);
     }
   };
 
-  // Named event: patch
   es.addEventListener("patch", function (e) {
     try {
       const payload = JSON.parse(e.data);
-      let target = state.element;
+      let target = null;
       let data = payload;
 
-      // Supports both:
-      // 1) {"target":"#el","data":{...}} (Pilcrow SilcrowEvent::patch)
-      // 2) {...} or [...] (direct root patch payload)
-      if (
-        payload &&
-        typeof payload === "object" &&
-        !Array.isArray(payload) &&
-        Object.prototype.hasOwnProperty.call(payload, "target")
-      ) {
+      if (payload && typeof payload === "object" && !Array.isArray(payload) &&
+        Object.prototype.hasOwnProperty.call(payload, "target")) {
         data = payload.data;
-        if (payload.target) {
-          const selected = document.querySelector(payload.target);
-          if (selected) target = selected;
-        }
+        if (payload.target) target = document.querySelector(payload.target);
       }
 
-      if (target && data !== undefined) {
-        patch(data, target);
+      if (!target && hub.subscribers.size > 0) {
+        target = hub.subscribers.values().next().value;
       }
+
+      if (target && data !== undefined) patch(data, target);
     } catch (err) {
       warn("Failed to parse SSE patch event: " + err.message);
     }
   });
 
-  // Named event: html
   es.addEventListener("html", function (e) {
     try {
       const payload = JSON.parse(e.data);
       const target = payload.target
         ? document.querySelector(payload.target)
-        : state.element;
-      if (
-        target &&
-        payload &&
-        typeof payload === "object" &&
-        Object.prototype.hasOwnProperty.call(payload, "html")
-      ) {
+        : (hub.subscribers.size > 0 ? hub.subscribers.values().next().value : null);
+      if (target && Object.prototype.hasOwnProperty.call(payload, "html")) {
         safeSetHTML(target, payload.html == null ? "" : String(payload.html));
       }
     } catch (err) {
@@ -265,42 +281,55 @@ function connectSSE(url, state) {
     }
   });
 
-  // Named event: invalidate
-  // Recommendation: Park this. It's a future-proofing concern, not a current bug. When you add SilcrowEvent::invalidate(target) to Rust, fix the JS listener at the same time to parse e.data for a target selector.
-  es.addEventListener("invalidate", function () {
-    invalidate(state.element);
+  es.addEventListener("invalidate", function (e) {
+    const selector = e.data ? e.data.trim() : null;
+    if (selector) {
+      const target = document.querySelector(selector);
+      if (target) invalidate(target);
+    } else {
+      hub.subscribers.forEach(function (el) {invalidate(el);});
+    }
   });
 
-  // Named event: navigate
   es.addEventListener("navigate", function (e) {
-    if (e.data) {
-      navigate(e.data.trim(), {trigger: "sse"});
+    if (e.data) navigate(e.data.trim(), {trigger: "sse"});
+  });
+
+  es.addEventListener("custom", function (e) {
+    try {
+      const payload = JSON.parse(e.data);
+      document.dispatchEvent(new CustomEvent("silcrow:sse:" + (payload.event || "custom"), {
+        bubbles: true,
+        detail: {url: hub.url, data: payload.data},
+      }));
+    } catch (err) {
+      warn("Failed to parse SSE custom event: " + err.message);
     }
   });
 
   es.onerror = function () {
     es.close();
-    state.es = null;
+    hub.es = null;
 
-    if (state.paused) return;
-    if (liveConnections.get(state.element) !== state) return;
+    if (hub.paused || hub.subscribers.size === 0) {
+      if (hub.subscribers.size === 0) removeSseHub(hub);
+      return;
+    }
 
-    const reconnectIn = state.backoff;
-
-    document.dispatchEvent(
-      new CustomEvent("silcrow:live:disconnect", {
+    const reconnectIn = hub.backoff;
+    hub.subscribers.forEach(function (el) {
+      document.dispatchEvent(new CustomEvent("silcrow:live:disconnect", {
         bubbles: true,
-        detail: {root: state.element, url, reconnectIn},
-      })
-    );
+        detail: {root: el, url: hub.url, protocol: "sse", reconnectIn},
+      }));
+    });
 
-    state.reconnectTimer = setTimeout(function () {
-      state.reconnectTimer = null;
-      connectSSE(url, state);
+    hub.reconnectTimer = setTimeout(function () {
+      hub.reconnectTimer = null;
+      connectSseHub(hub);
     }, reconnectIn);
 
-    // Exponential backoff
-    state.backoff = Math.min(state.backoff * 2, MAX_BACKOFF);
+    hub.backoff = Math.min(hub.backoff * 2, MAX_BACKOFF);
   };
 }
 
@@ -339,34 +368,36 @@ function reconnectLive(root) {
         connectWsHub(hub);
       }
     } else {
-      // SSE: existing behavior
-      state.backoff = 1000;
-      if (state.reconnectTimer) {
-        clearTimeout(state.reconnectTimer);
-        state.reconnectTimer = null;
+      const hub = state.hub;
+      if (!hub) continue;
+      state.paused = false;
+      hub.paused = false;
+      hub.backoff = 1000;
+      if (hub.reconnectTimer) {
+        clearTimeout(hub.reconnectTimer);
+        hub.reconnectTimer = null;
       }
-      connectSSE(state.url, state);
+      connectSseHub(hub);
     }
   }
 }
 
 function destroyAllLive() {
   for (const state of liveConnections.values()) {
-    pauseLiveState(state);
+    if (state.protocol !== "ws") state.paused = true;
   }
   liveConnections.clear();
   liveConnectionsByUrl.clear();
 
-  // Clean up any remaining WS hubs
+  for (const hub of sseHubs.values()) {
+    if (hub.reconnectTimer) clearTimeout(hub.reconnectTimer);
+    if (hub.es) hub.es.close();
+  }
+  sseHubs.clear();
+
   for (const hub of wsHubs.values()) {
-    if (hub.reconnectTimer) {
-      clearTimeout(hub.reconnectTimer);
-      hub.reconnectTimer = null;
-    }
-    if (hub.socket) {
-      hub.socket.close();
-      hub.socket = null;
-    }
+    if (hub.reconnectTimer) clearTimeout(hub.reconnectTimer);
+    if (hub.socket) hub.socket.close();
   }
   wsHubs.clear();
 }
