@@ -73,6 +73,7 @@ pub async fn toggle_task(
 
     respond!(req, {
         json => json(serde_json::json!({ "tasks": { "id": id, "completed": new_completed } })),
+        status => StatusCode::OK,
     })
 }
 
