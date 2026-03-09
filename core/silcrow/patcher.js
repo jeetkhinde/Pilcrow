@@ -188,15 +188,15 @@ function cloneTemplate(tpl, scalarMap) {
   return node;
 }
 
-// Reads the key field name from the s-key attribute on the template root element.
-// s-key=".id"     → "id"
-// s-key=".userId" → "userId"
-// Falls back to "key" if the template can't be found or s-key has no dot-prefix.
+function asTemplate(el) {
+  return el instanceof HTMLTemplateElement ? el : null;
+}
+
 function getKeyField(container) {
   const templateId = container.getAttribute("s-template");
   let tpl = null;
-  if (templateId) tpl = document.getElementById(templateId);
-  if (!tpl) tpl = container.querySelector(":scope > template");
+  if (templateId) tpl = asTemplate(document.getElementById(templateId));
+  if (!tpl) tpl = asTemplate(container.querySelector(":scope > template"));
   if (!tpl) return "key";
 
   const elements = [];
@@ -222,12 +222,12 @@ function makeTemplateResolver(container, scalarMap, keyField) {
       const hashIdx = keyStr.indexOf("#");
       if (hashIdx !== -1) {
         const tplName = keyStr.substring(0, hashIdx);
-        tpl = document.getElementById(tplName);
+        tpl = asTemplate(document.getElementById(tplName));
       }
     }
 
-    if (!tpl && templateId) tpl = document.getElementById(templateId);
-    if (!tpl) tpl = container.querySelector(":scope > template");
+    if (!tpl && templateId) tpl = asTemplate(document.getElementById(templateId));
+    if (!tpl) tpl = asTemplate(container.querySelector(":scope > template"));
 
     if (!tpl) {
       throwErr("No resolvable template for collection");
@@ -237,12 +237,12 @@ function makeTemplateResolver(container, scalarMap, keyField) {
     return cloneTemplate(tpl, scalarMap);
   };
 }
-
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 function isValidCollectionArray(items, keyField) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (item == null || typeof item !== "object" || Array.isArray(item)) return false;
-    if (!(keyField in item)) return false;
+    if (!hasOwn(item, keyField)) return false;
   }
   return true;
 }
@@ -408,7 +408,7 @@ function buildMaps(root) {
 // Append or update a single keyed item without touching existing siblings.
 // Called when s-list receives a plain object (not array) with the key field present.
 function mergeItem(container, item, resolveTemplate, keyField) {
-  if (item == null || typeof item !== "object" || item[keyField] == null) {
+  if (item == null || typeof item !== "object" || !hasOwn(item, keyField) || item[keyField] == null) {
     warn("mergeItem: item must be a non-null object with a '" + keyField + "' field");
     return;
   }
@@ -437,7 +437,7 @@ function mergeItem(container, item, resolveTemplate, keyField) {
 // Remove a single keyed item from the container.
 // Called when s-list receives {keyField: ..., _remove: true}.
 function removeItem(container, item, keyField) {
-  if (item == null || typeof item !== "object" || item[keyField] == null) {
+  if (item == null || typeof item !== "object" || !hasOwn(item, keyField) || item[keyField] == null) {
     warn("removeItem: item must be a non-null object with a '" + keyField + "' field");
     return;
   }
@@ -466,10 +466,11 @@ function applyPatch(data, scalarMap, collectionMap) {
     if (Array.isArray(value)) {
       // Array → full sync: reconcile, reorder, remove stale items
       reconcile(container, value, resolveTemplate, keyField);
-    } else if (value !== null && typeof value === "object" && keyField in value && value._remove === true) {
+    } else if (value !== null && typeof value === "object" && hasOwn(value, keyField) && value._remove === true) {
+
       // Tombstone → remove: delete single keyed item from the list
       removeItem(container, value, keyField);
-    } else if (value !== null && typeof value === "object" && keyField in value) {
+    } else if (value !== null && typeof value === "object" && hasOwn(value, keyField)) {
       // Keyed object → merge: append/update single item, leave others untouched
       mergeItem(container, value, resolveTemplate, keyField);
     } else if (value !== undefined) {

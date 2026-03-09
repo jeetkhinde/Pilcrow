@@ -11,6 +11,7 @@ repository = "https://github.com/jeetkhinde/pilcrow"
 name = "pilcrow"
 path = "src/lib.rs"
 [dependencies]
+pilcrow-macros = { path = "../pilcrow-macros" }
 axum = { version = "0.7", features = ["ws"] }
 cookie = "0.18"
 futures-core = "0.3"
@@ -20,6 +21,8 @@ urlencoding = "2.1"
 tracing = "0.1"
 axum-extra = { version = "0.9.6", features = ["cookie", "typed-header"] }
 headers = "0.4"
+tokio = { version = "1", features = ["sync", "rt"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 
 [dev-dependencies]

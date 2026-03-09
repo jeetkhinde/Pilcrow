@@ -40,7 +40,6 @@ pub fn render_task_dashboard(tasks: &[Task]) -> Markup {
                                     checked[task.completed];
                                 span s-bind=".title" { (task.title) }
                             }
-
                             div class="task-item-right" {
                                 button type="button" class="task-delete-btn"
                                     s-action={"/examples/sse/tasks/" (task.id) "/delete"} DELETE    { "✗" }
@@ -49,6 +48,10 @@ pub fn render_task_dashboard(tasks: &[Task]) -> Markup {
                     }
                 }
                 (render_task_template())
+            }
+            ul s-target="#tasks" s-each="item in items" {
+                li s-text="item.name" {}
+                div s-target="#stats" s-bind="ping" {}
             }
         }
     }

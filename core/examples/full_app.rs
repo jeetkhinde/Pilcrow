@@ -15,10 +15,10 @@
 //   WS   /ws/chat      — WebSocket endpoint
 
 use axum::{
+    Router,
     extract::ws::WebSocketUpgrade,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use pilcrow::{ws::WsEvent, *};
 use serde::Serialize;
@@ -198,7 +198,7 @@ async fn dash_stream() -> impl IntoResponse {
             tick += 1;
         }
     };
-    pilcrow::sse(stream)
+    pilcrow::sse_raw(stream)
 }
 
 /// Chat page — WebSocket

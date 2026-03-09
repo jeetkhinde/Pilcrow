@@ -7,6 +7,7 @@ use pilcrow::*;
 
 use super::model::{AppState, AppStateSse, CreateTask, Task, TaskListEvent, TaskStats};
 use super::templates::render_task_dashboard;
+use tokio_stream::StreamExt;
 
 pub async fn list_tasks(
     req: SilcrowRequest,
@@ -25,12 +26,12 @@ pub async fn create_task(
     Extension(sse_state): Extension<AppStateSse>,
     Form(payload): Form<CreateTask>,
 ) -> Result<Response, ErrorResponse> {
-    if payload.title.trim().is_empty() {
+    let title = payload.title.trim().to_string();
+    if title.is_empty() {
         return Ok(navigate("/examples/sse/tasks")
             .with_toast("Title cannot be empty", "error")
             .into_response());
     }
-
     let task = {
         let mut next_id = state.next_id.lock().unwrap();
         let id = *next_id;
@@ -38,7 +39,7 @@ pub async fn create_task(
 
         Task {
             id,
-            title: payload.title,
+            title,
             completed: false,
         }
     };
@@ -114,7 +115,11 @@ pub async fn delete_task(
 
 // SSE version events
 use async_stream::stream;
+use pilcrow::{PilcrowStreamExt, sse_stream};
 use std::convert::Infallible;
+use tokio::sync::broadcast::error::RecvError::{Closed, Lagged};
+
+use tokio_stream::wrappers::BroadcastStream;
 
 pub async fn task_events(
     Extension(state): Extension<AppState>,
@@ -127,15 +132,24 @@ pub async fn task_events(
             TaskStats::from(&tasks)
         };
         yield Ok::<_, Infallible>(
-            pilcrow::SilcrowEvent::patch(&current_stats, "#live-stats").into()
+            SilcrowEvent::patch(&current_stats, "#live-stats").into()
         );
-        while let Ok(stats) = rx.recv().await {
-            yield Ok::<_, Infallible>(
-                pilcrow::SilcrowEvent::patch(&stats, "#live-stats").into()
-            );
+        loop {
+            match rx.recv().await {
+                Ok(stats) => {
+                    yield Ok::<_, Infallible>(
+                        SilcrowEvent::patch(&stats, "#live-stats").into()
+                    );
+                }
+                Err(Lagged(_)) => {
+                }
+                Err(Closed) => {
+                    break;
+                }
+            }
         }
     };
-    pilcrow::sse(stream)
+    pilcrow::sse_raw(stream)
 }
 
 pub async fn task_list_events(
@@ -150,7 +164,7 @@ pub async fn task_list_events(
             tasks.clone()
         };
         yield Ok::<_, Infallible>(
-            pilcrow::SilcrowEvent::patch(
+            SilcrowEvent::patch(
                 serde_json::json!({ "tasks": current_tasks }),
                 "#task-list",
             ).into()
@@ -159,9 +173,24 @@ pub async fn task_list_events(
         while let Ok(event) = rx.recv().await {
             let payload = serde_json::json!({ "tasks": event });
             yield Ok::<_, Infallible>(
-                pilcrow::SilcrowEvent::patch(payload, "#task-list").into()
+                SilcrowEvent::patch(payload, "#task-list").into()
             );
         }
     };
-    pilcrow::sse(stream)
+    pilcrow::sse_raw(stream)
+}
+
+#[allow(dead_code)]
+pub async fn sse_handler(Extension(state): Extension<AppStateSse>) -> impl IntoResponse {
+    let stats_rx = BroadcastStream::new(state.tx.subscribe()).filter_map(|r| r.ok()); // ignore lagged errors
+
+    let list_rx = BroadcastStream::new(state.list_tx.subscribe()).filter_map(|r| r.ok());
+
+    sse_stream(|emit| async move {
+        pilcrow::combine!(
+            stats_rx.json("#live-stats", &emit),
+            list_rx.json("#task-list", &emit),
+        )
+        .await
+    })
 }
