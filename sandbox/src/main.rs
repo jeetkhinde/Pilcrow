@@ -1,16 +1,20 @@
 mod examples;
 mod templates;
-
-use axum::{routing::get, Router};
+use crate::examples::profile::models::User;
+use crate::examples::sse::task_manager::model::{AppState as AppStateSseModel, AppStateSse};
+use crate::examples::standard::task_manager::model::*;
+use axum::{Extension, Router, routing::get};
 
 #[tokio::main]
 async fn main() {
-    let mock_user = examples::profile::models::User {
+    let mock_user = User {
         id: 1,
         role: "admin".into(),
     };
 
-    let app_state = examples::task_manager::models::AppState::new();
+    let app_state = AppState::new();
+    let app_state_sse = AppStateSse::new();
+    let app_state_sse_model = AppStateSseModel::new();
 
     let app = Router::new()
         .route(
@@ -19,15 +23,20 @@ async fn main() {
         )
         // Profile Example Routes
         .merge(examples::profile::router())
-        // Task Manager Example Routes
-        .merge(examples::task_manager::router())
+        // Standard Task Manager Example Routes
+        .merge(examples::standard::task_manager::router().layer(Extension(app_state)))
+        // SSE Task Manager Example Routes
+        .merge(
+            examples::sse::task_manager::router()
+                .layer(Extension(app_state_sse_model))
+                .layer(Extension(app_state_sse)),
+        )
         // Global Extension Configurations
-        .layer(axum::Extension(mock_user))
-        .layer(axum::Extension(app_state));
+        .layer(Extension(mock_user));
 
     println!("Listening on http://127.0.0.1:3000/examples/profile");
     println!("Tasks Dashboard on http://127.0.0.1:3000/examples/tasks");
-
+    println!("SSE Tasks Dashboard on http://127.0.0.1:3000/examples/sse/tasks");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();

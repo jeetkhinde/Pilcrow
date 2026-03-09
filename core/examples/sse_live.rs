@@ -7,7 +7,7 @@
 //   curl http://127.0.0.1:3000              (HTML page with SSE header)
 //   curl http://127.0.0.1:3000/events/stats (raw SSE stream)
 
-use axum::{response::IntoResponse, response::Response, routing::get, Router};
+use axum::{Router, response::IntoResponse, response::Response, routing::get};
 use pilcrow::*;
 use serde::Serialize;
 use std::convert::Infallible;
@@ -80,7 +80,7 @@ async fn stats_stream() -> impl IntoResponse {
         }
     };
 
-    pilcrow::sse(stream)
+    pilcrow::sse_raw(stream)
 }
 
 // ── Main ────────────────────────────────────────────────────

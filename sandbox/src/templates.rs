@@ -1,4 +1,4 @@
-use maud::{html, Markup, PreEscaped, DOCTYPE};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 pub fn layout(content: Markup) -> Markup {
     html! {
@@ -24,6 +24,14 @@ pub fn layout(content: Markup) -> Markup {
                         .task-item-right { display: flex; gap: 8px; }
                         .task-delete-btn { background: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; transition: background 0.2s; }
                         .task-delete-btn:hover { background: #c82333; }
+                        .task-stats { display: flex; gap: 1.5rem; padding: 1.5rem; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;}
+                        .stat { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); flex: 1;}
+                        .stat-icon { font-size: 1.5rem; padding: 0.5rem; border-radius: 50%; background: #f1f5f9;}
+                        .stat-details { display: flex; flex-direction: column;}
+                        .stat-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1.2;}
+                        .stat-label { font-size: 0.875rem; color: #64748b; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em;}
+                        .stat-pending .stat-icon { background: #fff7ed; }
+                        .stat-completed .stat-icon { background: #f0fdf4; }
                     "))
                 }
                 script {
@@ -34,38 +42,11 @@ pub fn layout(content: Markup) -> Markup {
                                     alert(`[${level.toUpperCase()}] ${msg}`);
                                 });
                             }
-                            document.addEventListener('task:created', () => {
-                                const input = document.getElementById('task-input');
-                                if (input) input.value = '';
-                            });
-                            document.addEventListener('toast', (e) => {
-                                if (e.detail && e.detail.msg) {
-                                  alert(`[${(e.detail.level || 'info').toUpperCase()}] ${e.detail.msg}`);
-                                }
-                            });
-                            document.addEventListener('change', (e) => {
-                                if (e.target.matches('.task-checkbox')) {
-                                    const item = e.target.closest('.task-item');
-                                    const id = item ? item.getAttribute('data-id') : null;
-                                    if (id && window.Silcrow) {
-                                        window.Silcrow.go(`/examples/tasks/${id}/toggle`, { method: 'POST', target: '#dashboard' });
-                                    }
-                                }
-                            });
-                            document.addEventListener('click', (e) => {
-                                if (e.target.matches('.task-delete-btn')) {
-                                    const item = e.target.closest('.task-item');
-                                    const id = item ? item.getAttribute('data-id') : null;
-                                    if (id && window.Silcrow) {
-                                        window.Silcrow.go(`/examples/tasks/${id}/delete`, { method: 'DELETE', target: '#dashboard' });
-                                    }
-                                }
-                            });
                         });
                     "))
                 }
             }
-            body s-debug {
+            body {
                 (content)
             }
         }
