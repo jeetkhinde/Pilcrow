@@ -28,7 +28,6 @@ pub fn render_dashboard(tasks: &[Task], events_path: &str) -> Markup {
                 class="task-form"
                 s-action="/examples/sse/tasks"
                 POST
-                s-target="#task-form"
                 s-optimistic="reset"
             {
                 input
@@ -36,6 +35,7 @@ pub fn render_dashboard(tasks: &[Task], events_path: &str) -> Markup {
                     class="task-input"
                     type="text"
                     name="title"
+                    s-bind="title:value"
                     placeholder="What needs to be done?"
                     autocomplete="off"
                     required {}

@@ -56,6 +56,17 @@ macro_rules! __respond_with_toast {
         $expr
     };
 }
+/// Internal: apply status code if provided, otherwise pass through
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __respond_with_status {
+    ($expr:expr, $code:expr) => {
+        $crate::ResponseExt::with_status($expr, $code)
+    };
+    ($expr:expr,) => {
+        $expr
+    };
+}
 
 /// Internal: 406 response for unsupported content type
 #[doc(hidden)]
@@ -68,8 +79,34 @@ macro_rules! __respond_406 {
 
 #[macro_export]
 macro_rules! respond {
-    // ── Both arms (html + json) ──────────────────────────────
-    // With raw JSON
+
+    // ════════════════════════════════════════════════════════
+    // Both arms — raw JSON
+    // ════════════════════════════════════════════════════════
+
+    // status + toast
+    ($req:expr, { html => $html:expr, json => raw $json:expr, status => $code:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($html, ($msg, $lvl)), $code))
+            }
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($crate::json($json), ($msg, $lvl)), $code))
+            }
+        }
+    };
+    // status only
+    ($req:expr, { html => $html:expr, json => raw $json:expr, status => $code:expr $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($html, $code))
+            }
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::json($json), $code))
+            }
+        }
+    };
+    // toast only + neither (existing)
     ($req:expr, { html => $html:expr, json => raw $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
@@ -80,7 +117,34 @@ macro_rules! respond {
             }
         }
     };
-    // With pre-wrapped JSON
+
+    // ════════════════════════════════════════════════════════
+    // Both arms — pre-wrapped JSON
+    // ════════════════════════════════════════════════════════
+
+    // status + toast
+    ($req:expr, { html => $html:expr, json => $json:expr, status => $code:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($html, ($msg, $lvl)), $code))
+            }
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($json, ($msg, $lvl)), $code))
+            }
+        }
+    };
+    // status only
+    ($req:expr, { html => $html:expr, json => $json:expr, status => $code:expr $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($html, $code))
+            }
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($json, $code))
+            }
+        }
+    };
+    // toast only + neither (existing)
     ($req:expr, { html => $html:expr, json => $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
@@ -92,7 +156,29 @@ macro_rules! respond {
         }
     };
 
-    // ── HTML-only ────────────────────────────────────────────
+    // ════════════════════════════════════════════════════════
+    // HTML-only
+    // ════════════════════════════════════════════════════════
+
+    // status + toast
+    ($req:expr, { html => $html:expr, status => $code:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($html, ($msg, $lvl)), $code))
+            }
+            _ => $crate::__respond_406!("HTML required"),
+        }
+    };
+    // status only
+    ($req:expr, { html => $html:expr, status => $code:expr $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Html => {
+                $crate::__respond_ok!($crate::__respond_with_status!($html, $code))
+            }
+            _ => $crate::__respond_406!("HTML required"),
+        }
+    };
+    // toast only + neither (existing)
     ($req:expr, { html => $html:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Html => {
@@ -102,7 +188,29 @@ macro_rules! respond {
         }
     };
 
-    // ── JSON-only (raw) ──────────────────────────────────────
+    // ════════════════════════════════════════════════════════
+    // JSON-only — raw
+    // ════════════════════════════════════════════════════════
+
+    // status + toast
+    ($req:expr, { json => raw $json:expr, status => $code:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($crate::json($json), ($msg, $lvl)), $code))
+            }
+            _ => $crate::__respond_406!("JSON required"),
+        }
+    };
+    // status only
+    ($req:expr, { json => raw $json:expr, status => $code:expr $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::json($json), $code))
+            }
+            _ => $crate::__respond_406!("JSON required"),
+        }
+    };
+    // toast only + neither (existing)
     ($req:expr, { json => raw $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Json => {
@@ -112,7 +220,29 @@ macro_rules! respond {
         }
     };
 
-    // ── JSON-only (pre-wrapped) ──────────────────────────────
+    // ════════════════════════════════════════════════════════
+    // JSON-only — pre-wrapped
+    // ════════════════════════════════════════════════════════
+
+    // status + toast
+    ($req:expr, { json => $json:expr, status => $code:expr, toast => ($msg:expr, $lvl:expr) $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($crate::__respond_with_toast!($json, ($msg, $lvl)), $code))
+            }
+            _ => $crate::__respond_406!("JSON required"),
+        }
+    };
+    // status only
+    ($req:expr, { json => $json:expr, status => $code:expr $(,)? }) => {
+        match $req.preferred_mode() {
+            $crate::extract::RequestMode::Json => {
+                $crate::__respond_ok!($crate::__respond_with_status!($json, $code))
+            }
+            _ => $crate::__respond_406!("JSON required"),
+        }
+    };
+    // toast only + neither (existing)
     ($req:expr, { json => $json:expr $(, toast => ($msg:expr, $lvl:expr))? $(,)? }) => {
         match $req.preferred_mode() {
             $crate::extract::RequestMode::Json => {

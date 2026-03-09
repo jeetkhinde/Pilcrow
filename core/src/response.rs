@@ -22,7 +22,8 @@ pub struct Toast {
 pub struct BaseResponse {
     pub headers: HeaderMap,
     pub cookies: CookieJar,
-    pub toasts: Vec<Toast>, // Future-proof: multiple toasts
+    pub toasts: Vec<Toast>,         // Future-proof: multiple toasts
+    pub status: Option<StatusCode>, // Optional explicit status code
 }
 
 impl BaseResponse {
@@ -31,7 +32,9 @@ impl BaseResponse {
         self.headers.iter().for_each(|(name, value)| {
             response.headers_mut().insert(name.clone(), value.clone());
         });
-
+        if let Some(code) = self.status {
+            *response.status_mut() = code;
+        }
         // 2. Apply cookies (clone jar only when toasts need to be added)
         if self.toasts.is_empty() {
             for cookie in self.cookies.iter() {
@@ -78,7 +81,10 @@ pub trait ResponseExt: Sized {
         }
         self
     }
-
+    fn with_status(mut self, status: StatusCode) -> Self {
+        self.base_mut().status = Some(status);
+        self
+    }
     fn no_cache(mut self) -> Self {
         self.base_mut()
             .headers

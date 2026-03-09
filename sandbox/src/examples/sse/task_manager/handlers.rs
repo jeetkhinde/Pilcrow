@@ -47,7 +47,7 @@ pub async fn create_task(
     });
 
     respond!(req, {
-        json => status(StatusCode::CREATED),
+        json => json(serde_json::json!({ "title": "" })),
     })
 }
 
@@ -57,10 +57,11 @@ pub async fn toggle_task(
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
     let mut found = false;
-
+    let mut new_completed = false;
     state.mutate(|tasks| {
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.completed = !task.completed;
+            new_completed = task.completed;
             found = true;
         }
     });
@@ -70,7 +71,7 @@ pub async fn toggle_task(
     }
 
     respond!(req, {
-        json => status(StatusCode::NO_CONTENT),
+        json => json(serde_json::json!({ "tasks": { "id": id, "completed": new_completed } })),
     })
 }
 
@@ -92,7 +93,7 @@ pub async fn delete_task(
     }
 
     respond!(req, {
-        json => status(StatusCode::NO_CONTENT),
+        json => json(serde_json::json!({ "tasks": { "id": id, "_remove": true } })),
     })
 }
 
