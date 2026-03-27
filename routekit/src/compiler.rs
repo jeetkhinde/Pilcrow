@@ -72,12 +72,18 @@ pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleP
     Ok(parts)
 }
 
-/// Transpiles PascalCase self-closing component tags into Askama expressions.
+/// Transpiles PascalCase component tags into Askama expressions.
 ///
 /// Example:
 /// `<Card title={item.title} />`
 /// becomes
 /// `{{ Card { title: item.title }|safe }}`
+///
+/// For paired component tags, inner content is captured into a synthetic
+/// `children` field:
+/// `<Layout title={title}>...</Layout>`
+/// becomes
+/// `{{ Layout { title: title, children: r#"..."# }|safe }}`
 pub fn transpile_component_tags(template: &str) -> String {
     let mut output = String::with_capacity(template.len());
     let mut i = 0usize;
@@ -126,7 +132,7 @@ fn parse_component_tag(input: &str) -> Option<(String, usize)> {
     let name = &input[idx..name_end];
     idx = name_end;
 
-    // Parse until self-closing "/>", honoring nested braces and quoted strings.
+    // Parse opening tag until "/>" or ">", honoring nested braces and quoted strings.
     let attrs_start = idx;
     let mut brace_depth = 0usize;
     let mut quote: Option<char> = None;
@@ -166,8 +172,18 @@ fn parse_component_tag(input: &str) -> Option<(String, usize)> {
                 return Some((rendered, idx + 2));
             }
             '>' => {
-                // Non-self-closing tag is not handled in this phase.
-                return None;
+                let attrs_src = &input[attrs_start..idx];
+                let attrs = parse_attributes(attrs_src)?;
+                let open_end = idx + c_len;
+                let (inner_len, close_len) =
+                    find_matching_component_close(&input[open_end..], name)?;
+                let inner = &input[open_end..open_end + inner_len];
+                let consumed = open_end + inner_len + close_len;
+
+                let inner_transpiled = transpile_component_tags(inner);
+                let rendered =
+                    render_component_call_with_children(name, &attrs, &inner_transpiled)?;
+                return Some((rendered, consumed));
             }
             _ => {
                 idx += c_len;
@@ -308,6 +324,156 @@ fn render_component_call(name: &str, attrs: &[(String, String)]) -> String {
     format!("{{{{ {name} {{ {body} }}|safe }}}}")
 }
 
+fn render_component_call_with_children(
+    name: &str,
+    attrs: &[(String, String)],
+    inner: &str,
+) -> Option<String> {
+    if inner.trim().is_empty() {
+        return Some(render_component_call(name, attrs));
+    }
+
+    if attrs.iter().any(|(k, _)| k == "children") {
+        return None;
+    }
+
+    let mut all = attrs.to_vec();
+    all.push(("children".to_string(), rust_raw_string_literal(inner)));
+    Some(render_component_call(name, &all))
+}
+
+fn rust_raw_string_literal(value: &str) -> String {
+    for hashes_count in 0..=32usize {
+        let hashes = "#".repeat(hashes_count);
+        let terminator = format!("\"{hashes}");
+        if !value.contains(&terminator) {
+            return format!("r{hashes}\"{value}\"{hashes}");
+        }
+    }
+    format!("{value:?}")
+}
+
+fn find_matching_component_close(input: &str, name: &str) -> Option<(usize, usize)> {
+    let mut idx = 0usize;
+    let mut depth = 1usize;
+
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        if c != '<' {
+            idx += c.len_utf8();
+            continue;
+        }
+
+        if let Some(consumed) = parse_named_close_tag(input, idx, name) {
+            depth -= 1;
+            if depth == 0 {
+                return Some((idx, consumed));
+            }
+            idx += consumed;
+            continue;
+        }
+
+        if let Some((consumed, self_closing)) = parse_named_open_tag(input, idx, name) {
+            if !self_closing {
+                depth += 1;
+            }
+            idx += consumed;
+            continue;
+        }
+
+        idx += c.len_utf8();
+    }
+
+    None
+}
+
+fn parse_named_open_tag(input: &str, start: usize, name: &str) -> Option<(usize, bool)> {
+    if !input[start..].starts_with('<') {
+        return None;
+    }
+
+    let mut idx = start + 1;
+    if input[idx..].starts_with('/') {
+        return None;
+    }
+    if !input[idx..].starts_with(name) {
+        return None;
+    }
+    idx += name.len();
+
+    let boundary = input[idx..].chars().next()?;
+    if !(boundary.is_whitespace() || boundary == '/' || boundary == '>') {
+        return None;
+    }
+
+    let attrs_start = idx;
+    let mut brace_depth = 0usize;
+    let mut quote: Option<char> = None;
+
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        let c_len = c.len_utf8();
+
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            idx += c_len;
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                idx += c_len;
+            }
+            '{' => {
+                brace_depth += 1;
+                idx += c_len;
+            }
+            '}' => {
+                if brace_depth == 0 {
+                    return None;
+                }
+                brace_depth -= 1;
+                idx += c_len;
+            }
+            '>' if brace_depth == 0 => {
+                let before = input[attrs_start..idx].trim_end();
+                let self_closing = before.ends_with('/');
+                return Some((idx + c_len - start, self_closing));
+            }
+            _ => {
+                idx += c_len;
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_named_close_tag(input: &str, start: usize, name: &str) -> Option<usize> {
+    if !input[start..].starts_with("</") {
+        return None;
+    }
+    let mut idx = start + 2;
+    if !input[idx..].starts_with(name) {
+        return None;
+    }
+    idx += name.len();
+
+    let boundary = input[idx..].chars().next()?;
+    if !(boundary.is_whitespace() || boundary == '>') {
+        return None;
+    }
+
+    idx = skip_ws(input, idx);
+    if !input[idx..].starts_with('>') {
+        return None;
+    }
+    Some(idx + 1 - start)
+}
+
 fn skip_ws(src: &str, mut idx: usize) -> usize {
     while idx < src.len() {
         let Some(c) = src[idx..].chars().next() else {
@@ -403,6 +569,43 @@ pub struct Props {
     }
 
     #[test]
+    fn transpile_component_with_paired_children() {
+        let input = "<Layout title={title}><h1>Hello</h1></Layout>";
+        let output = transpile_component_tags(input);
+        assert_eq!(
+            output,
+            "{{ Layout { title: title, children: r\"<h1>Hello</h1>\" }|safe }}"
+        );
+    }
+
+    #[test]
+    fn transpile_component_with_nested_children_components() {
+        let input = "<Layout title={title}><Card title={title} /></Layout>";
+        let output = transpile_component_tags(input);
+        assert_eq!(
+            output,
+            "{{ Layout { title: title, children: r\"{{ Card { title: title }|safe }}\" }|safe }}"
+        );
+    }
+
+    #[test]
+    fn transpile_component_with_empty_paired_body() {
+        let input = "<Footer></Footer>";
+        let output = transpile_component_tags(input);
+        assert_eq!(output, "{{ Footer {}|safe }}");
+    }
+
+    #[test]
+    fn transpile_component_handles_nested_same_name_tags() {
+        let input = "<Box><Box /></Box>";
+        let output = transpile_component_tags(input);
+        assert_eq!(
+            output,
+            "{{ Box { children: r\"{{ Box {}|safe }}\" }|safe }}"
+        );
+    }
+
+    #[test]
     fn transpile_ignores_lowercase_html_tags() {
         let input = r#"<div class="x"><span>Hi</span></div>"#;
         let output = transpile_component_tags(input);
@@ -414,6 +617,13 @@ pub struct Props {
         let input = r#"<Card s-key=".id" title=".title" />"#;
         let output = transpile_component_tags(input);
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn transpile_ignores_mismatched_paired_tags() {
+        let input = "<Layout><Card /></Layot>";
+        let output = transpile_component_tags(input);
+        assert_eq!(output, "<Layout>{{ Card {}|safe }}</Layot>");
     }
 
     #[test]

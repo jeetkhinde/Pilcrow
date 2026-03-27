@@ -2,6 +2,14 @@
 
 Compiler-facing file-based routing primitives for Pilcrow.
 
+## Template behavior
+
+- Known `components/*.html` and `layouts/*.html` are expanded into page templates at build time.
+- Paired tags like `<Layout>...</Layout>` inject children through `<slot />` in the target template.
+- Named slots are supported via `slot="name"` and `<slot name="name" />`.
+- Slot props are supported via `<slot name="item" value={...} />` + `let:value` on slotted nodes.
+- Unknown PascalCase tags are preserved as generated Askama component-call syntax.
+
 ## Build script integration
 
 ```rust
