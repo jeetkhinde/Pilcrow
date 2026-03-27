@@ -8,10 +8,10 @@
 //   websocat ws://127.0.0.1:3000/ws/chat    (raw WS connection)
 
 use axum::{
+    Router,
     extract::ws::WebSocketUpgrade,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use pilcrow::{ws::WsEvent, *};
 use serde::Serialize;

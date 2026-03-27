@@ -8,7 +8,7 @@
 //   curl -v -H "Accept: application/json" http://127.0.0.1:3000/json-toast
 //   curl -v http://127.0.0.1:3000/custom-headers
 
-use axum::{response::Response, routing::get, Router};
+use axum::{Router, response::Response, routing::get};
 use pilcrow::*;
 use serde::Serialize;
 

@@ -98,21 +98,14 @@ impl AppState {
         }
     }
 
-    /// Apply a mutation, recompute stats, and broadcast to all SSE subscribers.
-    ///
-    /// This is the single entry point for all state changes. Every handler calls this;
-    /// the SSE streams receive the update automatically with no extra wiring.
-    ///
-    /// The closure receives `&mut Vec<Task>` and may also capture `&mut` locals
-    /// from the caller to communicate results back (e.g. whether an item was found).
-    pub fn mutate(&self, f: impl FnOnce(&mut Vec<Task>)) {
+    pub fn mutate<R>(&self, f: impl FnOnce(&mut Vec<Task>) -> R) -> R {
         let mut tasks = self.tasks.lock().unwrap();
-        f(&mut tasks);
+        let result = f(&mut tasks);
         let stats = TaskStats::from_tasks(&tasks);
         let list_patch = serde_json::json!({ "tasks": *tasks });
         drop(tasks);
-
         let _ = self.stats_tx.send(stats);
         let _ = self.list_tx.send(list_patch);
+        result
     }
 }

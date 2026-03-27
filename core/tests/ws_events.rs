@@ -2,8 +2,8 @@
 //
 // WebSocket event serialization, deserialization, and route verification.
 
-use pilcrow::ws::WsEvent;
 use pilcrow::WsRoute;
+use pilcrow::ws::WsEvent;
 
 // ════════════════════════════════════════════════════════════
 // WsRoute

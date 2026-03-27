@@ -1,0 +1,22 @@
+# crates/routekit/Cargo.toml
+[package]
+name = "pilcrow-routekit"
+version = "0.1.0"
+edition = "2024"
+authors = ["Pilcrow Contributors"]
+license = "MIT"
+description = "File-based routing for Rust web frameworks with support for dynamic segments, catch-all routes, and optional parameters."
+keywords = ["router", "web", "file-based", "routing", "framework-agnostic"]
+categories = ["web-programming"]
+readme = "README.md"
+
+[lib]
+name = "pilcrow_routekit"
+path = "src/lib.rs"
+
+[dependencies]
+# Using only Rust std library, no external dependencies.
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+rstest = "0.22"

@@ -2,8 +2,8 @@ pub mod handlers;
 pub mod models;
 pub mod templates;
 
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 
 pub fn router() -> Router {
     Router::new().route(

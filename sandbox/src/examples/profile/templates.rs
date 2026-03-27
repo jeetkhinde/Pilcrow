@@ -1,5 +1,5 @@
 use super::models::Profile;
-use maud::{html, Markup};
+use maud::{Markup, html};
 
 pub fn render_profile(profile: &Profile) -> Markup {
     html! {

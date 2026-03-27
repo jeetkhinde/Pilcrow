@@ -35,7 +35,7 @@ pub fn render_dashboard(tasks: &[Task], events_path: &str) -> Markup {
                     class="task-input"
                     type="text"
                     name="title"
-                    s-bind="title:value"
+                    s-bind="title:value" // using to clear the input field.
                     placeholder="What needs to be done?"
                     autocomplete="off"
                     required {}

@@ -3,7 +3,7 @@
 // Verify every ResponseExt modifier sets the correct header.
 
 use axum::response::{IntoResponse, Response};
-use pilcrow::{html, json, response::ResponseExt, SseRoute, WsRoute};
+use pilcrow::{SseRoute, WsRoute, html, json, response::ResponseExt};
 
 // ── Helpers ─────────────────────────────────────────────────
 

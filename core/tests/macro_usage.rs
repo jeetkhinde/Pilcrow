@@ -5,7 +5,7 @@
 // against the real Responses builder.
 
 use axum::{http::StatusCode, response::Response};
-use pilcrow::{html, json, respond, response::ResponseExt, SilcrowRequest};
+use pilcrow::{SilcrowRequest, html, json, respond, response::ResponseExt};
 
 // ── Helper: simulate a browser HTML request ──────────────────
 fn html_request() -> SilcrowRequest {

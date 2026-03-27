@@ -6,7 +6,7 @@
 // Test: curl http://127.0.0.1:3000
 //       curl -H "Accept: application/json" http://127.0.0.1:3000
 
-use axum::{response::Response, routing::get, Router};
+use axum::{Router, response::Response, routing::get};
 use pilcrow::*;
 use serde::Serialize;
 

@@ -9,9 +9,9 @@
 //   curl -v http://127.0.0.1:3000/side-effects
 
 use axum::{
+    Router,
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use pilcrow::*;
 

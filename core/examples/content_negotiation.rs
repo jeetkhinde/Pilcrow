@@ -10,7 +10,7 @@
 //   curl -H "Accept: application/json" http://127.0.0.1:3000/html-only
 //   curl http://127.0.0.1:3000/json-only
 
-use axum::{response::Response, routing::get, Router};
+use axum::{Router, response::Response, routing::get};
 use pilcrow::*;
 use serde::Serialize;
 

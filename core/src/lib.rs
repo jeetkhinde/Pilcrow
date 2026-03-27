@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod extract;
+pub mod generated_routes;
 pub mod headers;
 pub mod macros;
 pub mod response;
@@ -20,4 +21,7 @@ pub use ws::{WsEvent, WsRoute, WsStream};
 pub use axum;
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
+pub use generated_routes::{
+    GeneratedPageRoute, generated_routes, pilcrow_router, register_generated_routes,
+};
 pub use pilcrow_macros::sse;

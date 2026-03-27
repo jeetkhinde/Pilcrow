@@ -4,7 +4,7 @@ use crate::headers::SilcrowTarget;
 use axum::{
     async_trait,
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{StatusCode, request::Parts},
 };
 use headers::HeaderMapExt;
 

@@ -52,31 +52,31 @@ pub async fn create_task(
     })
 }
 
+fn toggle_task_in_list(tasks: &mut Vec<Task>, id: i64) -> Option<bool> {
+    tasks.iter().position(|t| t.id == id).map(|idx| {
+        let completed = !tasks[idx].completed;
+        tasks[idx] = Task {
+            completed,
+            ..tasks[idx].clone()
+        };
+        completed
+    })
+}
+
 pub async fn toggle_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Response, ErrorResponse> {
-    let mut found = false;
-    let mut new_completed = false;
-    state.mutate(|tasks| {
-        if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
-            task.completed = !task.completed;
-            new_completed = task.completed;
-            found = true;
-        }
-    });
-
-    if !found {
-        return Err((StatusCode::NOT_FOUND, "Task not found").into_response());
-    }
+    let new_completed = state
+        .mutate(|tasks| toggle_task_in_list(tasks, id))
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Task not found").into_response())?;
 
     respond!(req, {
-        json => json(serde_json::json!({ "tasks": { "id": id, "completed": new_completed } })),
+        json => json(serde_json::json!({ "task": { "id": id, "completed": new_completed } })),
         status => StatusCode::OK,
     })
 }
-
 pub async fn delete_task(
     req: SilcrowRequest,
     Extension(state): Extension<AppState>,
