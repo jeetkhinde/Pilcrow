@@ -1,21 +1,21 @@
-# Pilcrow User Guide
+# Pilcrow Guide (Single Path)
 
-A progressive tutorial for building hypermedia-driven applications with Pilcrow and Silcrow.js.
+This guide documents one app path only.
 
-> **Reference docs:** [Pilcrow API](../readme.md) · [Silcrow.js Runtime](silcrow.md)
+## Mandatory Architecture
 
-## Guide
-
-| # | Document | What You'll Learn |
-| --- | --- | --- |
-| 1 | [Getting Started](getting-started.md) | Project setup, first handler, content negotiation |
-| 2 | [Template Engines](templates.md) | Maud and Askama integration, layouts, partials |
-| 3 | [Forms & Mutations](forms-and-mutations.md) | POST handlers, validation, redirect + toast |
-| 4 | [Partials & Targets](partials-and-targets.md) | Partial HTML, `s-target`, multi-target updates |
-| 5 | [Server-Sent Events](sse-guide.md) | Real-time updates with SSE |
-| 6 | [WebSocket](ws-guide.md) | Bidirectional communication |
-| 7 | [Response Modifiers](response-modifiers.md) | All `ResponseExt` methods and side effects |
+- `apps/web`: file-based UI routes and SSR rendering
+- `apps/backend`: services/models/repositories/auth + REST/JSON APIs
+- request flow: `Browser -> web -> backend -> web -> Browser`
 
 ## Reading Order
 
-Start with **Getting Started** — it walks you through a working app from scratch. Each subsequent guide introduces one concept area and builds on the previous. You can also jump directly to any guide if you know what you're looking for.
+1. [Getting Started](getting-started.md)
+2. [File-Based Templates](templates.md)
+3. [Forms & Mutations](forms-and-mutations.md)
+4. [Partials & Targets](partials-and-targets.md)
+5. [Server-Sent Events](sse-guide.md)
+6. [WebSocket](ws-guide.md)
+7. [Response Modifiers](response-modifiers.md)
+
+All examples assume web calls backend APIs and never touches DB directly.
