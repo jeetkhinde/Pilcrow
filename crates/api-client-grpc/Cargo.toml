@@ -1,0 +1,13 @@
+[package]
+name = "pilcrow-api-client-grpc"
+version = "0.1.0"
+edition = "2024"
+description = "gRPC client abstraction for Pilcrow internal/backend service calls"
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1"
+pilcrow-contracts = { path = "../contracts" }
+thiserror = "1"
+tonic = { version = "0.12", features = ["transport"] }
+tonic-health = "0.12"

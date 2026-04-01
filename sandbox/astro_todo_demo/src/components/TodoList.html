@@ -1,0 +1,16 @@
+---
+pub struct Todo {
+    pub id: i64,
+    pub title: String,
+    pub done: bool,
+}
+
+pub struct Props {
+    pub todos: Vec<Todo>,
+}
+---
+<ul>
+  {% for todo in todos %}
+    <slot name="item" entry={todo} />
+  {% endfor %}
+</ul>

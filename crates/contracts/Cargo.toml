@@ -1,0 +1,9 @@
+[package]
+name = "pilcrow-contracts"
+version = "0.1.0"
+edition = "2024"
+description = "Shared request/response contracts for Pilcrow web/backend apps"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -1,3 +1,16 @@
 [workspace]
-members = ["core", "routekit", "sandbox"]
+members = [
+    "crates/pilcrow",
+    "crates/routekit",
+    "crates/pilcrow-macros",
+    "sandbox",
+    "apps/web",
+    "apps/backend",
+    "crates/pilcrow-core",
+    "crates/pilcrow-web",
+    "crates/contracts",
+    "crates/api-client-rest",
+    "crates/api-client-grpc",
+    "tools/pilcrow-cli",
+]
 resolver = "2"

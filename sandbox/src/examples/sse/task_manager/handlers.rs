@@ -52,14 +52,10 @@ pub async fn create_task(
     })
 }
 
-fn toggle_task_in_list(tasks: &mut Vec<Task>, id: i64) -> Option<bool> {
-    tasks.iter().position(|t| t.id == id).map(|idx| {
-        let completed = !tasks[idx].completed;
-        tasks[idx] = Task {
-            completed,
-            ..tasks[idx].clone()
-        };
-        completed
+fn toggle_task_in_list(tasks: &mut [Task], id: i64) -> Option<bool> {
+    tasks.iter_mut().find(|task| task.id == id).map(|task| {
+        task.completed = !task.completed;
+        task.completed
     })
 }
 

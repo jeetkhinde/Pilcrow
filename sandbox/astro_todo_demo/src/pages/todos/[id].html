@@ -1,0 +1,16 @@
+---
+pub struct Props {
+    pub title: String,
+    pub id: i64,
+    pub done: bool,
+}
+---
+<AppLayout title={title}>
+  <h2 slot="header">Todo #{{ id }}</h2>
+
+  <TodoCard id={id} title={title} done={done}>
+    <p>Status: {% if done %}Done{% else %}Pending{% endif %}</p>
+  </TodoCard>
+
+  <p><a href="/">Back to list</a></p>
+</AppLayout>

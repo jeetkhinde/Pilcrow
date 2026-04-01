@@ -1,23 +1,7 @@
 {
-	"folders": [
-		{
-			"name": "📦 Pilcrow (Core)",
-			"path": "core"
-		},
-		{
-			"name": "🧪 Sandbox (Test App)",
-			"path": "sandbox"
-		},
-		{
-			"name": "⚙️ Workspace Root",
-			"path": "."
-		}
-	],
-	"settings": {
-		"geminicodeassist.outlines.automaticOutlineGeneration": true,
-		"files.exclude": {
-			"core": true,
-			"sandbox": true
-		}
-	}
+  "folders": [
+    {
+      "path": "."
+    }
+  ]
 }
