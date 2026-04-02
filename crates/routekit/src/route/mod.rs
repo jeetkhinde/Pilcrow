@@ -13,4 +13,3 @@ pub mod pattern;
 // Re-export commonly used types
 pub use detection::{detect_intercepting_route, detect_parallel_route, extract_layout_name};
 pub use parser::{calculate_priority, parse_pattern};
-pub use pattern::{PatternSegmentType, classify_segment, parse_param_with_constraint};

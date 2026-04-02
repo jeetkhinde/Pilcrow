@@ -3,7 +3,7 @@
 // Verify every ResponseExt modifier sets the correct header.
 
 use axum::response::{IntoResponse, Response};
-use pilcrow::{SseRoute, WsRoute, html, json, response::ResponseExt};
+use pilcrow::{SseRoute, ToastLevel, WsRoute, html, json, response::ResponseExt};
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -177,7 +177,7 @@ async fn chained_modifiers_all_present() {
         .retarget("#main")
         .push_history("/final")
         .trigger_event("done")
-        .with_toast("Complete", "success")
+        .with_toast("Complete", ToastLevel::Success)
         .into_response();
 
     assert_eq!(get_header(&response, "x-custom").unwrap(), "value");

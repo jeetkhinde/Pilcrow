@@ -4,7 +4,7 @@
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use pilcrow::{html, json, navigate, response::ResponseExt};
+use pilcrow::{ToastLevel, html, json, navigate, response::ResponseExt};
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ async fn json_complex_nested_struct() {
 #[tokio::test]
 async fn json_toast_injected_into_object() {
     let response = json(serde_json::json!({"ok": true}))
-        .with_toast("Saved", "success")
+        .with_toast("Saved", ToastLevel::Success)
         .into_response();
     let body = body_string(response).await;
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -137,7 +137,7 @@ async fn json_toast_injected_into_object() {
 #[tokio::test]
 async fn json_toast_wraps_non_object() {
     let response = json(serde_json::json!([1, 2, 3]))
-        .with_toast("Loaded", "info")
+        .with_toast("Loaded", ToastLevel::Info)
         .into_response();
     let body = body_string(response).await;
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -148,9 +148,9 @@ async fn json_toast_wraps_non_object() {
 #[tokio::test]
 async fn json_multiple_toasts() {
     let response = json(serde_json::json!({}))
-        .with_toast("First", "info")
-        .with_toast("Second", "warning")
-        .with_toast("Third", "error")
+        .with_toast("First", ToastLevel::Info)
+        .with_toast("Second", ToastLevel::Warning)
+        .with_toast("Third", ToastLevel::Error)
         .into_response();
     let body = body_string(response).await;
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -168,7 +168,7 @@ async fn json_multiple_toasts() {
 #[tokio::test]
 async fn html_toast_sets_cookie() {
     let response = html("<p>Done</p>")
-        .with_toast("Saved", "success")
+        .with_toast("Saved", ToastLevel::Success)
         .into_response();
     let cookies = get_cookies(&response);
     assert!(
@@ -181,7 +181,7 @@ async fn html_toast_sets_cookie() {
 #[tokio::test]
 async fn html_toast_cookie_decodes_to_valid_json() {
     let response = html("<p>Done</p>")
-        .with_toast("Hello", "info")
+        .with_toast("Hello", ToastLevel::Info)
         .into_response();
     let cookies = get_cookies(&response);
     let toast_cookie = cookies
@@ -224,7 +224,7 @@ async fn navigate_sets_location_header() {
 #[tokio::test]
 async fn navigate_toast_via_cookie() {
     let response = navigate("/home")
-        .with_toast("Redirected", "info")
+        .with_toast("Redirected", ToastLevel::Info)
         .into_response();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let cookies = get_cookies(&response);

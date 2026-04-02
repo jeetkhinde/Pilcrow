@@ -6,7 +6,6 @@ description = "gRPC client abstraction for Pilcrow internal/backend service call
 license = "MIT"
 
 [dependencies]
-async-trait = "0.1"
 pilcrow-contracts = { path = "../contracts" }
 thiserror = "1"
 tonic = { version = "0.12", features = ["transport"] }

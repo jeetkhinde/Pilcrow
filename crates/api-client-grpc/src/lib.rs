@@ -1,4 +1,6 @@
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
+
 use pilcrow_contracts::TodoDto;
 use thiserror::Error;
 use tonic::transport::Endpoint;
@@ -16,18 +18,16 @@ pub enum GrpcClientError {
     Status(#[from] tonic::Status),
 }
 
-#[async_trait]
 pub trait TodosGrpcApi: Send + Sync {
-    async fn list_todos(&self) -> Result<Vec<TodoDto>, GrpcClientError>;
+    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnimplementedTodosGrpcClient;
 
-#[async_trait]
 impl TodosGrpcApi for UnimplementedTodosGrpcClient {
-    async fn list_todos(&self) -> Result<Vec<TodoDto>, GrpcClientError> {
-        Err(GrpcClientError::Unavailable)
+    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>> {
+        Box::pin(async { Err(GrpcClientError::Unavailable) })
     }
 }
 
