@@ -13,6 +13,7 @@ readme = "README.md"
 [lib]
 name = "pilcrow_routekit"
 path = "src/lib.rs"
+doctest = false
 
 [dependencies]
 proc-macro2 = "1"

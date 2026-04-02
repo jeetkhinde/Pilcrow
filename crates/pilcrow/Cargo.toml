@@ -37,30 +37,3 @@ crc32fast = "1"
 minifier = "0.3"
 pilcrow-routekit = { path = "../routekit" }
 
-[[example]]
-name = "hello"
-path = "examples/hello.rs"
-
-[[example]]
-name = "content_negotiation"
-path = "examples/content_negotiation.rs"
-
-[[example]]
-name = "toasts_and_headers"
-path = "examples/toasts_and_headers.rs"
-
-[[example]]
-name = "navigation"
-path = "examples/navigation.rs"
-
-[[example]]
-name = "sse_live"
-path = "examples/sse_live.rs"
-
-[[example]]
-name = "websocket"
-path = "examples/websocket.rs"
-
-[[example]]
-name = "full_app"
-path = "examples/full_app.rs"

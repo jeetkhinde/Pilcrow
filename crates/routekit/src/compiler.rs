@@ -66,6 +66,7 @@ pub fn split_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleParse
 /// This performs:
 /// 1. `---` fence splitting
 /// 2. component tag transpilation in the template section
+#[allow(dead_code)]
 pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleParseError> {
     let mut parts = split_html_module(input)?;
     parts.template = transpile_component_tags(&parts.template);

@@ -12,10 +12,32 @@ use serde::{Deserialize, Serialize};
 // 1. Shared State & Modifiers
 // ════════════════════════════════════════════════════════════
 pub type ErrorResponse = Response;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToastLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+impl ToastLevel {
+    /// Parse a string into a ToastLevel, defaulting to Info for unknown values.
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "success" => Self::Success,
+            "warning" | "warn" => Self::Warning,
+            "error" | "danger" => Self::Error,
+            _ => Self::Info,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Toast {
     pub message: String,
-    pub level: String,
+    pub level: ToastLevel,
 }
 
 #[derive(Default)]
@@ -92,10 +114,10 @@ pub trait ResponseExt: Sized {
         self
     }
 
-    fn with_toast(mut self, message: impl Into<String>, level: impl Into<String>) -> Self {
+    fn with_toast(mut self, message: impl Into<String>, level: ToastLevel) -> Self {
         self.base_mut().toasts.push(Toast {
             message: message.into(),
-            level: level.into(),
+            level,
         });
         self
     }

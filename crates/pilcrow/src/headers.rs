@@ -8,7 +8,8 @@ macro_rules! define_string_header {
         pub struct $struct_name(pub String);
 
         impl $struct_name {
-            pub const NAME: &'static str = $header_name;
+            #[allow(dead_code)]
+            pub(crate) const NAME: &'static str = $header_name;
         }
 
         impl Header for $struct_name {

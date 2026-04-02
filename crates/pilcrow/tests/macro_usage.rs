@@ -1,204 +1,102 @@
 // ./crates/pilcrow/tests/macro_usage.rs
 //
 // Compile-time verification of all respond! macro arms.
-// These tests ensure the macro expands correctly and type-checks
-// against the real Responses builder.
+// respond! is JSON-only — no request parameter, no content negotiation.
 
-use axum::{http::StatusCode, response::Response};
-use pilcrow::{SilcrowRequest, html, json, respond, response::ResponseExt};
-
-// ── Helper: simulate a browser HTML request ──────────────────
-fn html_request() -> SilcrowRequest {
-    SilcrowRequest {
-        is_silcrow: false,
-        accepts_html: true,
-        accepts_json: false,
-    }
-}
-
-fn json_request() -> SilcrowRequest {
-    SilcrowRequest {
-        is_silcrow: true,
-        accepts_html: false,
-        accepts_json: true,
-    }
-}
+use axum::http::StatusCode;
+use pilcrow::{Response, ToastLevel, json, respond, response::ResponseExt};
 
 // ════════════════════════════════════════════════════════════
-// Both arms
+// Pre-wrapped JSON
 // ════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn both_arms_html_selected() {
-    let req = html_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
+async fn json_plain() {
+    let response: Result<Response, Response> = respond!(
         json => json(serde_json::json!({"ok": true})),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn both_arms_json_selected() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-        json => json(serde_json::json!({"ok": true})),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-// ════════════════════════════════════════════════════════════
-// Raw JSON
-// ════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn raw_json_auto_wraps() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-        json => raw serde_json::json!({"auto": true}),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-// ════════════════════════════════════════════════════════════
-// Shared toast
-// ════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn shared_toast_applied_to_html() {
-    let req = html_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-        json => json(serde_json::json!({"ok": true})),
-        toast => ("Saved!", "success"),
-    });
-    let res = response.unwrap();
-    let cookies: Vec<_> = res
-        .headers()
-        .get_all(axum::http::header::SET_COOKIE)
-        .iter()
-        .map(|v| v.to_str().unwrap().to_string())
-        .collect();
-    assert!(cookies.iter().any(|c| c.starts_with("silcrow_toasts=")));
-}
-
-#[tokio::test]
-async fn shared_toast_with_raw_json() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-        json => raw serde_json::json!({"ok": true}),
-        toast => ("Saved!", "success"),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-// ════════════════════════════════════════════════════════════
-// Single-arm variants
-// ════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn html_only_returns_406_for_json_request() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::NOT_ACCEPTABLE);
-}
-
-#[tokio::test]
-async fn json_only_returns_406_for_html_request() {
-    let req = html_request();
-    let response: Result<Response, Response> = respond!(req, {
-        json => json(serde_json::json!({"ok": true})),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::NOT_ACCEPTABLE);
-}
-
-#[tokio::test]
-async fn html_only_with_toast() {
-    let req = html_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>"),
-        toast => ("Done", "info"),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn json_only_with_toast() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        json => json(serde_json::json!({"ok": true})),
-        toast => ("Done", "info"),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn raw_json_only_with_toast() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        json => raw serde_json::json!({"ok": true}),
-        toast => ("Done", "info"),
-    });
-    assert_eq!(response.unwrap().status(), StatusCode::OK);
-}
-
-// ════════════════════════════════════════════════════════════
-// Inline modifiers (per-arm toast, chaining)
-// ════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn per_arm_modifiers_chain() {
-    let req = html_request();
-    let response: Result<Response, Response> = respond!(req, {
-        html => html("<h1>Hello</h1>")
-            .with_toast("HTML toast", "info")
-            .no_cache()
-            .retarget("#main"),
-        json => json(serde_json::json!({"ok": true}))
-            .with_toast("JSON toast", "success"),
-    });
-    let res = response.unwrap();
-    assert_eq!(res.headers()["silcrow-retarget"], "#main");
-    assert_eq!(res.headers()["silcrow-cache"], "no-cache");
-}
-
-// ════════════════════════════════════════════════════════════
-// The get_profile example from our discussion
-// ════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn get_profile_example() {
-    // Simulating the handler pattern
-    let req = html_request();
-    let user_name = "Jagjeet";
-    let user_bio = "Rust architect";
-
-    let markup = format!(
-        r#"<div class="profile"><h1>{}</h1><p>{}</p></div>"#,
-        user_name, user_bio
     );
-
-    let response: Result<Response, Response> = respond!(req, {
-        html => html(markup).with_toast("Loaded", "info"),
-        json => json(serde_json::json!({
-            "name": user_name,
-            "bio": user_bio
-        })),
-    });
-
     assert_eq!(response.unwrap().status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn raw_json_only_no_toast() {
-    let req = json_request();
-    let response: Result<Response, Response> = respond!(req, {
-        json => raw serde_json::json!({"bare": true}),
-    });
+async fn json_with_status() {
+    let response: Result<Response, Response> = respond!(
+        json => json(serde_json::json!({"id": 1})),
+        status => StatusCode::CREATED,
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn json_with_toast() {
+    let response: Result<Response, Response> = respond!(
+        json => json(serde_json::json!({"ok": true})),
+        toast => ("Saved!", ToastLevel::Success),
+    );
     assert_eq!(response.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn json_with_status_and_toast() {
+    let response: Result<Response, Response> = respond!(
+        json => json(serde_json::json!({"id": 1})),
+        status => StatusCode::CREATED,
+        toast => ("Created!", ToastLevel::Success),
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::CREATED);
+}
+
+// ════════════════════════════════════════════════════════════
+// Raw JSON (auto-wraps in json())
+// ════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn raw_json_plain() {
+    let response: Result<Response, Response> = respond!(
+        json => raw serde_json::json!({"bare": true}),
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn raw_json_with_status() {
+    let response: Result<Response, Response> = respond!(
+        json => raw serde_json::json!({"id": 1}),
+        status => StatusCode::CREATED,
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn raw_json_with_toast() {
+    let response: Result<Response, Response> = respond!(
+        json => raw serde_json::json!({"ok": true}),
+        toast => ("Done", ToastLevel::Info),
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn raw_json_with_status_and_toast() {
+    let response: Result<Response, Response> = respond!(
+        json => raw serde_json::json!({"id": 1}),
+        status => StatusCode::CREATED,
+        toast => ("Created!", ToastLevel::Success),
+    );
+    assert_eq!(response.unwrap().status(), StatusCode::CREATED);
+}
+
+// ════════════════════════════════════════════════════════════
+// Inline modifiers (chaining on pre-wrapped json)
+// ════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn json_with_chained_modifiers() {
+    let response: Result<Response, Response> = respond!(
+        json => json(serde_json::json!({"ok": true}))
+            .with_toast("Done", ToastLevel::Info)
+            .no_cache(),
+    );
+    let res = response.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
 }

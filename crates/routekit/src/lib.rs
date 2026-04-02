@@ -44,47 +44,37 @@
 // use std::borrow::Cow;
 use std::collections::HashMap;
 
+use path::{PathHierarchy, normalize_path};
+
 // ============================================================================
 // Module Declarations
 // ============================================================================
 
-pub mod codegen;
-pub mod compiler;
+// ── Internal modules (not part of public API) ───────────────
+pub(crate) mod codegen;
+pub(crate) mod compiler;
 mod constraint;
-pub mod discovery;
+pub(crate) mod discovery;
 mod intercept;
 mod layout;
-pub mod path;
-pub mod pipeline;
-pub mod route;
+pub(crate) mod path;
+pub(crate) mod pipeline;
+pub(crate) mod route;
 
-// Re-export public types for backward compatibility
-pub use codegen::{
-    GeneratedPageRoute, GeneratedTemplateEntry, GeneratedTemplatesModule, TemplateCodegenInput,
-    build_generated_page_manifest, render_generated_routes_module,
-    render_generated_templates_module, write_generated_routes_module,
-    write_generated_templates_module,
-};
-pub use compiler::{
-    HtmlModuleParseError, HtmlModuleParts, split_html_module, transpile_component_tags,
-    transpile_html_module,
-};
+// ── Public API ───────────────────────────────────────────────
+// Only what build.rs consumers and generated code actually need.
+pub use codegen::GeneratedPageRoute;
 pub use constraint::ParameterConstraint;
-pub use discovery::{DiscoveredHtmlFiles, build_page_routes, discover_html_files};
 pub use intercept::InterceptLevel;
 pub use layout::LayoutOption;
-pub use path::{PathHierarchy, is_valid_path, normalize_path};
-pub use pipeline::{
-    CompilerOutput, HtmlSourceKind, PreprocessedHtmlFile, compile_to_out_dir,
-    watched_source_directories,
-};
-pub use route::pattern::{PatternSegmentType, classify_segment, parse_param_with_constraint};
+pub use pipeline::{compile_to_out_dir, watched_source_directories};
 
 // ============================================================================
 // Core Types
 // ============================================================================
 
 /// Represents a single route with its pattern, parameters, and metadata
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Route {
     /// URL pattern like "/users/:id"
@@ -142,6 +132,7 @@ pub struct Route {
 }
 
 /// Result of matching a route against a path
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct RouteMatch {
     /// The matched route
