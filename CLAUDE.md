@@ -95,8 +95,8 @@ Pilcrow/
 ### pilcrow (the runtime)
 - Content negotiation (`SilcrowRequest`, `RequestMode`).
 - Response builders (`json()`, `navigate()`, `status()`).
-- `respond!` macro — **JSON arm only**. HTML rendering is done by templates.
-- `ResponseExt` modifiers (toasts, retarget, SSE, WS headers).
+- `ResponseExt` modifiers (toasts, headers, retarget, SSE, WS headers).
+- `json()` + `ResponseExt` chaining replaces the old `respond!()` macro.
 - SSE and WebSocket support.
 - Silcrow.js asset serving.
 
@@ -154,15 +154,8 @@ templates       -/-> contracts (never — Props != DTO)
 These work correctly but expose more surface than necessary.
 Do not add new consumers of these internals. Do not remove them yet.
 
-- `pub mod headers` in pilcrow — should be `pub(crate)`. Users interact via `ResponseExt`.
-- `pub mod macros` in pilcrow — HTML arm of `respond!` is obsolete with templates. Keep JSON arm only.
-- `__respond_ok`, `__respond_with_toast`, etc. — internal macro helpers leaked via `#[macro_export]`.
 - `Route` struct in routekit — 22 `pub` fields. Should be `pub(crate)` with accessor methods.
 - `RouteMatch` clones full `Route`. Should borrow.
-- `pilcrow-web` uses `pub use pilcrow::*`. Should be curated re-exports.
-- `pub use axum` in pilcrow — pins public API to axum's version.
-- `serialize_or_null` — internal helper exposed publicly.
-- `html()` — with templates handling HTML rendering, this should be `pub(crate)`.
 
 ## Phased Improvement Plan
 
@@ -173,23 +166,24 @@ Do not add new consumers of these internals. Do not remove them yet.
 - [x] `async-trait` removed from api-client crates
 - [x] routekit doc header fixed
 
-### Phase 2 — Tighten pilcrow crate
-- [ ] `html()` -> `pub(crate)` (generated code uses it, not users)
-- [ ] Strip `respond!` to JSON-only
-- [ ] Remove leaked internal macros (`__respond_*`)
-- [ ] `pub mod headers` -> `pub(crate) mod headers`
-- [ ] `serialize_or_null` -> `pub(crate)`
-- [ ] `Toast.level` -> enum
+### Phase 2 — Tighten pilcrow crate (DONE)
+- [x] `html()` -> `#[doc(hidden)]` (generated code uses it, not users)
+- [x] `respond!()` macro removed — replaced by `json()` + `ResponseExt` chaining
+- [x] Leaked internal macros (`__respond_*`) removed
+- [x] `pub mod headers` -> `pub(crate) mod headers`
+- [x] `serialize_or_null` -> `pub(crate)`
+- [x] `Toast.level` -> `ToastLevel` enum (Info, Success, Warning, Error)
 
-### Phase 3 — Tighten routekit
+### Phase 3 — Tighten routekit (DONE)
+- [x] All sub-modules -> `pub(crate)` (codegen, compiler, discovery, path, pipeline, route)
+- [x] `#[non_exhaustive]` on `Route` and `RouteMatch`
+- [x] Public API: only `compile_to_out_dir`, `watched_source_directories`, `GeneratedPageRoute`, `ParameterConstraint`, `InterceptLevel`, `LayoutOption`
 - [ ] `Route` fields -> `pub(crate)` with accessors
 - [ ] `RouteMatch` borrows instead of clones
-- [ ] Hide compiler/codegen internals
-- [ ] Public API: only `compile_to_out_dir`, `watched_source_directories`, `GeneratedPageRoute`
 
-### Phase 4 — Curate pilcrow-web facade
-- [ ] Replace `pub use pilcrow::*` with explicit re-exports
-- [ ] Remove `pub use axum` (document axum as peer dependency)
+### Phase 4 — Curate pilcrow-web facade (DONE)
+- [x] Replace `pub use pilcrow::*` with explicit re-exports
+- [x] `pub use axum` -> `#[doc(hidden)]` (axum is peer dependency)
 
 ### Phase 5 — Naming consistency
 - [ ] Rename `Silcrow*` types -> `Pilcrow*`
