@@ -4,7 +4,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 /// The unified Silcrow client runtime, embedded at compile time.
-pub const SILCROW_JS: &str = include_str!("../public/silcrow.js");
+pub const SILCROW_JS: &str = include_str!("../assets/silcrow.js");
 
 pub async fn serve_silcrow_js() -> Response {
     (
@@ -22,7 +22,8 @@ pub async fn serve_silcrow_js() -> Response {
 }
 
 pub fn silcrow_js_path() -> String {
-    format!("/_silcrow/silcrow.{SILCROW_JS}")
+    let hash = crc32fast::hash(SILCROW_JS.as_bytes());
+    format!("/_silcrow/silcrow.{hash:08x}.js")
 }
 pub fn script_tag() -> String {
     format!(r#"<script src="{}" defer></script>"#, silcrow_js_path())

@@ -1,4 +1,6 @@
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
+
 use pilcrow_contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
 use thiserror::Error;
 
@@ -8,10 +10,9 @@ pub enum RestClientError {
     Http(#[from] reqwest::Error),
 }
 
-#[async_trait]
 pub trait TodosApi: Send + Sync {
-    async fn list_todos(&self) -> Result<Vec<TodoDto>, RestClientError>;
-    async fn create_todo(&self, title: String) -> Result<TodoDto, RestClientError>;
+    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>>;
+    fn create_todo(&self, title: String) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>>;
 }
 
 #[derive(Clone)]
@@ -29,30 +30,33 @@ impl RestTodosClient {
     }
 }
 
-#[async_trait]
 impl TodosApi for RestTodosClient {
-    async fn list_todos(&self) -> Result<Vec<TodoDto>, RestClientError> {
-        let response = self
-            .client
-            .get(format!("{}/api/todos", self.base_url))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<ListTodosResponse>()
-            .await?;
-        Ok(response.items)
+    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>> {
+        Box::pin(async {
+            let response = self
+                .client
+                .get(format!("{}/api/todos", self.base_url))
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<ListTodosResponse>()
+                .await?;
+            Ok(response.items)
+        })
     }
 
-    async fn create_todo(&self, title: String) -> Result<TodoDto, RestClientError> {
-        let response = self
-            .client
-            .post(format!("{}/api/todos", self.base_url))
-            .json(&CreateTodoRequest { title })
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<TodoDto>()
-            .await?;
-        Ok(response)
+    fn create_todo(&self, title: String) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>> {
+        Box::pin(async move {
+            let response = self
+                .client
+                .post(format!("{}/api/todos", self.base_url))
+                .json(&CreateTodoRequest { title })
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<TodoDto>()
+                .await?;
+            Ok(response)
+        })
     }
 }

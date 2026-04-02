@@ -1,6 +1,6 @@
-//! # RHTMX Router
+//! # Pilcrow RouteKit
 //!
-//! A zero-dependency file-system-based routing library with support for:
+//! A file-system-based routing and template compiler for Pilcrow with support for:
 //! - Static routes (`/about`)
 //! - Dynamic parameters (`/users/:id`)
 //! - Optional parameters (`/posts/:id?`)
