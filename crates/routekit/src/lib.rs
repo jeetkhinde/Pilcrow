@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::env;
+use std::io;
+use std::path::PathBuf;
 
 use routing::path::{PathHierarchy, normalize_path};
 
@@ -10,6 +13,27 @@ pub use routing::intercept::InterceptLevel;
 pub use templating::codegen::{GeneratedApiRoute, GeneratedPageRoute};
 pub use templating::layout::LayoutOption;
 pub use templating::pipeline::{compile_to_out_dir, watched_source_directories};
+
+pub fn compile_current_crate_sources() -> io::Result<()> {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("CARGO_MANIFEST_DIR must be set: {err}"),
+        )
+    })?);
+    let src_root = manifest_dir.join("src");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|err| {
+        io::Error::new(io::ErrorKind::NotFound, format!("OUT_DIR must be set: {err}"))
+    })?);
+
+    compile_to_out_dir(&src_root, &out_dir)?;
+
+    for dir in watched_source_directories(&src_root) {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
+
+    Ok(())
+}
 
 #[non_exhaustive]
 #[derive(Debug, Clone)]

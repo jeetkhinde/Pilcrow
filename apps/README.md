@@ -11,3 +11,5 @@ cargo run -p pilcrow-backend
 cargo run -p web
 pilcrow-cli check-arch
 ```
+
+Runtime host/port and backend URL are configured in [`sandbox/Pilcrow.toml`](../sandbox/Pilcrow.toml).

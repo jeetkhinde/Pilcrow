@@ -25,7 +25,9 @@ use axum::{
 };
 use backend_client::{RestTodosClient, TodosApi};
 use contracts::TodoDto;
-use pilcrow_web::{ResponseExt, SilcrowEvent, StatusCode, ToastLevel, navigate, sse_stream};
+use pilcrow_web::{
+    PilcrowConfig, ResponseExt, SilcrowEvent, StatusCode, ToastLevel, navigate, sse_stream,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,8 +49,9 @@ struct CounterPayload {
 
 #[tokio::main]
 async fn main() {
-    let backend_base_url =
-        std::env::var("PILCROW_BACKEND_URL").unwrap_or_else(|_| "http://127.0.0.1:4000".into());
+    let config = PilcrowConfig::load_from_current_dir().expect("load Pilcrow.toml");
+    let backend_base_url = config.web.backend_url.clone();
+    let bind_addr = config.web_bind_addr();
 
     let state = AppState {
         todos_api: Arc::new(RestTodosClient::new(backend_base_url)),
@@ -76,10 +79,10 @@ async fn main() {
         .merge(api_router)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .expect("bind web server");
-    println!("web listening on http://127.0.0.1:3000");
+    println!("web listening on http://{bind_addr}");
     axum::serve(listener, app).await.expect("serve web");
 }
 

@@ -33,4 +33,6 @@ pub use runtime::{
 pub use runtime::assets;
 
 // ── Domain primitives (from pilcrow-core) ────────────────────
-pub use pilcrow_core::{ApiEnvelope, AppError, AppResult, Meta};
+pub use pilcrow_core::{
+    ApiEnvelope, AppError, AppResult, BackendConfig, Meta, PilcrowConfig, WebConfig,
+};

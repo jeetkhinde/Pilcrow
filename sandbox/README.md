@@ -18,6 +18,28 @@ cargo run -p pilcrow-backend
 cargo run -p web
 ```
 
+## Configuration
+
+Sandbox runtime config lives in `Pilcrow.toml`:
+
+```toml
+[web]
+host = "127.0.0.1"
+port = 3000
+backend_url = "http://127.0.0.1:4000"
+
+[backend]
+host = "127.0.0.1"
+port = 4000
+```
+
+Environment variables override file values:
+- `PILCROW_WEB_HOST`
+- `PILCROW_WEB_PORT`
+- `PILCROW_BACKEND_URL`
+- `PILCROW_BACKEND_HOST`
+- `PILCROW_BACKEND_PORT`
+
 ## Convention Guard
 
 ```bash

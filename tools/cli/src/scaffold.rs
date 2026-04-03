@@ -37,6 +37,19 @@ resolver = "2"
     )?;
 
     fs::write(
+        root.join("Pilcrow.toml"),
+        r#"[web]
+host = "127.0.0.1"
+port = 3000
+backend_url = "http://127.0.0.1:4000"
+
+[backend]
+host = "127.0.0.1"
+port = 4000
+"#,
+    )?;
+
+    fs::write(
         root.join("apps/web/Cargo.toml"),
         r#"[package]
 name = "web"

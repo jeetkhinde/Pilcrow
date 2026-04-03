@@ -29,9 +29,18 @@ sandbox/
 ## Mandatory Rendering Path
 
 1. Define UI in file-based templates under web (`pages/components/layouts`) with explicit component/layout imports in frontmatter.
-2. Compile templates with `pilcrow-routekit` in `build.rs`.
+2. Compile templates with `pilcrow-routekit` in `build.rs` via `routekit::compile_current_crate_sources()`.
 3. Use generated Rust render functions in web handlers.
 4. Web handlers call backend via API clients.
+
+## Runtime Config
+
+Use a workspace `Pilcrow.toml` for bind host/port and backend URL. Apps can override via:
+- `PILCROW_WEB_HOST`
+- `PILCROW_WEB_PORT`
+- `PILCROW_BACKEND_URL`
+- `PILCROW_BACKEND_HOST`
+- `PILCROW_BACKEND_PORT`
 
 ## Source of Truth
 

@@ -34,6 +34,11 @@ This file is the source of truth for how Pilcrow apps are built.
 - Browser direct calls to backend are not part of the default convention.
 - Backend returns JSON APIs to web.
 
+## Runtime Configuration
+
+- Workspace runtime config should be defined in `Pilcrow.toml`.
+- Environment variables may override config values for local/dev deployments.
+
 ## Enforcement
 
 ```bash
