@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "apps/web",
+    "apps/backend",
+    "crates/contracts",
+    "crates/api-client-rest",
+    "crates/api-client-grpc",
+    "tools/cli",
+]
+resolver = "2"

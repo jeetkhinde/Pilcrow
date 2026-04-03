@@ -12,20 +12,22 @@ Pilcrow has one mandatory app architecture.
 ## Workspace Shape
 
 ```text
-apps/
-  web/
-  backend/
 crates/
   pilcrow-core/
   pilcrow-web/
-  contracts/
-  api-client-rest/
-  api-client-grpc/
   pilcrow/
   routekit/
   pilcrow-macros/
 tools/
   pilcrow-cli/
+sandbox/
+  apps/
+    web/
+    backend/
+  crates/
+    contracts/
+    api-client-rest/
+    api-client-grpc/
 ```
 
 ## Mandatory Rendering Path
@@ -38,10 +40,11 @@ tools/
 ## Source of Truth
 
 - [CONVENTION.md](CONVENTION.md)
-- [apps/README.md](apps/README.md)
+- [sandbox/README.md](sandbox/README.md)
 
 ## Validate Convention
 
 ```bash
+cd sandbox
 cargo run -p pilcrow-cli -- check-arch
 ```

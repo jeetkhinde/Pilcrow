@@ -1,15 +1,10 @@
 [workspace]
 members = [
-    "crates/pilcrow",
+    "crates/runtime",
     "crates/routekit",
-    "crates/pilcrow-macros",
-    "apps/web",
-    "apps/backend",
-    "crates/pilcrow-core",
-    "crates/pilcrow-web",
-    "crates/contracts",
-    "crates/api-client-rest",
-    "crates/api-client-grpc",
-    "tools/pilcrow-cli",
+    "crates/macros",
+    "crates/core",
+    "crates/web",
 ]
+exclude = ["tools/cli", "sandbox"]
 resolver = "2"

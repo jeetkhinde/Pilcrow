@@ -1,238 +1,73 @@
-//! # Pilcrow RouteKit
-//!
-//! A file-system-based routing and template compiler for Pilcrow with support for:
-//! - Static routes (`/about`)
-//! - Dynamic parameters (`/users/:id`)
-//! - Optional parameters (`/posts/:id?`)
-//! - Catch-all routes (`/docs/*slug`)
-//! - Nested layouts and error pages
-//!
-//! ## Functional Programming Approach
-//!
-//! This router uses functional programming techniques for optimal performance:
-//! - **Zero-copy optimization** with `Cow<'_, str>` (no allocation for valid paths)
-//! - **Lazy evaluation** with custom `PathHierarchy` iterator
-//! - **Functional composition** with `find_map()`
-//!
-//! ## Path Normalization
-//!
-//! Handles all common user mistakes gracefully:
-//! - Trailing slashes: `/path/` → `/path`
-//! - Double slashes: `/path//to` → `/path/to`
-//! - Backslashes: `\path\to` → `/path/to`
-//! - Windows paths: `\path\to` → `/path/to`
-//!
-//! ## Performance
-//!
-//! - Valid paths: ~115ns (zero allocations via `Cow::Borrowed`)
-//! - Invalid paths: ~310ns (single allocation for normalization)
-//! - Lazy iteration stops on first match (short-circuit evaluation)
-//!
-//! ## Example
-//!
-//! ```
-//! use pilcrow_routekit::{Router, Route};
-//!
-//! let mut router = Router::new();
-//! router.add_route(Route::from_path("pages/about.html", "pages"));
-//! router.add_route(Route::from_path("pages/users/[id].html", "pages"));
-//!
-//! let route_match = router.match_route("/users/123").unwrap();
-//! assert_eq!(route_match.params.get("id"), Some(&"123".to_string()));
-//! ```
-
-// use std::borrow::Cow;
 use std::collections::HashMap;
 
-use path::{PathHierarchy, normalize_path};
+use routing::path::{PathHierarchy, normalize_path};
 
-// ============================================================================
-// Module Declarations
-// ============================================================================
+pub mod routing;
+pub mod templating;
 
-// ── Internal modules (not part of public API) ───────────────
-pub(crate) mod codegen;
-pub(crate) mod compiler;
-mod constraint;
-pub(crate) mod discovery;
-mod intercept;
-mod layout;
-pub(crate) mod path;
-pub(crate) mod pipeline;
-pub(crate) mod route;
+pub use routing::constraint::ParameterConstraint;
+pub use routing::intercept::InterceptLevel;
+pub use templating::codegen::{GeneratedApiRoute, GeneratedPageRoute};
+pub use templating::layout::LayoutOption;
+pub use templating::pipeline::{compile_to_out_dir, watched_source_directories};
 
-// ── Public API ───────────────────────────────────────────────
-// Only what build.rs consumers and generated code actually need.
-pub use codegen::GeneratedPageRoute;
-pub use constraint::ParameterConstraint;
-pub use intercept::InterceptLevel;
-pub use layout::LayoutOption;
-pub use pipeline::{compile_to_out_dir, watched_source_directories};
-
-// ============================================================================
-// Core Types
-// ============================================================================
-
-/// Represents a single route with its pattern, parameters, and metadata
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Route {
-    /// URL pattern like "/users/:id"
     pub(crate) pattern: String,
-    /// File path to the template
     pub(crate) template_path: String,
-    /// List of parameter names
     pub(crate) params: Vec<String>,
-    /// Priority for matching (lower = higher priority)
     pub(crate) priority: usize,
-    /// Whether this is a layout route
     pub(crate) is_layout: bool,
     #[allow(dead_code)]
-    /// Whether this route has a catch-all parameter
     pub(crate) has_catch_all: bool,
     #[allow(dead_code)]
-    /// List of optional parameter names
     pub(crate) optional_params: Vec<String>,
-    /// Whether this is an error page
     pub(crate) is_error_page: bool,
-    /// Whether this is a no-layout marker
     pub(crate) is_nolayout_marker: bool,
-    /// Whether this is a loading UI file
     pub(crate) is_loading: bool,
-    /// Whether this is a template file
     pub(crate) is_template: bool,
-    /// Whether this is a not-found page
     pub(crate) is_not_found: bool,
-    /// Whether this is a parallel route
     pub(crate) is_parallel_route: bool,
-    /// Slot name for parallel routes, e.g., "analytics" from @analytics
     pub(crate) parallel_slot: Option<String>,
-    /// Whether this is an intercepting route
     pub(crate) is_intercepting: bool,
     #[allow(dead_code)]
-    /// Interception level for intercepting routes
     pub(crate) intercept_level: Option<InterceptLevel>,
     #[allow(dead_code)]
-    /// Original pattern before interception
     pub(crate) intercept_target: Option<String>,
-    /// Layout resolution strategy
     pub(crate) layout_option: LayoutOption,
-    /// Name of this layout (if it's a named layout)
     pub(crate) layout_name: Option<String>,
-    /// Arbitrary metadata for the route (titles, permissions, cache settings, etc.)
     pub(crate) metadata: HashMap<String, String>,
-    /// Parameter constraints for validation (param_name → constraint)
     pub(crate) param_constraints: HashMap<String, ParameterConstraint>,
-    /// Alternative URL patterns that map to this route (for legacy URLs, i18n, etc.)
     pub(crate) aliases: Vec<String>,
-    /// Optional name for this route (for URL generation and type-safe references)
     pub(crate) name: Option<String>,
-    /// Whether this is a redirect route
     pub(crate) is_redirect: bool,
-    /// Target URL for redirect routes
     pub(crate) redirect_to: Option<String>,
-    /// HTTP status code for redirects (301, 302, 307, 308)
     pub(crate) redirect_status: Option<u16>,
 }
 
-/// Result of matching a route against a path
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct RouteMatch<'a> {
-    /// The matched route (borrowed from the Router)
     pub(crate) route: &'a Route,
-    /// Extracted parameters from the path
     pub params: HashMap<String, String>,
 }
 
 impl<'a> RouteMatch<'a> {
-    /// Checks if this match is a redirect route
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::redirect("/old-page", "/new-page", 301));
-    ///
-    /// let route_match = router.match_route("/old-page").unwrap();
-    /// assert!(route_match.is_redirect());
-    /// ```
     pub fn is_redirect(&self) -> bool {
         self.route.is_redirect
     }
 
-    /// Gets the redirect target URL with parameters substituted
-    ///
-    /// Returns None if this is not a redirect route.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::redirect("/blog/:slug", "/articles/:slug", 301));
-    ///
-    /// let route_match = router.match_route("/blog/hello-world").unwrap();
-    /// let target = route_match.redirect_target().unwrap();
-    /// assert_eq!(target, "/articles/hello-world");
-    /// ```
     pub fn redirect_target(&self) -> Option<String> {
         self.route.redirect_target(&self.params)
     }
 
-    /// Gets the HTTP status code for this redirect
-    ///
-    /// Returns None if this is not a redirect route.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::redirect("/temp", "/new-location", 302));
-    ///
-    /// let route_match = router.match_route("/temp").unwrap();
-    /// assert_eq!(route_match.redirect_status(), Some(302));
-    /// ```
     pub fn redirect_status(&self) -> Option<u16> {
         self.route.redirect_status
     }
 }
 
-// Pattern parsing types and functions now in route::pattern module
-
-// ============================================================================
-// Route Implementation
-// ============================================================================
-
 impl Route {
-    /// Creates a route from a file system path
-    ///
-    /// Converts file paths like `pages/users/[id].html` into route patterns like `/users/:id`
-    ///
-    /// Detects layout options from file naming conventions:
-    /// - `_nolayout` marker file → LayoutOption::None
-    /// - `_layout.root.rhtml` → LayoutOption::Root (named "root")
-    /// - `_layout.admin.rhtml` → Named layout "admin"
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - Full path to the template file
-    /// * `pages_dir` - Base directory to strip from the path
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/users/[id].html", "pages");
-    /// assert_eq!(route.pattern, "/users/:id");
-    /// assert_eq!(route.params, vec!["id"]);
-    /// ```
     pub fn from_path(file_path: &str, pages_dir: &str) -> Self {
         let relative = file_path
             .strip_prefix(pages_dir)
@@ -244,10 +79,8 @@ impl Route {
             .or_else(|| relative.strip_suffix(".html"))
             .unwrap_or(relative);
 
-        // Extract filename to check for special files
         let filename = without_ext.split('/').next_back().unwrap_or("");
 
-        // Check if it's a layout file (either _layout or _layout.name)
         let is_layout = filename == "_layout" || filename.starts_with("_layout.");
         let is_error_page = filename == "_error";
         let is_nolayout_marker = filename == "_nolayout";
@@ -255,24 +88,27 @@ impl Route {
         let is_template = filename == "_template";
         let is_not_found = filename == "not-found";
 
-        let (is_parallel_route, parallel_slot) = route::detect_parallel_route(without_ext);
+        let (is_parallel_route, parallel_slot) = routing::route::detect_parallel_route(without_ext);
 
         let (is_intercepting, intercept_level, intercept_target) =
-            route::detect_intercepting_route(without_ext);
+            routing::route::detect_intercepting_route(without_ext);
 
-        // Detect named layouts: _layout.name.(rhtml|html)
         let layout_name = if is_layout {
-            route::extract_layout_name(filename)
+            routing::route::extract_layout_name(filename)
         } else {
             None
         };
 
         let (pattern, params, optional_params, dynamic_count, has_catch_all, param_constraints) =
-            route::parse_pattern(without_ext);
+            routing::route::parse_pattern(without_ext);
 
         let depth = pattern.matches('/').count();
-        let priority =
-            route::calculate_priority(has_catch_all, dynamic_count, depth, &optional_params);
+        let priority = routing::route::calculate_priority(
+            has_catch_all,
+            dynamic_count,
+            depth,
+            &optional_params,
+        );
 
         Route {
             pattern,
@@ -304,26 +140,15 @@ impl Route {
         }
     }
 
-    // Helper functions now in route module (detection.rs and parser.rs)
-
-    /// Matches this route against a path (case-sensitive)
     pub fn matches(&self, path: &str) -> Option<HashMap<String, String>> {
         self.matches_with_options(path, false)
     }
 
-    /// Matches this route against a path with options
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - URL path to match
-    /// * `case_insensitive` - Whether to perform case-insensitive matching
     pub fn matches_with_options(
         &self,
         path: &str,
         case_insensitive: bool,
     ) -> Option<HashMap<String, String>> {
-        // For redirect routes with no parameters, do exact string matching
-        // This allows matching trailing slashes for canonical URL redirects
         if self.is_redirect && self.params.is_empty() {
             let matches = if case_insensitive {
                 self.pattern.eq_ignore_ascii_case(path)
@@ -345,7 +170,6 @@ impl Route {
             let pattern_seg = pattern_segments[pattern_idx];
 
             match pattern_seg.chars().next() {
-                // Catch-all segment: *slug or *slug? (optional)
                 Some('*') => {
                     let is_optional = pattern_seg.ends_with('?');
                     let param_name = if is_optional {
@@ -354,19 +178,15 @@ impl Route {
                         &pattern_seg[1..]
                     };
 
-                    // Check if we have remaining path segments
                     let remaining: Vec<&str> = path_segments[path_idx..].to_vec();
 
-                    // For required catch-all, need at least one segment
                     if remaining.is_empty() && !is_optional {
                         return None;
                     }
 
-                    // For optional catch-all, allow zero segments
                     params.insert(param_name.to_string(), remaining.join("/"));
                     return Some(params);
                 }
-                // Optional parameter: :id?
                 Some(':') if pattern_seg.ends_with('?') => {
                     let param_name = &pattern_seg[1..pattern_seg.len() - 1];
 
@@ -397,7 +217,6 @@ impl Route {
                     }
                     pattern_idx += 1;
                 }
-                // Required parameter: :id
                 Some(':') => {
                     if path_idx >= path_segments.len() {
                         return None;
@@ -407,7 +226,6 @@ impl Route {
                     path_idx += 1;
                     pattern_idx += 1;
                 }
-                // Static segment
                 _ => {
                     if path_idx >= path_segments.len() {
                         return None;
@@ -430,7 +248,6 @@ impl Route {
         }
 
         if path_idx == path_segments.len() {
-            // Validate all parameters against constraints (functional validation)
             let all_valid = params.iter().all(|(param_name, param_value)| {
                 self.param_constraints
                     .get(param_name)
@@ -448,16 +265,6 @@ impl Route {
         }
     }
 
-    /// Returns the parent pattern for layout lookup
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/users/profile.rhtml", "pages");
-    /// assert_eq!(route.layout_pattern(), Some("/users".to_string()));
-    /// ```
     pub fn layout_pattern(&self) -> Option<String> {
         if let Some(last_slash) = self.pattern.rfind('/') {
             if last_slash == 0 {
@@ -470,208 +277,50 @@ impl Route {
         }
     }
 
-    // ========================================================================
-    // Functional Builder Methods
-    // ========================================================================
-    //
-    // These methods follow functional programming principles:
-    // - Consume self and return new instance (move semantics)
-    // - Composable via method chaining
-    // - Immutable transformations
-    // - Type-safe configuration
-
-    /// Sets the layout option for this route
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Route, LayoutOption};
-    ///
-    /// let route = Route::from_path("pages/print.rhtml", "pages")
-    ///     .with_layout_option(LayoutOption::None);
-    /// ```
     pub fn with_layout_option(mut self, option: LayoutOption) -> Self {
         self.layout_option = option;
         self
     }
 
-    /// Configures route to use no layout (standalone rendering)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/login.rhtml", "pages")
-    ///     .with_no_layout();
-    /// ```
     pub fn with_no_layout(self) -> Self {
         self.with_layout_option(LayoutOption::None)
     }
 
-    /// Configures route to use root layout only (skip intermediate)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/dashboard/print.rhtml", "pages")
-    ///     .with_root_layout();
-    /// ```
     pub fn with_root_layout(self) -> Self {
         self.with_layout_option(LayoutOption::Root)
     }
 
-    /// Configures route to use a named layout
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/dashboard/settings.rhtml", "pages")
-    ///     .with_named_layout("admin");
-    /// ```
     pub fn with_named_layout(self, name: impl Into<String>) -> Self {
         self.with_layout_option(LayoutOption::Named(name.into()))
     }
 
-    /// Configures route to use layout at specific pattern
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/dashboard/admin/users.rhtml", "pages")
-    ///     .with_layout_pattern("/dashboard");
-    /// ```
     pub fn with_layout_pattern(self, pattern: impl Into<String>) -> Self {
         self.with_layout_option(LayoutOption::Pattern(pattern.into()))
     }
 
-    // ========================================================================
-    // Metadata Builder Methods (Phase 2.2)
-    // ========================================================================
-    //
-    // Functional metadata manipulation following builder pattern:
-    // - Chainable methods
-    // - Type-safe keys via Into<String>
-    // - Pure functional transformations
-
-    /// Sets a metadata key-value pair
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/users/[id].rhtml", "pages")
-    ///     .with_meta("title", "User Profile")
-    ///     .with_meta("permission", "users.read");
-    /// ```
     pub fn with_meta(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
         self
     }
 
-    /// Sets multiple metadata entries at once (functional batch update)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    /// use std::collections::HashMap;
-    ///
-    /// let mut meta = HashMap::new();
-    /// meta.insert("title".to_string(), "Admin Dashboard".to_string());
-    /// meta.insert("permission".to_string(), "admin.read".to_string());
-    ///
-    /// let route = Route::from_path("pages/admin/dashboard.rhtml", "pages")
-    ///     .with_metadata(meta);
-    /// ```
     pub fn with_metadata(mut self, metadata: HashMap<String, String>) -> Self {
         self.metadata.extend(metadata);
         self
     }
 
-    /// Gets a metadata value by key (functional accessor)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/users/[id].rhtml", "pages")
-    ///     .with_meta("title", "User Profile");
-    ///
-    /// assert_eq!(route.get_meta("title"), Some(&"User Profile".to_string()));
-    /// assert_eq!(route.get_meta("missing"), None);
-    /// ```
     pub fn get_meta(&self, key: &str) -> Option<&String> {
         self.metadata.get(key)
     }
 
-    /// Checks if metadata key exists (functional predicate)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/admin/users.rhtml", "pages")
-    ///     .with_meta("permission", "admin.read");
-    ///
-    /// assert!(route.has_meta("permission"));
-    /// assert!(!route.has_meta("title"));
-    /// ```
     pub fn has_meta(&self, key: &str) -> bool {
         self.metadata.contains_key(key)
     }
 
-    // ========================================================================
-    // Route Alias Builder Methods (Phase 3.1)
-    // ========================================================================
-    //
-    // Functional methods for managing route aliases:
-    // - Immutable transformations via builder pattern
-    // - Composable via method chaining
-    // - Support for legacy URLs, i18n, URL variations
-
-    /// Adds a single alias to this route
-    ///
-    /// Aliases allow multiple URL patterns to map to the same route handler.
-    /// Useful for legacy URL support, internationalization, and URL variations.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/about.rhtml", "pages")
-    ///     .with_alias("/about-us")
-    ///     .with_alias("/company");
-    ///
-    /// assert_eq!(route.aliases, vec!["/about-us", "/company"]);
-    /// ```
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.aliases.push(alias.into());
         self
     }
 
-    /// Adds multiple aliases at once (functional batch operation)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/about.rhtml", "pages")
-    ///     .with_aliases(["/about-us", "/company", "/über"]);
-    ///
-    /// assert_eq!(route.aliases.len(), 3);
-    /// ```
     pub fn with_aliases<I, S>(mut self, aliases: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -681,34 +330,12 @@ impl Route {
         self
     }
 
-    /// Checks if a path matches this route or any of its aliases (functional predicate)
-    ///
-    /// Uses functional iteration to check primary pattern and all aliases.
-    /// Returns true if any pattern matches (short-circuit evaluation).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/about.rhtml", "pages")
-    ///     .with_aliases(["/about-us", "/company"]);
-    ///
-    /// assert!(route.matches_any("/about").is_some());
-    /// assert!(route.matches_any("/about-us").is_some());
-    /// assert!(route.matches_any("/company").is_some());
-    /// assert!(route.matches_any("/other").is_none());
-    /// ```
     pub fn matches_any(&self, path: &str) -> Option<HashMap<String, String>> {
-        // First try the primary pattern
         if let Some(params) = self.matches(path) {
             return Some(params);
         }
 
-        // Then try all aliases (functional iteration with short-circuit)
         self.aliases.iter().find_map(|alias_pattern| {
-            // For aliases, we need to parse them as if they were routes
-            // For now, static aliases only (no parameters in aliases)
             if self.matches_static_alias(path, alias_pattern) {
                 Some(HashMap::new())
             } else {
@@ -717,9 +344,7 @@ impl Route {
         })
     }
 
-    /// Helper to match static alias patterns (functional helper)
     pub fn matches_static_alias(&self, path: &str, alias: &str) -> bool {
-        // Normalize both paths for comparison
         let normalized_path = path.trim_end_matches('/');
         let normalized_alias = alias.trim_end_matches('/');
 
@@ -730,90 +355,34 @@ impl Route {
         normalized_path == normalized_alias
     }
 
-    // ========================================================================
-    // Named Route Builder Methods (Phase 3.2)
-    // ========================================================================
-    //
-    // Functional methods for route naming and URL generation:
-    // - Type-safe route references
-    // - URL generation from parameters
-    // - Route refactoring support (change pattern, keep name)
-
-    /// Sets a name for this route (for URL generation and type-safe references)
-    ///
-    /// Named routes enable URL generation and provide stable references
-    /// even when route patterns change.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// let route = Route::from_path("pages/users/[id].rhtml", "pages")
-    ///     .with_name("user.profile");
-    ///
-    /// assert_eq!(route.name, Some("user.profile".to_string()));
-    /// ```
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Generates a URL for this route by substituting parameters
-    ///
-    /// Uses functional programming to transform pattern into URL:
-    /// - Maps over pattern segments
-    /// - Substitutes parameters where found
-    /// - Validates all required parameters are provided
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    /// use std::collections::HashMap;
-    ///
-    /// let route = Route::from_path("pages/users/[id].rhtml", "pages");
-    ///
-    /// let mut params = HashMap::new();
-    /// params.insert("id".to_string(), "123".to_string());
-    ///
-    /// let url = route.generate_url(&params).unwrap();
-    /// assert_eq!(url, "/users/123");
-    /// ```
     pub fn generate_url(&self, params: &HashMap<String, String>) -> Option<String> {
-        // Split pattern into segments
         let segments: Vec<&str> = self.pattern.split('/').filter(|s| !s.is_empty()).collect();
 
-        // Transform each segment using functional map
         let result_segments: Option<Vec<String>> = segments
             .iter()
-            .map(|segment| {
-                match segment.chars().next() {
-                    // Dynamic parameter: :id or :id?
-                    Some(':') => {
-                        let param_name = segment.trim_start_matches(':').trim_end_matches('?');
+            .map(|segment| match segment.chars().next() {
+                Some(':') => {
+                    let param_name = segment.trim_start_matches(':').trim_end_matches('?');
 
-                        // Optional parameter
-                        if segment.ends_with('?') {
-                            // Optional - use param if provided, otherwise skip
-                            Some(params.get(param_name).cloned().unwrap_or_default())
-                        } else {
-                            // Required - must be present
-                            params.get(param_name).cloned()
-                        }
-                    }
-                    // Catch-all parameter: *slug
-                    Some('*') => {
-                        let param_name = &segment[1..];
+                    if segment.ends_with('?') {
+                        Some(params.get(param_name).cloned().unwrap_or_default())
+                    } else {
                         params.get(param_name).cloned()
                     }
-                    // Static segment
-                    _ => Some(segment.to_string()),
                 }
+                Some('*') => {
+                    let param_name = &segment[1..];
+                    params.get(param_name).cloned()
+                }
+                _ => Some(segment.to_string()),
             })
             .collect(); // Collect into Option<Vec<String>>
 
-        // If any required parameter was missing, result_segments will be None
         result_segments.map(|segs| {
             let filtered: Vec<String> = segs.into_iter().filter(|s| !s.is_empty()).collect();
 
@@ -825,42 +394,6 @@ impl Route {
         })
     }
 
-    // ========================================================================
-    // Redirect Route Methods (Phase 3.3)
-    // ========================================================================
-    //
-    // Functional methods for creating and managing redirect routes:
-    // - Static redirects for legacy URLs
-    // - Pattern-based redirects with parameter preservation
-    // - HTTP status code specification (301, 302, 307, 308)
-
-    /// Creates a redirect route (functional static constructor)
-    ///
-    /// Redirects are useful for:
-    /// - Legacy URL support (/old-url → /new-url)
-    /// - Canonical URL enforcement (/page/ → /page)
-    /// - Shortlinks (/blog → /articles)
-    ///
-    /// # Arguments
-    ///
-    /// * `from_pattern` - Source URL pattern to match
-    /// * `to_url` - Target URL to redirect to
-    /// * `status` - HTTP status code (301 = permanent, 302 = temporary, 307/308 = preserve method)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    ///
-    /// // Permanent redirect
-    /// let route = Route::redirect("/old-page", "/new-page", 301);
-    /// assert!(route.is_redirect);
-    /// assert_eq!(route.redirect_to, Some("/new-page".to_string()));
-    ///
-    /// // Temporary redirect
-    /// let route = Route::redirect("/maintenance", "/status", 302);
-    /// assert_eq!(route.redirect_status, Some(302));
-    /// ```
     pub fn redirect(
         from_pattern: impl Into<String>,
         to_url: impl Into<String>,
@@ -869,13 +402,9 @@ impl Route {
         let from = from_pattern.into();
         let target = to_url.into();
 
-        // Check if pattern has parameters (using :param or [param] syntax)
         let has_params = from.contains('[') || from.contains(':');
 
-        // For redirects, we support both :param and [param] syntax
-        // Convert :param to [param] for parsing
         let normalized_from = if from.contains(':') && !from.contains('[') {
-            // Convert :param to [param] syntax for parsing
             let mut result = String::new();
             let segments: Vec<&str> = from.split('/').collect();
             for (i, segment) in segments.iter().enumerate() {
@@ -883,7 +412,6 @@ impl Route {
                     result.push('/');
                 }
                 if let Some(param) = segment.strip_prefix(':') {
-                    // Convert :param to [param]
                     result.push('[');
                     result.push_str(param);
                     result.push(']');
@@ -898,9 +426,8 @@ impl Route {
 
         let (pattern, params, optional_params, dynamic_count, has_catch_all, param_constraints) =
             if has_params {
-                route::parse_pattern(&normalized_from)
+                routing::route::parse_pattern(&normalized_from)
             } else {
-                // Static redirect - use pattern as-is, ensuring it starts with /
                 let normalized = if from.starts_with('/') {
                     from.clone()
                 } else {
@@ -910,8 +437,12 @@ impl Route {
             };
 
         let depth = pattern.matches('/').count();
-        let priority =
-            route::calculate_priority(has_catch_all, dynamic_count, depth, &optional_params);
+        let priority = routing::route::calculate_priority(
+            has_catch_all,
+            dynamic_count,
+            depth,
+            &optional_params,
+        );
 
         Route {
             pattern,
@@ -943,25 +474,6 @@ impl Route {
         }
     }
 
-    /// Generates the redirect target URL with parameter substitution
-    ///
-    /// For dynamic redirects, substitutes matched parameters into target URL.
-    /// Uses functional map/replace pattern.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Route;
-    /// use std::collections::HashMap;
-    ///
-    /// let route = Route::redirect("/blog/:slug", "/articles/:slug", 301);
-    ///
-    /// let mut params = HashMap::new();
-    /// params.insert("slug".to_string(), "hello-world".to_string());
-    ///
-    /// let target = route.redirect_target(&params).unwrap();
-    /// assert_eq!(target, "/articles/hello-world");
-    /// ```
     pub fn redirect_target(&self, params: &HashMap<String, String>) -> Option<String> {
         if !self.is_redirect {
             return None;
@@ -969,12 +481,10 @@ impl Route {
 
         let target = self.redirect_to.as_ref()?;
 
-        // If no parameters, return target as-is
         if params.is_empty() {
             return Some(target.clone());
         }
 
-        // Functional parameter substitution
         let mut result = target.clone();
         for (param_name, param_value) in params {
             let placeholder = format!(":{}", param_name);
@@ -985,30 +495,6 @@ impl Route {
     }
 }
 
-// ============================================================================
-// Path Utilities - Functional Approach
-// ============================================================================
-
-// Path utilities now in path module
-
-// ============================================================================
-// Router Implementation
-// ============================================================================
-
-/// Main router that manages route collections and performs matching
-///
-/// The router maintains separate collections using functional principles:
-/// - Regular routes for page rendering (Vec for priority ordering)
-/// - Layout routes for nested layouts (HashMap for O(1) lookup)
-/// - Named layouts for explicit layout selection (HashMap by name)
-/// - Named routes for URL generation (HashMap for O(1) lookup)
-/// - Error page routes for error handling (HashMap for O(1) lookup)
-/// - Loading UI routes for loading states (HashMap for O(1) lookup) - Phase 4.3
-/// - Template routes for re-mounting layouts (HashMap for O(1) lookup) - Phase 4.4
-/// - Not-found routes for 404 pages (HashMap for O(1) lookup) - Phase 4.5
-/// - Parallel routes for simultaneous rendering (nested HashMap: pattern -> slot -> Route) - Phase 5.1
-/// - Intercepting routes for modal/overlay patterns (HashMap for O(1) lookup) - Phase 5.2
-/// - No-layout markers for directories that should render without layouts
 #[derive(Clone)]
 pub struct Router {
     routes: Vec<Route>,
@@ -1026,7 +512,6 @@ pub struct Router {
 }
 
 impl Router {
-    /// Creates a new router with default settings (case-sensitive)
     pub fn new() -> Self {
         Self {
             routes: Vec::new(),
@@ -1044,15 +529,6 @@ impl Router {
         }
     }
 
-    /// Creates a router with case-insensitive matching
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::Router;
-    ///
-    /// let router = Router::with_case_insensitive(true);
-    /// ```
     pub fn with_case_insensitive(case_insensitive: bool) -> Self {
         Self {
             routes: Vec::new(),
@@ -1070,34 +546,11 @@ impl Router {
         }
     }
 
-    /// Configures case sensitivity for route matching
     pub fn set_case_insensitive(&mut self, case_insensitive: bool) {
         self.case_insensitive = case_insensitive;
     }
 
-    /// Adds a route to the router
-    ///
-    /// Routes are automatically sorted by priority after addition.
-    /// Layout and error page routes are stored in separate collections.
-    /// Named layouts are stored both by pattern and by name for O(1) lookup.
-    /// Named routes are stored for URL generation (Phase 3.2).
-    ///
-    /// # Functional Design
-    /// - Uses pattern matching for classification
-    /// - Automatic organization into appropriate collections
-    /// - Named layouts stored in dual indexes for flexible lookup
-    /// - Named routes indexed by name for URL generation
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/about.rhtml", "pages"));
-    /// ```
     pub fn add_route(&mut self, route: Route) {
-        // Handle nolayout markers first
         if route.is_nolayout_marker {
             self.nolayout_patterns.insert(route.pattern.clone());
             return;
@@ -1107,12 +560,9 @@ impl Router {
             self.named_routes.insert(name.clone(), route.clone());
         }
 
-        // Classify route into appropriate collection
         if route.is_layout {
-            // Store in layouts by pattern
             self.layouts.insert(route.pattern.clone(), route.clone());
 
-            // Also store in named_layouts if it has a name
             if let Some(ref name) = route.layout_name {
                 self.named_layouts.insert(name.clone(), route);
             }
@@ -1135,18 +585,12 @@ impl Router {
             self.intercepting_routes
                 .insert(route.pattern.clone(), route);
         } else {
-            // Regular route
             self.routes.push(route);
             self.routes.sort_by_key(|r| r.priority);
         }
     }
 
-    /// Removes a route by its pattern
-    ///
-    /// Removes the route from all collections (routes, layouts, named_layouts, named_routes,
-    /// error_pages, loading_pages, templates, not_found_pages, parallel_routes, intercepting_routes)
     pub fn remove_route(&mut self, pattern: &str) {
-        // Remove from routes and also from named_routes if it has a name
         if let Some(pos) = self.routes.iter().position(|r| r.pattern == pattern) {
             let route = &self.routes[pos];
             if let Some(name) = &route.name {
@@ -1155,7 +599,6 @@ impl Router {
             self.routes.remove(pos);
         }
 
-        // Remove from layouts and also from named_layouts if it has a name
         if let Some(layout) = self.layouts.remove(pattern)
             && let Some(name) = &layout.layout_name
         {
@@ -1170,66 +613,26 @@ impl Router {
         self.intercepting_routes.remove(pattern);
     }
 
-    /// Manually sorts routes by priority
-    ///
-    /// Note: Routes are automatically sorted when added via `add_route()`,
-    /// so this method is rarely needed unless routes are modified externally.
     pub fn sort_routes(&mut self) {
         self.routes.sort_by_key(|r| r.priority);
     }
 
-    /// Helper function to recursively search for layouts or error pages
-    ///
-    /// Uses functional programming approach:
-    /// 1. Zero-copy normalization with `Cow` (no allocation for valid paths)
-    /// 2. Lazy iterator for parent traversal (stops on first match)
-    /// 3. Functional composition with `find_map()`
-    ///
-    /// Handles all user mistakes:
-    /// - Trailing slashes, double slashes, backslashes, Windows paths
-    ///
-    /// # Performance
-    /// - Valid path: ~115ns (zero allocations)
-    /// - Invalid path: ~310ns (single allocation for normalization)
     fn get_scoped_resource<'a>(
         &'a self,
         pattern: &str,
         map: &'a HashMap<String, Route>,
     ) -> Option<&'a Route> {
-        // Normalize path using zero-copy Cow when possible
         let normalized = normalize_path(pattern);
 
-        // Generate parent paths lazily and find first match
         PathHierarchy::new(&normalized).find_map(|path| map.get(path))
     }
 
-    /// Matches a path against all routes and returns the first match
-    ///
-    /// Routes are checked in priority order (static > optional > dynamic > catch-all).
-    /// Also checks route aliases for matching (Phase 3.1).
-    ///
-    /// Uses functional iteration with short-circuit evaluation - stops at first match.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/users/[id].rhtml", "pages"));
-    ///
-    /// let route_match = router.match_route("/users/123").unwrap();
-    /// assert_eq!(route_match.params.get("id"), Some(&"123".to_string()));
-    /// ```
     pub fn match_route(&self, path: &str) -> Option<RouteMatch<'_>> {
-        // Functional iteration with short-circuit on first match
         self.routes.iter().find_map(|route| {
-            // Try primary pattern first
             if let Some(params) = route.matches_with_options(path, self.case_insensitive) {
                 return Some(RouteMatch { route, params });
             }
 
-            // Then try aliases (functional iteration)
             route.aliases.iter().find_map(|alias| {
                 if route.matches_static_alias(path, alias) {
                     Some(RouteMatch {
@@ -1243,114 +646,28 @@ impl Router {
         })
     }
 
-    /// Finds the appropriate layout for a given route pattern
-    ///
-    /// Uses a functional programming approach for optimal performance:
-    /// 1. Zero-copy normalization (no allocation for valid paths)
-    /// 2. Lazy parent traversal (stops on first match)
-    /// 3. Handles malformed input gracefully
-    ///
-    /// Walks up the directory hierarchy to find the nearest layout.
-    /// For `/dashboard/admin/settings`, checks in order:
-    /// 1. `/dashboard/admin/settings`
-    /// 2. `/dashboard/admin`
-    /// 3. `/dashboard`
-    /// 4. `/`
-    ///
-    /// **Handles user mistakes:**
-    /// - Trailing slashes: `/path/` → `/path`
-    /// - Double slashes: `/path//to` → `/path/to`
-    /// - Backslashes: `\path\to` → `/path/to`
-    /// - Windows paths: `\path\to` → `/path/to`
-    ///
-    /// # Performance
-    /// - Valid path: ~115ns (zero allocations)
-    /// - Invalid path: ~310ns (single allocation)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/_layout.rhtml", "pages"));
-    /// router.add_route(Route::from_path("pages/dashboard/_layout.rhtml", "pages"));
-    ///
-    /// // Works with any path format
-    /// let layout = router.get_layout("/dashboard/settings").unwrap();
-    /// assert_eq!(layout.pattern, "/dashboard");
-    ///
-    /// // Handles malformed paths
-    /// let layout = router.get_layout("/dashboard//settings/").unwrap();
-    /// assert_eq!(layout.pattern, "/dashboard");
-    /// ```
     pub fn get_layout(&self, pattern: &str) -> Option<&Route> {
         self.get_scoped_resource(pattern, &self.layouts)
     }
 
-    /// Finds layout for a route match, respecting the route's layout option
-    ///
-    /// Uses functional pattern matching to resolve layouts based on preferences:
-    /// - `Inherit` → Walk up hierarchy (default behavior)
-    /// - `None` → No layout
-    /// - `Root` → Use root layout only
-    /// - `Named(name)` → Find layout with matching name
-    /// - `Pattern(pat)` → Use layout at specific pattern
-    ///
-    /// # Functional Design
-    /// - Pattern matching for control flow
-    /// - Composition of functional helpers
-    /// - Short-circuit evaluation
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/_layout.rhtml", "pages"));
-    /// router.add_route(Route::from_path("pages/dashboard/_layout.rhtml", "pages"));
-    ///
-    /// // Use root layout, skip dashboard
-    /// let route = Route::from_path("pages/dashboard/print.rhtml", "pages")
-    ///     .with_root_layout();
-    /// router.add_route(route.clone());
-    ///
-    /// let route_match = router.match_route("/dashboard/print").unwrap();
-    /// let layout = router.get_layout_for_match(&route_match).unwrap();
-    /// assert_eq!(layout.pattern, "/");
-    /// ```
     pub fn get_layout_for_match(&self, route_match: &RouteMatch<'_>) -> Option<&Route> {
         self.get_layout_with_option(&route_match.route.pattern, &route_match.route.layout_option)
     }
 
-    /// Finds layout with specific option (functional core logic)
-    ///
-    /// Pure function that maps LayoutOption → Option<&Route>
-    ///
-    /// Uses pattern matching and HashMap lookups for O(1) performance.
-    /// Checks nolayout markers when using Inherit option.
     pub fn get_layout_with_option(&self, pattern: &str, option: &LayoutOption) -> Option<&Route> {
-        // Functional pattern matching for layout resolution
         match option {
-            // No layout - early return (short-circuit)
             LayoutOption::None => None,
 
-            // Root layout only - direct lookup at "/"
             LayoutOption::Root => self.layouts.get("/"),
 
-            // Named layout - O(1) lookup in named_layouts HashMap
             LayoutOption::Named(name) => self.named_layouts.get(name),
 
-            // Specific pattern - direct lookup with normalization
             LayoutOption::Pattern(pat) => {
                 let normalized = normalize_path(pat);
                 self.layouts.get(normalized.as_ref())
             }
 
-            // Inherit - check nolayout markers first, then walk up hierarchy
             LayoutOption::Inherit => {
-                // Check if this path is under a nolayout marker
                 if self.is_under_nolayout_marker(pattern) {
                     return None;
                 }
@@ -1359,293 +676,85 @@ impl Router {
         }
     }
 
-    /// Checks if a path is under a nolayout marker (functional helper)
-    ///
-    /// Uses functional iteration over hierarchy to find nolayout markers
     pub fn is_under_nolayout_marker(&self, pattern: &str) -> bool {
         let normalized = normalize_path(pattern);
 
-        // Walk up hierarchy and check if any parent has a nolayout marker
         PathHierarchy::new(&normalized).any(|path| self.nolayout_patterns.contains(path))
     }
 
-    /// Finds layout by name (O(1) HashMap lookup)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/_layout.admin.rhtml", "pages"));
-    ///
-    /// let layout = router.get_layout_by_name("admin").unwrap();
-    /// assert_eq!(layout.layout_name, Some("admin".to_string()));
-    /// ```
     pub fn get_layout_by_name(&self, name: &str) -> Option<&Route> {
         self.named_layouts.get(name)
     }
 
-    /// Returns all registered routes (excluding layouts and error pages)
     pub fn routes(&self) -> &[Route] {
         &self.routes
     }
 
-    /// Returns all registered layout routes
     pub fn layouts(&self) -> &HashMap<String, Route> {
         &self.layouts
     }
 
-    /// Finds the appropriate error page for a given route pattern
-    ///
-    /// Works the same as `get_layout()` but for error pages.
-    /// Uses functional programming for optimal performance and
-    /// handles malformed paths gracefully.
-    ///
-    /// Walks up the directory hierarchy to find the nearest error page.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/_error.rhtml", "pages"));
-    /// router.add_route(Route::from_path("pages/api/_error.rhtml", "pages"));
-    ///
-    /// // Works with clean paths
-    /// let error_page = router.get_error_page("/api/users").unwrap();
-    /// assert_eq!(error_page.pattern, "/api");
-    ///
-    /// // Handles malformed paths
-    /// let error_page = router.get_error_page("/api//users/").unwrap();
-    /// assert_eq!(error_page.pattern, "/api");
-    /// ```
     pub fn get_error_page(&self, pattern: &str) -> Option<&Route> {
         self.get_scoped_resource(pattern, &self.error_pages)
     }
 
-    /// Returns all registered error page routes
     pub fn error_pages(&self) -> &HashMap<String, Route> {
         &self.error_pages
     }
 
-    // ========================================================================
-    // Loading UI, Template, and Not-Found Page Accessors (Phase 4.3-4.5)
-    // ========================================================================
-
-    /// Gets a loading UI page for a given pattern (with hierarchy)
-    ///
-    /// Similar to get_error_page, searches up the path hierarchy.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/dashboard/loading.rhtml", "pages"));
-    ///
-    /// let loading = router.get_loading_page("/dashboard/users").unwrap();
-    /// assert_eq!(loading.pattern, "/dashboard");
-    /// ```
     pub fn get_loading_page(&self, pattern: &str) -> Option<&Route> {
         self.get_scoped_resource(pattern, &self.loading_pages)
     }
 
-    /// Returns all registered loading UI routes
     pub fn loading_pages(&self) -> &HashMap<String, Route> {
         &self.loading_pages
     }
 
-    /// Gets a template for a given pattern (with hierarchy)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/_template.rhtml", "pages"));
-    ///
-    /// let template = router.get_template("/about").unwrap();
-    /// assert_eq!(template.pattern, "/");
-    /// ```
     pub fn get_template(&self, pattern: &str) -> Option<&Route> {
         self.get_scoped_resource(pattern, &self.templates)
     }
 
-    /// Returns all registered template routes
     pub fn templates(&self) -> &HashMap<String, Route> {
         &self.templates
     }
 
-    /// Gets a not-found page for a given pattern (with hierarchy)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/api/not-found.rhtml", "pages"));
-    ///
-    /// let not_found = router.get_not_found_page("/api/unknown").unwrap();
-    /// assert_eq!(not_found.pattern, "/api");
-    /// ```
     pub fn get_not_found_page(&self, pattern: &str) -> Option<&Route> {
         self.get_scoped_resource(pattern, &self.not_found_pages)
     }
 
-    /// Returns all registered not-found routes
     pub fn not_found_pages(&self) -> &HashMap<String, Route> {
         &self.not_found_pages
     }
 
-    // ========================================================================
-    // Parallel Routes and Intercepting Routes Accessors (Phase 5.1-5.2)
-    // ========================================================================
-
-    /// Gets all parallel routes for a given pattern (Phase 5.1)
-    ///
-    /// Returns a HashMap of slot names to routes.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/dashboard/@analytics/page.rhtml", "pages"));
-    /// router.add_route(Route::from_path("pages/dashboard/@team/page.rhtml", "pages"));
-    ///
-    /// let slots = router.get_parallel_routes("/dashboard/page").unwrap();
-    /// assert_eq!(slots.len(), 2);
-    /// assert!(slots.contains_key("analytics"));
-    /// assert!(slots.contains_key("team"));
-    /// ```
     pub fn get_parallel_routes(&self, pattern: &str) -> Option<&HashMap<String, Route>> {
         self.parallel_routes.get(pattern)
     }
 
-    /// Returns all registered parallel routes (pattern -> slot -> route)
     pub fn parallel_routes(&self) -> &HashMap<String, HashMap<String, Route>> {
         &self.parallel_routes
     }
 
-    /// Gets a specific parallel route by pattern and slot name (Phase 5.1)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/dashboard/@analytics/page.rhtml", "pages"));
-    ///
-    /// let route = router.get_parallel_route("/dashboard/page", "analytics").unwrap();
-    /// assert_eq!(route.parallel_slot, Some("analytics".to_string()));
-    /// ```
     pub fn get_parallel_route(&self, pattern: &str, slot: &str) -> Option<&Route> {
         self.parallel_routes
             .get(pattern)
             .and_then(|slots| slots.get(slot))
     }
 
-    /// Gets an intercepting route for a given pattern (Phase 5.2)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    /// router.add_route(Route::from_path("pages/feed/(.)photo/[id].rhtml", "pages"));
-    ///
-    /// let route = router.get_intercepting_route("/feed/photo/:id");
-    /// // Intercepts /photo/[id] when navigating from /feed
-    /// ```
     pub fn get_intercepting_route(&self, pattern: &str) -> Option<&Route> {
         self.intercepting_routes.get(pattern)
     }
 
-    /// Returns all registered intercepting routes
     pub fn intercepting_routes(&self) -> &HashMap<String, Route> {
         &self.intercepting_routes
     }
 
-    // ========================================================================
-    // Named Route URL Generation (Phase 3.2)
-    // ========================================================================
-
-    /// Generates a URL from a named route and parameters
-    ///
-    /// Uses functional programming for URL generation:
-    /// - O(1) route lookup by name (HashMap)
-    /// - Functional parameter substitution
-    /// - Type-safe URL generation
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the route
-    /// * `params` - Parameter values to substitute into the URL
-    ///
-    /// # Returns
-    ///
-    /// `Some(url)` if the route exists and all required parameters are provided,
-    /// `None` if the route doesn't exist or required parameters are missing
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    /// use std::collections::HashMap;
-    ///
-    /// let mut router = Router::new();
-    ///
-    /// router.add_route(
-    ///     Route::from_path("pages/users/[id].rhtml", "pages")
-    ///         .with_name("user.profile")
-    /// );
-    ///
-    /// let mut params = HashMap::new();
-    /// params.insert("id".to_string(), "123".to_string());
-    ///
-    /// let url = router.url_for("user.profile", &params).unwrap();
-    /// assert_eq!(url, "/users/123");
-    /// ```
     pub fn url_for(&self, name: &str, params: &HashMap<String, String>) -> Option<String> {
-        // O(1) lookup of named route
         self.named_routes
             .get(name)
             .and_then(|route| route.generate_url(params))
     }
 
-    /// Convenience method for generating URLs with an array of parameter tuples
-    ///
-    /// Functional alternative to manually constructing HashMap.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    ///
-    /// router.add_route(
-    ///     Route::from_path("pages/posts/[year]/[slug].rhtml", "pages")
-    ///         .with_name("post.show")
-    /// );
-    ///
-    /// let url = router.url_for_params("post.show", &[
-    ///     ("year", "2024"),
-    ///     ("slug", "hello-world")
-    /// ]).unwrap();
-    ///
-    /// assert_eq!(url, "/posts/2024/hello-world");
-    /// ```
     pub fn url_for_params(&self, name: &str, params: &[(&str, &str)]) -> Option<String> {
-        // Functional transformation: array of tuples → HashMap
         let param_map: HashMap<String, String> = params
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -1654,23 +763,6 @@ impl Router {
         self.url_for(name, &param_map)
     }
 
-    /// Gets a route by its name (O(1) HashMap lookup)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pilcrow_routekit::{Router, Route};
-    ///
-    /// let mut router = Router::new();
-    ///
-    /// router.add_route(
-    ///     Route::from_path("pages/about.rhtml", "pages")
-    ///         .with_name("about")
-    /// );
-    ///
-    /// let route = router.get_route_by_name("about").unwrap();
-    /// assert_eq!(route.pattern, "/about");
-    /// ```
     pub fn get_route_by_name(&self, name: &str) -> Option<&Route> {
         self.named_routes.get(name)
     }

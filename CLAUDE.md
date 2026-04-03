@@ -34,7 +34,7 @@ Browser --> apps/web/api/     --> (optional) backend --> JSON response
 | Concept | Where it lives | Purpose | Serialized? |
 |---------|---------------|---------|-------------|
 | **Props** | Inside the `.html` template file | What the template needs to render | Never |
-| **DTO** | `crates/contracts/` | What crosses the network between web and backend | Always |
+| **DTO** | `sandbox/crates/contracts/` | What crosses the network between web and backend | Always |
 
 - Templates never import from contracts.
 - The web handler maps DTO -> Props. That is its only job.
@@ -72,12 +72,14 @@ Pilcrow/
     pilcrow-web/          # Curated facade for web app developers
     pilcrow-macros/       # Proc macros (sse)
     routekit/             # File-based route + template compiler
-    contracts/            # Shared wire-format DTOs (Serialize + Deserialize)
-    api-client-rest/      # Typed REST client (web -> backend)
-    api-client-grpc/      # gRPC client (web -> backend)
-  apps/
-    web/                  # BFF + SSR (pages, api, components, layouts)
-    backend/              # Domain logic, services, DB, auth, REST/gRPC APIs
+  sandbox/
+    crates/
+      contracts/          # Shared wire-format DTOs (Serialize + Deserialize)
+      api-client-rest/    # Typed REST client (web -> backend)
+      api-client-grpc/    # gRPC client (web -> backend)
+    apps/
+      web/                # BFF + SSR (pages, api, components, layouts)
+      backend/            # Domain logic, services, DB, auth, REST APIs
   tools/
     pilcrow-cli/          # Scaffolding + architecture validation
 ```
@@ -109,12 +111,12 @@ Pilcrow/
 - This is what `apps/backend` depends on.
 - No web/UI/template imports allowed.
 
-### contracts (wire types)
+### contracts (wire types, in sandbox)
 - `TodoDto`, `CreateTodoRequest`, `ListTodosResponse`, etc.
 - Always `#[derive(Serialize, Deserialize)]`.
 - Shared between web and backend. No business logic.
 
-### api-client-rest / api-client-grpc
+### api-client-rest / api-client-grpc (in sandbox)
 - Typed clients that web uses to call backend.
 - Traits use `Pin<Box<dyn Future>>` for dyn-compatibility.
 - No `async-trait` crate. Edition 2024 handles async natively.

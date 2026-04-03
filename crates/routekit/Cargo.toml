@@ -11,7 +11,7 @@ categories = ["web-programming"]
 readme = "README.md"
 
 [lib]
-name = "pilcrow_routekit"
+name = "routekit"
 path = "src/lib.rs"
 doctest = false
 

@@ -37,6 +37,7 @@ This file is the source of truth for how Pilcrow apps are built.
 ## Enforcement
 
 ```bash
+cd sandbox
 cargo run -p pilcrow-cli -- check-arch
 ```
 

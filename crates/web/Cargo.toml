@@ -1,0 +1,10 @@
+[package]
+name = "pilcrow-web"
+version = "0.1.0"
+edition = "2024"
+description = "Web/SSR integration layer for Pilcrow applications"
+license = "MIT"
+
+[dependencies]
+pilcrow-core = { package = "core", path = "../core" }
+pilcrow = { path = "../runtime" }

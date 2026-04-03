@@ -1,0 +1,46 @@
+---
+#[derive(Debug, Clone)]
+pub struct TodoView {
+    pub id: i64,
+    pub title: String,
+    pub done: bool,
+}
+
+pub struct Props {
+    pub title: String,
+    pub todos: Vec<TodoView>,
+    pub sse_path: String,
+}
+---
+<MainLayout title={title.clone()}>
+  <h1>{{ title }}</h1>
+  <p>Canonical Pilcrow sandbox: browser -> web (BFF) -> backend -> web -> browser.</p>
+
+  <form action="/todos" method="post">
+    <input name="title" placeholder="New todo" required />
+    <button type="submit">Create</button>
+  </form>
+
+  <p>Live counter: <strong id="live-counter">0</strong></p>
+  <p><StatusBadge text="SSE stream active" /></p>
+
+  <ul id="todo-list">
+    {% for item in todos %}
+    <li data-id="{{ item.id }}">{% if item.done %}[x]{% else %}[ ]{% endif %} {{ item.title }}</li>
+    {% endfor %}
+  </ul>
+
+  <script>
+    (function () {
+      var source = new EventSource("{{ sse_path }}");
+      source.addEventListener("patch", function (event) {
+        var payload = JSON.parse(event.data);
+        var target = document.querySelector(payload.target);
+        if (!target) return;
+        if (!payload.data) return;
+        if (payload.data.count === undefined) return;
+        target.textContent = String(payload.data.count);
+      });
+    })();
+  </script>
+</MainLayout>
