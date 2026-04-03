@@ -3,6 +3,9 @@ name = "web"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+pilcrow-routekit = { path = "../../crates/routekit" }
+
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -1,3 +1,11 @@
+mod api {
+    pub mod todos;
+}
+
+mod generated_api {
+    include!(concat!(env!("OUT_DIR"), "/generated_api_routes.rs"));
+}
+
 use askama::Template;
 use axum::{
     Form, Router,
@@ -54,9 +62,15 @@ async fn main() {
         todos_api: Arc::new(RestTodosClient::new(backend_base_url)),
     };
 
+    let api_router = generated_api::register_generated_api_routes(
+        Router::new(),
+        |router, route| router.nest(route.pattern, api::todos::router()),
+    );
+
     let app = Router::new()
         .route("/", get(index))
         .route("/todos", post(create_todo))
+        .merge(api_router)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")

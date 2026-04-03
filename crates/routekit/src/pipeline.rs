@@ -4,8 +4,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::codegen::{
-    GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
-    write_generated_routes_module, write_generated_templates_module,
+    GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
+    write_generated_api_routes_module, write_generated_routes_module,
+    write_generated_templates_module,
 };
 use crate::compiler::{split_html_module, transpile_component_tags};
 use crate::discovery::{DiscoveredHtmlFiles, discover_html_files};
@@ -35,6 +36,8 @@ pub struct CompilerOutput {
     pub generated_routes: Vec<GeneratedPageRoute>,
     pub generated_templates_file: PathBuf,
     pub generated_templates: Vec<GeneratedTemplateEntry>,
+    pub generated_api_routes_file: PathBuf,
+    pub generated_api_routes: Vec<GeneratedApiRoute>,
 }
 
 /// Full compile pipeline for Pilcrow `.html` sources.
@@ -103,22 +106,29 @@ pub fn compile_to_out_dir(
     let generated_templates =
         write_generated_templates_module(&template_codegen_inputs, &generated_templates_file)?;
 
+    let generated_api_routes_file = out_dir.join("generated_api_routes.rs");
+    let generated_api_routes =
+        write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
+
     Ok(CompilerOutput {
         preprocessed_files: files,
         generated_routes_file,
         generated_routes,
         generated_templates_file,
         generated_templates,
+        generated_api_routes_file,
+        generated_api_routes,
     })
 }
 
 /// Canonical directories that should trigger rebuilds in Cargo build scripts.
-pub fn watched_source_directories(src_root: impl AsRef<Path>) -> [PathBuf; 3] {
+pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     let src_root = src_root.as_ref();
-    [
+    vec![
         src_root.join("pages"),
         src_root.join("components"),
         src_root.join("layouts"),
+        src_root.join("api"),
     ]
 }
 

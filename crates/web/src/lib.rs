@@ -25,7 +25,8 @@ pub use runtime::{WsEvent, WsRoute, WsStream};
 
 // ── Generated routes ─────────────────────────────────────────
 pub use runtime::{
-    GeneratedPageRoute, generated_routes, pilcrow_router, register_generated_routes,
+    GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,
+    register_generated_api_routes, register_generated_routes,
 };
 
 // ── Assets ───────────────────────────────────────────────────

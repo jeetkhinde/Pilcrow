@@ -12,7 +12,7 @@ pub(crate) mod path;
 pub(crate) mod pipeline;
 pub(crate) mod route;
 
-pub use codegen::GeneratedPageRoute;
+pub use codegen::{GeneratedApiRoute, GeneratedPageRoute};
 pub use constraint::ParameterConstraint;
 pub use intercept::InterceptLevel;
 pub use layout::LayoutOption;
