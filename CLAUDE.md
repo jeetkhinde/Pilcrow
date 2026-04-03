@@ -80,7 +80,6 @@ Pilcrow/
     backend/              # Domain logic, services, DB, auth, REST/gRPC APIs
   tools/
     pilcrow-cli/          # Scaffolding + architecture validation
-  sandbox/                # Demo app — uses Pilcrow like an external crate
 ```
 
 ## Framework Crate Responsibilities
@@ -132,7 +131,7 @@ templates       -/-> contracts (never — Props != DTO)
 
 ## Sandbox
 
-- Lives at `sandbox/`. Uses Pilcrow like an external consumer.
+- Will live at `sandbox/` when created. Uses Pilcrow like an external consumer.
 - Demonstrates the full canonical flow: build.rs, templates, routing, BFF.
 - NOT part of the framework. NOT shipped. Exists only to prove the framework works.
 - Any demo app belongs here, not in `apps/`.
@@ -151,11 +150,7 @@ templates       -/-> contracts (never — Props != DTO)
 
 ## Known Overexposed APIs (to be tightened in future phase)
 
-These work correctly but expose more surface than necessary.
-Do not add new consumers of these internals. Do not remove them yet.
-
-- `Route` struct in routekit — 22 `pub` fields. Should be `pub(crate)` with accessor methods.
-- `RouteMatch` clones full `Route`. Should borrow.
+None currently. All known issues were resolved in Phases 1–4.
 
 ## Phased Improvement Plan
 
@@ -178,8 +173,8 @@ Do not add new consumers of these internals. Do not remove them yet.
 - [x] All sub-modules -> `pub(crate)` (codegen, compiler, discovery, path, pipeline, route)
 - [x] `#[non_exhaustive]` on `Route` and `RouteMatch`
 - [x] Public API: only `compile_to_out_dir`, `watched_source_directories`, `GeneratedPageRoute`, `ParameterConstraint`, `InterceptLevel`, `LayoutOption`
-- [ ] `Route` fields -> `pub(crate)` with accessors
-- [ ] `RouteMatch` borrows instead of clones
+- [x] `Route` fields -> `pub(crate)` (all 27 fields; no external consumers exist)
+- [x] `RouteMatch` borrows `&'a Route` instead of cloning; `match_route` returns `Option<RouteMatch<'_>>`
 
 ### Phase 4 — Curate pilcrow-web facade (DONE)
 - [x] Replace `pub use pilcrow::*` with explicit re-exports
