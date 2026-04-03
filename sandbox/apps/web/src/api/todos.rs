@@ -5,8 +5,7 @@ use pilcrow_web::StatusCode;
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(list_todos).post(create_todo))
+    Router::new().route("/", get(list_todos).post(create_todo))
 }
 
 async fn list_todos(State(state): State<AppState>) -> Result<Json<ListTodosResponse>, StatusCode> {

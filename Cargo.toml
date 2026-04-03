@@ -3,13 +3,8 @@ members = [
     "crates/runtime",
     "crates/routekit",
     "crates/macros",
-    "apps/web",
-    "apps/backend",
     "crates/core",
     "crates/web",
-    "crates/contracts",
-    "crates/api-client-rest",
-    "crates/api-client-grpc",
-    "tools/cli",
 ]
+exclude = ["tools/cli", "sandbox"]
 resolver = "2"

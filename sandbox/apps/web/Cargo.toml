@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [build-dependencies]
-pilcrow-routekit = { path = "../../crates/routekit" }
+pilcrow-routekit = { path = "../../../crates/routekit" }
 
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 askama = "0.12"
 serde = { version = "1", features = ["derive"] }
-pilcrow-web = { path = "../../crates/web" }
+pilcrow-web = { path = "../../../crates/web" }
 pilcrow-contracts = { path = "../../crates/contracts" }
 pilcrow-api-client-rest = { path = "../../crates/api-client-rest" }

@@ -7,9 +7,5 @@ edition = "2024"
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
-tonic = { version = "0.12", features = ["transport"] }
-tonic-health = "0.12"
-pilcrow-core = { package = "core", path = "../../crates/core" }
+pilcrow-core = { package = "core", path = "../../../crates/core" }
 pilcrow-contracts = { path = "../../crates/contracts" }
