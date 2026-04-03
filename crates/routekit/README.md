@@ -33,6 +33,16 @@ pub struct Props {
 - Allowed import roots: `components/...` and `layouts/...`.
 - Missing imports are compile errors.
 
+## Common Failure (Missing Import)
+
+If a template uses a PascalCase tag without import, routekit fails with an actionable message, for example:
+
+```text
+Pilcrow template compile error
+  file: pages/index.html
+  error: missing explicit import for component `<StatusBadge>` at template line 25, column 6. Add `import StatusBadge from "components/StatusBadge.html";` in frontmatter.
+```
+
 ## Required Web Build Integration
 
 ```rust

@@ -271,6 +271,69 @@ fn normalize_path_text(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+fn src_relative_display_path(path: &Path) -> String {
+    let normalized = normalize_path_text(path);
+    if let Some((_, tail)) = normalized.split_once("/src/") {
+        return tail.to_string();
+    }
+    if let Some(tail) = normalized.strip_prefix("src/") {
+        return tail.to_string();
+    }
+    normalized
+}
+
+fn template_compile_error(source_path: &Path, message: impl Into<String>) -> io::Error {
+    let file = src_relative_display_path(source_path);
+    let message = message.into();
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("file: {file}\nerror: {message}"),
+    )
+}
+
+fn line_col_at(text: &str, byte_idx: usize) -> (usize, usize) {
+    let mut line = 1usize;
+    let mut col = 1usize;
+
+    for (idx, ch) in text.char_indices() {
+        if idx >= byte_idx {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+
+    (line, col)
+}
+
+fn suggested_import_paths(
+    alias: &str,
+    modules: &HashMap<PathBuf, HtmlModuleSource>,
+) -> Vec<String> {
+    let mut paths = modules
+        .values()
+        .filter_map(|module| {
+            let stem = module.source_path.file_stem().and_then(|s| s.to_str())?;
+            if stem != alias {
+                return None;
+            }
+            let rel = src_relative_display_path(&module.source_path);
+            if rel.starts_with("components/") || rel.starts_with("layouts/") {
+                Some(rel)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 fn strip_frontmatter_imports(
     rust_frontmatter: &str,
     src_root: &Path,
@@ -284,23 +347,17 @@ fn strip_frontmatter_imports(
         if trimmed.starts_with("import ") {
             let (alias, import_path) = parse_import_statement(trimmed, source_path)?;
             if !is_pascal_case_name(&alias) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "invalid import alias `{alias}` in {}; expected PascalCase alias",
-                        source_path.display()
-                    ),
+                return Err(template_compile_error(
+                    source_path,
+                    format!("invalid import alias `{alias}`; expected PascalCase alias"),
                 ));
             }
 
             let resolved = resolve_import_path(src_root, source_path, &import_path)?;
             if imports.insert(alias.clone(), resolved).is_some() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "duplicate import alias `{alias}` in {}",
-                        source_path.display()
-                    ),
+                return Err(template_compile_error(
+                    source_path,
+                    format!("duplicate import alias `{alias}`"),
                 ));
             }
             continue;
@@ -314,44 +371,26 @@ fn strip_frontmatter_imports(
 
 fn parse_import_statement(line: &str, source_path: &Path) -> io::Result<(String, String)> {
     if !line.ends_with(';') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: `{line}` (expected trailing `;`)",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import syntax `{line}` (expected trailing `;`)"),
         ));
     }
 
     let no_semicolon = line[..line.len() - 1].trim_end();
     let rest = no_semicolon.strip_prefix("import ").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: `{line}`",
-                source_path.display()
-            ),
-        )
+        template_compile_error(source_path, format!("invalid import syntax `{line}`"))
     })?;
 
     let (alias_raw, from_raw) = rest.split_once(" from ").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: `{line}`",
-                source_path.display()
-            ),
-        )
+        template_compile_error(source_path, format!("invalid import syntax `{line}`"))
     })?;
 
     let alias = alias_raw.trim().to_string();
     if alias.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: missing alias in `{line}`",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import syntax `{line}` (missing alias)"),
         ));
     }
 
@@ -361,12 +400,9 @@ fn parse_import_statement(line: &str, source_path: &Path) -> io::Result<(String,
 
 fn parse_quoted_literal(value: &str, source_path: &Path, line: &str) -> io::Result<String> {
     if value.len() < 2 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: `{line}` (expected quoted path)",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import syntax `{line}` (expected quoted path)"),
         ));
     }
 
@@ -374,12 +410,9 @@ fn parse_quoted_literal(value: &str, source_path: &Path, line: &str) -> io::Resu
     let quote = bytes[0];
     let valid_quote = quote == b'"' || quote == b'\'';
     if !valid_quote || bytes[value.len() - 1] != quote {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import syntax in {}: `{line}` (expected quoted path)",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import syntax `{line}` (expected quoted path)"),
         ));
     }
 
@@ -393,29 +426,22 @@ fn resolve_import_path(
 ) -> io::Result<PathBuf> {
     let normalized = import_path.replace('\\', "/");
     if normalized.is_empty() || normalized.starts_with('/') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import path `{normalized}` in {}; expected src-root relative path",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import path `{normalized}`; expected src-root relative path"),
         ));
     }
     if !normalized.ends_with(".html") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import path `{normalized}` in {}; expected `.html` import",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import path `{normalized}`; expected `.html` import"),
         ));
     }
     if !(normalized.starts_with("components/") || normalized.starts_with("layouts/")) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
+        return Err(template_compile_error(
+            source_path,
             format!(
-                "invalid import path `{normalized}` in {}; only `components/...` and `layouts/...` are allowed",
-                source_path.display()
+                "invalid import path `{normalized}`; only `components/...` and `layouts/...` are allowed"
             ),
         ));
     }
@@ -427,23 +453,17 @@ fn resolve_import_path(
             Component::ParentDir | Component::CurDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "invalid import path `{normalized}` in {}; relative traversal is not allowed",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("invalid import path `{normalized}`; relative traversal is not allowed"),
         ));
     }
 
     let absolute = src_root.join(rel_path);
     if !absolute.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "import path `{normalized}` in {} was not found on disk",
-                source_path.display()
-            ),
+        return Err(template_compile_error(
+            source_path,
+            format!("import path `{normalized}` was not found on disk"),
         ));
     }
 
@@ -459,22 +479,16 @@ fn expand_known_components(
 ) -> io::Result<String> {
     const MAX_DEPTH: usize = 64;
     if depth >= MAX_DEPTH {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "component expansion exceeded max depth ({MAX_DEPTH}) while processing {}",
-                owner_path.display()
-            ),
+        return Err(template_compile_error(
+            owner_path,
+            format!("component expansion exceeded max depth ({MAX_DEPTH})"),
         ));
     }
 
     let owner_module = modules.get(owner_path).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "template source {} was not registered in module graph",
-                owner_path.display()
-            ),
+        template_compile_error(
+            owner_path,
+            "template source was not registered in module graph",
         )
     })?;
 
@@ -490,25 +504,40 @@ fn expand_known_components(
             && let Some(invocation) = parse_component_invocation(&template[i..])
         {
             let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "template {} uses `<{}>` without explicit import; add `import {} from \"components/...\";` or `import {} from \"layouts/...\";` in frontmatter",
-                        owner_path.display(),
-                        invocation.name,
-                        invocation.name,
-                        invocation.name
-                    ),
-                )
+                let (line, col) = line_col_at(template, i);
+                let mut msg = format!(
+                    "missing explicit import for component `<{}>` at template line {line}, column {col}.",
+                    invocation.name
+                );
+                let suggestions = suggested_import_paths(&invocation.name, modules);
+                if suggestions.is_empty() {
+                    msg.push_str(&format!(
+                        " Add `import {} from \"components/...\";` or `import {} from \"layouts/...\";` in frontmatter.",
+                        invocation.name, invocation.name
+                    ));
+                } else if suggestions.len() == 1 {
+                    msg.push_str(&format!(
+                        " Add `import {} from \"{}\";` in frontmatter.",
+                        invocation.name, suggestions[0]
+                    ));
+                } else {
+                    msg.push_str(" Add one of the following imports in frontmatter:");
+                    for suggestion in suggestions {
+                        msg.push_str(&format!(
+                            "\n    import {} from \"{}\";",
+                            invocation.name, suggestion
+                        ));
+                    }
+                }
+                template_compile_error(owner_path, msg)
             })?;
 
             let imported_module = modules.get(import_target).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
+                template_compile_error(
+                    owner_path,
                     format!(
-                        "template {} imports `{}` but that template is not part of discovered modules",
-                        owner_path.display(),
-                        import_target.display()
+                        "import target `{}` was not part of discovered templates",
+                        src_relative_display_path(import_target)
                     ),
                 )
             })?;
@@ -516,14 +545,13 @@ fn expand_known_components(
             if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
                 let mut cycle_chain = stack[cycle_start..]
                     .iter()
-                    .map(|p| p.display().to_string())
+                    .map(|p| src_relative_display_path(p))
                     .collect::<Vec<_>>();
-                cycle_chain.push(import_target.display().to_string());
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
+                cycle_chain.push(src_relative_display_path(import_target));
+                return Err(template_compile_error(
+                    owner_path,
                     format!(
-                        "component import cycle detected while processing {}: {}",
-                        owner_path.display(),
+                        "component import cycle detected: {}",
                         cycle_chain.join(" -> ")
                     ),
                 ));
@@ -1621,7 +1649,9 @@ pub struct Props {}
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
-        assert!(msg.contains("without explicit import"));
+        assert!(msg.contains("file: pages/index.html"));
+        assert!(msg.contains("line 1, column 1"));
+        assert!(msg.contains("missing explicit import"));
         assert!(msg.contains("<UnknownWidget>"));
 
         cleanup(&root);
@@ -1644,6 +1674,7 @@ pub struct Props {}
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
+        assert!(msg.contains("file: pages/index.html"));
         assert!(msg.contains("only `components/...` and `layouts/...` are allowed"));
 
         cleanup(&root);
@@ -1680,7 +1711,9 @@ pub struct Props {}
         );
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
-        assert!(err.to_string().contains("duplicate import alias `Card`"));
+        let msg = err.to_string();
+        assert!(msg.contains("file: pages/index.html"));
+        assert!(msg.contains("duplicate import alias `Card`"));
 
         cleanup(&root);
     }
@@ -1718,6 +1751,7 @@ pub struct Props {}
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
+        assert!(msg.contains("file:"));
         assert!(msg.contains("component import cycle detected"));
         assert!(msg.contains("components/A.html"));
         assert!(msg.contains("components/B.html"));
@@ -1758,7 +1792,9 @@ pub struct Props {
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
-        assert!(msg.contains("without explicit import"));
+        assert!(msg.contains("file: components/ParentCard.html"));
+        assert!(msg.contains("line 1, column 1"));
+        assert!(msg.contains("missing explicit import"));
         assert!(msg.contains("<StatusBadge>"));
         assert!(msg.contains("components/ParentCard.html"));
 
