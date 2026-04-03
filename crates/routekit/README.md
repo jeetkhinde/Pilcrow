@@ -11,6 +11,28 @@
   - `generated_routes.rs`
   - `generated_templates.rs`
 
+## Explicit Template Imports (Required)
+
+PascalCase template tags are resolved only from explicit frontmatter imports.
+
+```html
+---
+import MainLayout from "layouts/MainLayout.html";
+import StatusBadge from "components/StatusBadge.html";
+
+pub struct Props {
+    pub title: String,
+}
+---
+<MainLayout title={title}>
+  <StatusBadge text="ready" />
+</MainLayout>
+```
+
+- Imports must be `src`-root relative and end in `.html`.
+- Allowed import roots: `components/...` and `layouts/...`.
+- Missing imports are compile errors.
+
 ## Required Web Build Integration
 
 ```rust

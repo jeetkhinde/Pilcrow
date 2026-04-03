@@ -32,7 +32,7 @@ sandbox/
 
 ## Mandatory Rendering Path
 
-1. Define UI in file-based templates under web (`pages/components/layouts`).
+1. Define UI in file-based templates under web (`pages/components/layouts`) with explicit component/layout imports in frontmatter.
 2. Compile templates with `pilcrow-routekit` in `build.rs`.
 3. Use generated Rust render functions in web handlers.
 4. Web handlers call backend via API clients.

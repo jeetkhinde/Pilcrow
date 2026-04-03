@@ -22,6 +22,7 @@ This file is the source of truth for how Pilcrow apps are built.
 ## Single Rendering Path (Mandatory)
 
 - UI pages are defined as file-based templates (`pages/components/layouts`).
+- Templates must explicitly import PascalCase components/layouts in frontmatter.
 - Templates are compiled at build time into Rust render functions.
 - `apps/web` handlers call generated render functions and return HTML.
 

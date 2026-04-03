@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files};
 use crate::templating::codegen::{
@@ -54,40 +54,8 @@ pub fn compile_to_out_dir(
     let out_dir = out_dir.as_ref();
 
     let discovered = discover_html_files(src_root)?;
-    let component_registry = build_component_registry(&discovered)?;
     let templates_root = out_dir.join("pilcrow_templates");
-
-    let mut files = Vec::new();
-    preprocess_group(
-        HtmlSourceKind::Page,
-        &discovered.pages,
-        &src_root.join("pages"),
-        &templates_root.join("pages"),
-        &component_registry,
-        &mut files,
-    )?;
-    preprocess_group(
-        HtmlSourceKind::Component,
-        &discovered.components,
-        &src_root.join("components"),
-        &templates_root.join("components"),
-        &component_registry,
-        &mut files,
-    )?;
-    preprocess_group(
-        HtmlSourceKind::Layout,
-        &discovered.layouts,
-        &src_root.join("layouts"),
-        &templates_root.join("layouts"),
-        &component_registry,
-        &mut files,
-    )?;
-
-    files.sort_by(|a, b| {
-        a.template_output_path
-            .cmp(&b.template_output_path)
-            .then_with(|| a.source_path.cmp(&b.source_path))
-    });
+    let mut files = preprocess_discovered_sources(src_root, &templates_root, &discovered)?;
 
     let generated_routes_file = out_dir.join("generated_routes.rs");
     let generated_routes = write_generated_routes_module(src_root, &generated_routes_file)?;
@@ -109,6 +77,12 @@ pub fn compile_to_out_dir(
     let generated_api_routes_file = out_dir.join("generated_api_routes.rs");
     let generated_api_routes =
         write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
+
+    files.sort_by(|a, b| {
+        a.template_output_path
+            .cmp(&b.template_output_path)
+            .then_with(|| a.source_path.cmp(&b.source_path))
+    });
 
     Ok(CompilerOutput {
         preprocessed_files: files,
@@ -132,13 +106,95 @@ pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     ]
 }
 
-fn preprocess_group(
+#[derive(Debug, Clone)]
+struct HtmlModuleSource {
+    kind: HtmlSourceKind,
+    source_path: PathBuf,
+    template_output_path: PathBuf,
+    rust_frontmatter: String,
+    template_source: String,
+    module_name: String,
+    render_symbol: String,
+    imports: HashMap<String, PathBuf>,
+}
+
+fn preprocess_discovered_sources(
+    src_root: &Path,
+    templates_root: &Path,
+    discovered: &DiscoveredHtmlFiles,
+) -> io::Result<Vec<PreprocessedHtmlFile>> {
+    let mut modules = HashMap::<PathBuf, HtmlModuleSource>::new();
+
+    load_source_group(
+        src_root,
+        HtmlSourceKind::Page,
+        &discovered.pages,
+        &src_root.join("pages"),
+        &templates_root.join("pages"),
+        &mut modules,
+    )?;
+    load_source_group(
+        src_root,
+        HtmlSourceKind::Component,
+        &discovered.components,
+        &src_root.join("components"),
+        &templates_root.join("components"),
+        &mut modules,
+    )?;
+    load_source_group(
+        src_root,
+        HtmlSourceKind::Layout,
+        &discovered.layouts,
+        &src_root.join("layouts"),
+        &templates_root.join("layouts"),
+        &mut modules,
+    )?;
+
+    let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
+    module_paths.sort();
+
+    let mut out = Vec::new();
+    for module_path in module_paths {
+        let module = modules
+            .get(&module_path)
+            .expect("module path from keys should exist");
+
+        let mut stack = vec![module.source_path.clone()];
+        let expanded = expand_known_components(
+            &module.template_source,
+            &module.source_path,
+            &modules,
+            &mut stack,
+            0,
+        )?;
+        let final_template = transpile_component_tags(&expanded);
+
+        if let Some(parent) = module.template_output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&module.template_output_path, final_template.as_bytes())?;
+
+        out.push(PreprocessedHtmlFile {
+            kind: module.kind,
+            source_path: module.source_path.clone(),
+            template_output_path: module.template_output_path.clone(),
+            rust_frontmatter: module.rust_frontmatter.clone(),
+            transpiled_template: final_template,
+            module_name: module.module_name.clone(),
+            render_symbol: module.render_symbol.clone(),
+        });
+    }
+
+    Ok(out)
+}
+
+fn load_source_group(
+    src_root: &Path,
     kind: HtmlSourceKind,
     source_files: &[PathBuf],
     source_root: &Path,
     out_root: &Path,
-    component_registry: &HashMap<String, String>,
-    out: &mut Vec<PreprocessedHtmlFile>,
+    modules: &mut HashMap<PathBuf, HtmlModuleSource>,
 ) -> io::Result<()> {
     for source_path in source_files {
         let source = fs::read_to_string(source_path)?;
@@ -148,30 +204,27 @@ fn preprocess_group(
                 format!("failed to parse {}: {err}", source_path.display()),
             )
         })?;
-
-        let mut stack = Vec::new();
-        let expanded = expand_known_components(&parts.template, component_registry, &mut stack, 0);
-        let final_template = transpile_component_tags(&expanded);
+        let (cleaned_frontmatter, imports) =
+            strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
 
         let relative = source_path.strip_prefix(source_root).unwrap_or(source_path);
         let template_output_path = out_root.join(relative);
         let module_name = build_module_name(kind, relative);
         let render_symbol = format!("render_{module_name}");
 
-        if let Some(parent) = template_output_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&template_output_path, final_template.as_bytes())?;
-
-        out.push(PreprocessedHtmlFile {
-            kind,
-            source_path: source_path.clone(),
-            template_output_path,
-            rust_frontmatter: parts.rust,
-            transpiled_template: final_template,
-            module_name,
-            render_symbol,
-        });
+        modules.insert(
+            source_path.clone(),
+            HtmlModuleSource {
+                kind,
+                source_path: source_path.clone(),
+                template_output_path,
+                rust_frontmatter: cleaned_frontmatter,
+                template_source: parts.template,
+                module_name,
+                render_symbol,
+                imports,
+            },
+        );
     }
 
     Ok(())
@@ -218,51 +271,212 @@ fn normalize_path_text(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-fn build_component_registry(
-    discovered: &DiscoveredHtmlFiles,
-) -> io::Result<HashMap<String, String>> {
-    let mut registry = HashMap::new();
+fn strip_frontmatter_imports(
+    rust_frontmatter: &str,
+    src_root: &Path,
+    source_path: &Path,
+) -> io::Result<(String, HashMap<String, PathBuf>)> {
+    let mut imports = HashMap::<String, PathBuf>::new();
+    let mut kept_lines = Vec::new();
 
-    let mut files = discovered
-        .layouts
-        .iter()
-        .chain(discovered.components.iter())
-        .cloned()
-        .collect::<Vec<_>>();
-    files.sort();
+    for line in rust_frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("import ") {
+            let (alias, import_path) = parse_import_statement(trimmed, source_path)?;
+            if !is_pascal_case_name(&alias) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid import alias `{alias}` in {}; expected PascalCase alias",
+                        source_path.display()
+                    ),
+                ));
+            }
 
-    for source_path in files {
-        let source = fs::read_to_string(&source_path)?;
-        let parts = split_html_module(&source).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to parse {}: {err}", source_path.display()),
-            )
-        })?;
-
-        let Some(stem) = source_path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if !is_pascal_case_name(stem) {
+            let resolved = resolve_import_path(src_root, source_path, &import_path)?;
+            if imports.insert(alias.clone(), resolved).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "duplicate import alias `{alias}` in {}",
+                        source_path.display()
+                    ),
+                ));
+            }
             continue;
         }
 
-        registry.insert(stem.to_string(), parts.template);
+        kept_lines.push(line.to_string());
     }
 
-    Ok(registry)
+    Ok((kept_lines.join("\n").trim().to_string(), imports))
+}
+
+fn parse_import_statement(line: &str, source_path: &Path) -> io::Result<(String, String)> {
+    if !line.ends_with(';') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: `{line}` (expected trailing `;`)",
+                source_path.display()
+            ),
+        ));
+    }
+
+    let no_semicolon = line[..line.len() - 1].trim_end();
+    let rest = no_semicolon.strip_prefix("import ").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: `{line}`",
+                source_path.display()
+            ),
+        )
+    })?;
+
+    let (alias_raw, from_raw) = rest.split_once(" from ").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: `{line}`",
+                source_path.display()
+            ),
+        )
+    })?;
+
+    let alias = alias_raw.trim().to_string();
+    if alias.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: missing alias in `{line}`",
+                source_path.display()
+            ),
+        ));
+    }
+
+    let import_path = parse_quoted_literal(from_raw.trim(), source_path, line)?;
+    Ok((alias, import_path))
+}
+
+fn parse_quoted_literal(value: &str, source_path: &Path, line: &str) -> io::Result<String> {
+    if value.len() < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: `{line}` (expected quoted path)",
+                source_path.display()
+            ),
+        ));
+    }
+
+    let bytes = value.as_bytes();
+    let quote = bytes[0];
+    let valid_quote = quote == b'"' || quote == b'\'';
+    if !valid_quote || bytes[value.len() - 1] != quote {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import syntax in {}: `{line}` (expected quoted path)",
+                source_path.display()
+            ),
+        ));
+    }
+
+    Ok(value[1..value.len() - 1].to_string())
+}
+
+fn resolve_import_path(
+    src_root: &Path,
+    source_path: &Path,
+    import_path: &str,
+) -> io::Result<PathBuf> {
+    let normalized = import_path.replace('\\', "/");
+    if normalized.is_empty() || normalized.starts_with('/') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import path `{normalized}` in {}; expected src-root relative path",
+                source_path.display()
+            ),
+        ));
+    }
+    if !normalized.ends_with(".html") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import path `{normalized}` in {}; expected `.html` import",
+                source_path.display()
+            ),
+        ));
+    }
+    if !(normalized.starts_with("components/") || normalized.starts_with("layouts/")) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import path `{normalized}` in {}; only `components/...` and `layouts/...` are allowed",
+                source_path.display()
+            ),
+        ));
+    }
+
+    let rel_path = Path::new(&normalized);
+    if rel_path.components().any(|part| {
+        matches!(
+            part,
+            Component::ParentDir | Component::CurDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid import path `{normalized}` in {}; relative traversal is not allowed",
+                source_path.display()
+            ),
+        ));
+    }
+
+    let absolute = src_root.join(rel_path);
+    if !absolute.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "import path `{normalized}` in {} was not found on disk",
+                source_path.display()
+            ),
+        ));
+    }
+
+    Ok(absolute)
 }
 
 fn expand_known_components(
     template: &str,
-    registry: &HashMap<String, String>,
-    stack: &mut Vec<String>,
+    owner_path: &Path,
+    modules: &HashMap<PathBuf, HtmlModuleSource>,
+    stack: &mut Vec<PathBuf>,
     depth: usize,
-) -> String {
+) -> io::Result<String> {
     const MAX_DEPTH: usize = 64;
     if depth >= MAX_DEPTH {
-        return template.to_string();
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "component expansion exceeded max depth ({MAX_DEPTH}) while processing {}",
+                owner_path.display()
+            ),
+        ));
     }
+
+    let owner_module = modules.get(owner_path).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "template source {} was not registered in module graph",
+                owner_path.display()
+            ),
+        )
+    })?;
 
     let mut out = String::with_capacity(template.len());
     let mut i = 0usize;
@@ -274,26 +488,66 @@ fn expand_known_components(
 
         if ch == '<'
             && let Some(invocation) = parse_component_invocation(&template[i..])
-            && let Some(component_template) = registry.get(&invocation.name)
         {
-            if stack.iter().any(|name| name == &invocation.name) {
-                out.push_str(&template[i..i + invocation.consumed]);
-                i += invocation.consumed;
-                continue;
+            let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "template {} uses `<{}>` without explicit import; add `import {} from \"components/...\";` or `import {} from \"layouts/...\";` in frontmatter",
+                        owner_path.display(),
+                        invocation.name,
+                        invocation.name,
+                        invocation.name
+                    ),
+                )
+            })?;
+
+            let imported_module = modules.get(import_target).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "template {} imports `{}` but that template is not part of discovered modules",
+                        owner_path.display(),
+                        import_target.display()
+                    ),
+                )
+            })?;
+
+            if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
+                let mut cycle_chain = stack[cycle_start..]
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>();
+                cycle_chain.push(import_target.display().to_string());
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "component import cycle detected while processing {}: {}",
+                        owner_path.display(),
+                        cycle_chain.join(" -> ")
+                    ),
+                ));
             }
 
             let inner_expanded = invocation
                 .inner
                 .as_deref()
-                .map(|inner| expand_known_components(inner, registry, stack, depth + 1))
+                .map(|inner| expand_known_components(inner, owner_path, modules, stack, depth + 1))
+                .transpose()?
                 .unwrap_or_default();
 
             let slot_assignments = collect_slot_assignments(&inner_expanded);
-            let component_with_slot = apply_slots(component_template, &slot_assignments);
+            let component_with_slot =
+                apply_slots(&imported_module.template_source, &slot_assignments);
 
-            stack.push(invocation.name.clone());
-            let component_body =
-                expand_known_components(&component_with_slot, registry, stack, depth + 1);
+            stack.push(import_target.clone());
+            let component_body = expand_known_components(
+                &component_with_slot,
+                import_target,
+                modules,
+                stack,
+                depth + 1,
+            )?;
             stack.pop();
 
             out.push_str(&render_askama_let_bindings(&invocation.attrs));
@@ -306,7 +560,7 @@ fn expand_known_components(
         i += ch.len_utf8();
     }
 
-    out
+    Ok(out)
 }
 
 fn render_askama_let_bindings(attrs: &[(String, String)]) -> String {
@@ -1217,6 +1471,9 @@ mod tests {
         write_file(
             &src.join("pages/index.html"),
             r#"---
+import Layout from "layouts/Layout.html";
+import Card from "components/Card.html";
+
 pub struct Props {
     pub title: String,
 }
@@ -1277,6 +1534,8 @@ pub struct Props {
         write_file(
             &src.join("pages/index.html"),
             r#"---
+import Layout from "layouts/Layout.html";
+
 pub struct Props {}
 ---
 <Layout>
@@ -1314,6 +1573,8 @@ pub struct Props {}
         write_file(
             &src.join("pages/index.html"),
             r#"---
+import List from "components/List.html";
+
 pub struct Props {
     pub title: String,
 }
@@ -1345,8 +1606,8 @@ pub struct Props {
     }
 
     #[test]
-    fn compile_pipeline_keeps_unknown_component_as_call_syntax() {
-        let root = mk_temp_root("compile_unknown_component");
+    fn compile_pipeline_fails_on_missing_component_import() {
+        let root = mk_temp_root("compile_missing_component_import");
         let src = root.join("src");
         let out = root.join("out");
 
@@ -1358,10 +1619,148 @@ pub struct Props {}
 <UnknownWidget title={title} />"#,
         );
 
-        let _result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
-        let page_template = out.join("pilcrow_templates/pages/index.html");
-        let page_rendered = fs::read_to_string(page_template).expect("read transpiled page");
-        assert_eq!(page_rendered, "{{ UnknownWidget { title: title }|safe }}");
+        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("without explicit import"));
+        assert!(msg.contains("<UnknownWidget>"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_fails_on_invalid_import_path() {
+        let root = mk_temp_root("compile_invalid_import_path");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+import Card from "pages/Card.html";
+pub struct Props {}
+---
+<Card />"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("only `components/...` and `layouts/...` are allowed"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_fails_on_duplicate_import_alias() {
+        let root = mk_temp_root("compile_duplicate_import_alias");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+import Card from "components/Card.html";
+import Card from "components/OtherCard.html";
+pub struct Props {}
+---
+<Card />"#,
+        );
+        write_file(
+            &src.join("components/Card.html"),
+            r#"---
+pub struct Props {}
+---
+<div>Card</div>"#,
+        );
+        write_file(
+            &src.join("components/OtherCard.html"),
+            r#"---
+pub struct Props {}
+---
+<div>Other</div>"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
+        assert!(err.to_string().contains("duplicate import alias `Card`"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_fails_on_component_import_cycle() {
+        let root = mk_temp_root("compile_import_cycle");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+import A from "components/A.html";
+pub struct Props {}
+---
+<A />"#,
+        );
+        write_file(
+            &src.join("components/A.html"),
+            r#"---
+import B from "components/B.html";
+pub struct Props {}
+---
+<B />"#,
+        );
+        write_file(
+            &src.join("components/B.html"),
+            r#"---
+import A from "components/A.html";
+pub struct Props {}
+---
+<A />"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("component import cycle detected"));
+        assert!(msg.contains("components/A.html"));
+        assert!(msg.contains("components/B.html"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_requires_nested_component_file_imports() {
+        let root = mk_temp_root("compile_nested_component_imports");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+import ParentCard from "components/ParentCard.html";
+pub struct Props {}
+---
+<ParentCard />"#,
+        );
+        write_file(
+            &src.join("components/ParentCard.html"),
+            r#"---
+pub struct Props {}
+---
+<StatusBadge text="nested" />"#,
+        );
+        write_file(
+            &src.join("components/StatusBadge.html"),
+            r#"---
+pub struct Props {
+    pub text: String,
+}
+---
+<span>{{ text }}</span>"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("without explicit import"));
+        assert!(msg.contains("<StatusBadge>"));
+        assert!(msg.contains("components/ParentCard.html"));
 
         cleanup(&root);
     }
