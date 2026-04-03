@@ -77,9 +77,6 @@ where
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 3. Content Negotiation Logic
-// ════════════════════════════════════════════════════════════
 impl SilcrowRequest {
     /// Determines the exact format the handler should return based on headers.
     pub fn preferred_mode(&self) -> RequestMode {

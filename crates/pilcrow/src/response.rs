@@ -8,9 +8,7 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use cookie::time::Duration;
 use headers::HeaderMapExt;
 use serde::{Deserialize, Serialize};
-// ════════════════════════════════════════════════════════════
-// 1. Shared State & Modifiers
-// ════════════════════════════════════════════════════════════
+
 pub type ErrorResponse = Response;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +21,6 @@ pub enum ToastLevel {
 }
 
 impl ToastLevel {
-    /// Parse a string into a ToastLevel, defaulting to Info for unknown values.
     pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "success" => Self::Success,
@@ -50,14 +47,12 @@ pub struct BaseResponse {
 
 impl BaseResponse {
     pub fn apply_to_response(&self, response: &mut Response) {
-        // 1. Apply standard headers
         self.headers.iter().for_each(|(name, value)| {
             response.headers_mut().insert(name.clone(), value.clone());
         });
         if let Some(code) = self.status {
             *response.status_mut() = code;
         }
-        // 2. Apply cookies (clone jar only when toasts need to be added)
         if self.toasts.is_empty() {
             for cookie in self.cookies.iter() {
                 if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
@@ -68,7 +63,6 @@ impl BaseResponse {
             }
         } else {
             let mut final_jar = self.cookies.clone();
-
             if let Ok(json_string) = serde_json::to_string(&self.toasts) {
                 let encoded = urlencoding::encode(&json_string).into_owned();
                 let toast_cookie = Cookie::build(("silcrow_toasts", encoded))
@@ -78,7 +72,6 @@ impl BaseResponse {
                     .build();
                 final_jar = final_jar.add(toast_cookie);
             }
-
             for cookie in final_jar.iter() {
                 if let Ok(header_value) = HeaderValue::from_str(&cookie.to_string()) {
                     response
@@ -89,10 +82,6 @@ impl BaseResponse {
         }
     }
 }
-
-// ════════════════════════════════════════════════════════════
-// 2. The Modifier Trait
-// ════════════════════════════════════════════════════════════
 
 pub trait ResponseExt: Sized {
     fn base_mut(&mut self) -> &mut BaseResponse;
@@ -121,8 +110,6 @@ pub trait ResponseExt: Sized {
         });
         self
     }
-
-    // Trigger a custom DOM event on the client
     fn trigger_event(mut self, event_name: &str) -> Self {
         let map = serde_json::json!({ event_name: {} });
         self.base_mut()
@@ -130,23 +117,18 @@ pub trait ResponseExt: Sized {
             .typed_insert(SilcrowTrigger(map.to_string()));
         self
     }
-    //  Override the target DOM element for the swap
     fn retarget(mut self, selector: &str) -> Self {
         self.base_mut()
             .headers
             .typed_insert(SilcrowRetarget(selector.to_string()));
         self
     }
-
-    // Force the browser history URL, or prevent it entirely with "false"
     fn push_history(mut self, url: &str) -> Self {
         self.base_mut()
             .headers
             .typed_insert(SilcrowPush(url.to_string()));
         self
     }
-
-    /// Server-driven patch: tells Silcrow.js to patch JSON data into a specific root element.
     fn patch_target(mut self, selector: &str, data: &impl serde::Serialize) -> Self {
         let payload = serde_json::json!({ "data": data, "target": selector });
         self.base_mut()
@@ -154,24 +136,18 @@ pub trait ResponseExt: Sized {
             .typed_insert(SilcrowPatch(payload.to_string()));
         self
     }
-
-    /// Server-driven invalidation: tells Silcrow.js to rebuild binding maps for a root.
     fn invalidate_target(mut self, selector: &str) -> Self {
         self.base_mut()
             .headers
             .typed_insert(SilcrowInvalidate(selector.to_string()));
         self
     }
-
-    /// Server-driven navigation: tells Silcrow.js to perform a client-side navigation.
     fn client_navigate(mut self, path: &str) -> Self {
         self.base_mut()
             .headers
             .typed_insert(SilcrowNavigate(path.to_string()));
         self
     }
-
-    /// Server-driven SSE: tells Silcrow.js to open an SSE connection to the given path.
     fn sse(mut self, path: impl AsRef<str>) -> Self {
         self.base_mut()
             .headers
@@ -188,11 +164,7 @@ pub trait ResponseExt: Sized {
         self
     }
 }
-// ════════════════════════════════════════════════════════════
-// 3. Response Wrappers & Transport Logic
-// ════════════════════════════════════════════════════════════
 
-// --- HTML ---
 pub struct HtmlResponse {
     pub data: String,
     pub base: BaseResponse,
@@ -216,7 +188,6 @@ impl IntoResponse for HtmlResponse {
     }
 }
 
-// --- JSON ---
 pub struct JsonResponse<T> {
     pub data: T,
     pub base: BaseResponse,
@@ -255,7 +226,6 @@ impl<T: serde::Serialize> IntoResponse for JsonResponse<T> {
     }
 }
 
-// --- NAVIGATE ---
 pub struct NavigateResponse {
     pub path: String,
     pub base: BaseResponse,
@@ -273,18 +243,12 @@ impl IntoResponse for NavigateResponse {
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 4. Constructors & Trait Impls
-// ════════════════════════════════════════════════════════════
-
 pub fn html(data: impl Into<String>) -> HtmlResponse {
     HtmlResponse {
         data: data.into(),
         base: BaseResponse::default(),
     }
 }
-
-// pilcrow::status(StatusCode::CREATED)
 pub fn status(code: StatusCode) -> Response {
     code.into_response()
 }

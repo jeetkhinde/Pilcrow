@@ -3,7 +3,6 @@
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-/// The unified Silcrow client runtime, embedded at compile time.
 pub const SILCROW_JS: &str = include_str!("../assets/silcrow.js");
 
 pub async fn serve_silcrow_js() -> Response {

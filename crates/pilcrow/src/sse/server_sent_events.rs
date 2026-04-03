@@ -183,20 +183,6 @@ impl std::fmt::Display for EmitError {
 
 impl std::error::Error for EmitError {}
 
-/// A handle passed to `sse()` closure handlers for sending events to the client.
-///
-/// Returns `Err(EmitError)` when the client disconnects — use this to terminate loops cleanly.
-///
-/// ```ignore
-/// pilcrow::sse_stream(|emit| async move {
-///     loop {
-///         let data = fetch().await;
-///         emit.send(SilcrowEvent::patch(&data, "#feed")).await?;
-///         tokio::time::sleep(Duration::from_secs(5)).await;
-///     }
-///     Ok(())
-/// })
-/// ```
 #[derive(Clone)]
 pub struct SseEmitter {
     tx: mpsc::Sender<SilcrowEvent>,
@@ -219,25 +205,6 @@ impl SseEmitter {
     }
 }
 
-/// Creates an SSE response from a closure that receives an `SseEmitter`.
-///
-/// This is the primary API. The framework manages channel creation, task spawning,
-/// and connection lifecycle. When the client disconnects, `emit.send()` returns
-/// `Err(EmitError)` — use `?` to propagate and terminate the handler cleanly.
-///
-/// ```ignore
-/// pub async fn handler(Extension(state): Extension<AppState>) -> impl IntoResponse {
-///     pilcrow::sse_stream(|emit| async move {
-///         loop {
-///             let data = state.fetch().await;
-///             emit.send(SilcrowEvent::patch(&data, "#feed")).await?;
-///             tokio::time::sleep(Duration::from_secs(5)).await;
-///         }
-///         #[allow(unreachable_code)]
-///         Ok(())
-///     })
-/// }
-/// ```
 pub fn sse_stream<F, Fut>(
     handler: F,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send + 'static>
@@ -257,22 +224,6 @@ where
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Creates an SSE response from a pre-composed stream of events.
-///
-/// Use this for advanced composition with `futures_util` / `tokio-stream` combinators.
-/// For most use cases, prefer `sse()` which provides better lifecycle management.
-///
-/// ```ignore
-/// async fn handler() -> impl IntoResponse {
-///     let stream = async_stream::stream! {
-///         loop {
-///             let data = fetch().await;
-///             yield Ok::<_, Infallible>(SilcrowEvent::patch(&data, "#feed").into());
-///         }
-///     };
-///     pilcrow::sse_raw(stream)
-/// }
-/// ```
 pub fn sse_raw<S>(stream: S) -> Sse<S>
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,

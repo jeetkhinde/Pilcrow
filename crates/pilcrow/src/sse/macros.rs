@@ -33,15 +33,6 @@ macro_rules! define_route {
     };
 }
 
-/// Drive multiple SSE streams concurrently.
-/// All futures run; if any returns `Err`, the rest are dropped.
-///
-/// ```ignore
-/// combine!(
-///     watch(state.tasks_rx).json("#tasks", &emit),
-///     interval(Duration::from_secs(5)).map(|_| fetch_stats()).json("#stats", &emit),
-/// )
-/// ```
 #[macro_export]
 macro_rules! combine {
     ($($fut:expr),+ $(,)?) => {
