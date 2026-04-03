@@ -1,7 +1,6 @@
-use pilcrow_contracts::TodoDto;
 use pilcrow_core::AppResult;
 
-use crate::repository::TodoRepository;
+use crate::{api::contracts::TodoDto, repository::TodoRepository};
 
 #[derive(Clone)]
 pub struct TodoService {

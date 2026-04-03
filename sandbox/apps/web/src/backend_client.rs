@@ -1,7 +1,26 @@
-use pilcrow_contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
+use std::future::Future;
+use std::pin::Pin;
 
-use crate::RestClientError;
-use crate::TodosApi;
+use thiserror::Error;
+
+use crate::contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
+
+pub trait TodosApi: Send + Sync {
+    fn list_todos(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>>;
+
+    fn create_todo(
+        &self,
+        title: String,
+    ) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>>;
+}
+
+#[derive(Debug, Error)]
+pub enum RestClientError {
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+}
 
 #[derive(Clone)]
 pub struct RestTodosClient {
@@ -21,9 +40,7 @@ impl RestTodosClient {
 impl TodosApi for RestTodosClient {
     fn list_todos(
         &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>> {
         Box::pin(async {
             let response = self
                 .client
@@ -40,9 +57,7 @@ impl TodosApi for RestTodosClient {
     fn create_todo(
         &self,
         title: String,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<TodoDto, RestClientError>> + Send + '_>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>> {
         Box::pin(async move {
             let response = self
                 .client

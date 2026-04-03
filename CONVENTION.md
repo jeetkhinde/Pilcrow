@@ -6,7 +6,6 @@ This file is the source of truth for how Pilcrow apps are built.
 
 - `apps/web`: UI routing (SSR/pages/components), request orchestration, backend API calls.
 - `apps/backend`: services, models, repositories, DB, auth, middleware, REST/JSON APIs.
-- `crates/contracts`: shared request/response DTOs.
 
 ## Required Framework Usage
 
@@ -17,7 +16,7 @@ This file is the source of truth for how Pilcrow apps are built.
 
 - `apps/web` must not depend on backend internals.
 - `apps/backend` must not depend on web UI crates/templates.
-- Cross-app DTOs must live in `crates/contracts`.
+- Transport DTOs are app-layer concerns and must stay within app boundaries (no shared framework/demo crate required).
 
 ## Single Rendering Path (Mandatory)
 
@@ -39,7 +38,7 @@ This file is the source of truth for how Pilcrow apps are built.
 
 ```bash
 cd sandbox
-cargo run -p pilcrow-cli -- check-arch
+pilcrow-cli check-arch
 ```
 
 The check validates required dependency boundaries.

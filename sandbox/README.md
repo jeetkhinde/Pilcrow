@@ -9,10 +9,6 @@ sandbox/
   apps/
     web/       # BFF + SSR + generated pages/api routes
     backend/   # in-memory todo service + REST API
-  crates/
-    contracts/
-    api-client-rest/
-    api-client-grpc/
 ```
 
 ## Run
@@ -25,5 +21,6 @@ cargo run -p web
 ## Convention Guard
 
 ```bash
-cargo run -p pilcrow-cli -- check-arch
+cargo install --path ../tools/cli --force
+pilcrow-cli check-arch
 ```

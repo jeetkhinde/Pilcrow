@@ -4,13 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [build-dependencies]
-pilcrow-routekit = { path = "../../../crates/routekit" }
+pilcrow-routekit = "0.1.0"
 
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 askama = "0.12"
 serde = { version = "1", features = ["derive"] }
-pilcrow-web = { path = "../../../crates/web" }
-pilcrow-contracts = { path = "../../crates/contracts" }
-pilcrow-api-client-rest = { path = "../../crates/api-client-rest" }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+thiserror = "1"
+pilcrow-web = "0.1.0"

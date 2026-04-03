@@ -1,7 +1,10 @@
 use axum::{Json, Router, extract::State, routing::get};
-use pilcrow_contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
 
-use crate::{AppState, middleware};
+use crate::{
+    AppState,
+    api::contracts::{CreateTodoRequest, ListTodosResponse, TodoDto},
+    middleware,
+};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/todos", get(list_todos).post(create_todo))

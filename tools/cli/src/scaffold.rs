@@ -13,7 +13,7 @@ pub fn handle_new(args: &[String]) -> Result<(), String> {
 
     create_scaffold(&root).map_err(|err| err.to_string())?;
     println!(
-        "created web-backend scaffold at {} (run `cargo run -p pilcrow-cli -- check-arch` there)",
+        "created web-backend scaffold at {} (run `pilcrow-cli check-arch` there)",
         root.display()
     );
     Ok(())
@@ -22,12 +22,11 @@ pub fn handle_new(args: &[String]) -> Result<(), String> {
 fn create_scaffold(root: &Path) -> std::io::Result<()> {
     fs::create_dir_all(root.join("apps/web/src"))?;
     fs::create_dir_all(root.join("apps/backend/src"))?;
-    fs::create_dir_all(root.join("crates/contracts/src"))?;
 
     fs::write(
         root.join("Cargo.toml"),
         r#"[workspace]
-members = ["apps/web", "apps/backend", "crates/contracts"]
+members = ["apps/web", "apps/backend"]
 resolver = "2"
 "#,
     )?;
@@ -46,7 +45,6 @@ edition = "2024"
 
 [dependencies]
 pilcrow-web = "*"
-pilcrow-api-client-rest = "*"
 "#,
     )?;
 
@@ -71,17 +69,6 @@ pilcrow-core = "*"
         root.join("apps/backend/src/main.rs"),
         "fn main() { println!(\"backend app scaffold\"); }\n",
     )?;
-
-    fs::write(
-        root.join("crates/contracts/Cargo.toml"),
-        r#"[package]
-name = "contracts"
-version = "0.1.0"
-edition = "2024"
-"#,
-    )?;
-
-    fs::write(root.join("crates/contracts/src/lib.rs"), "\n")?;
 
     Ok(())
 }

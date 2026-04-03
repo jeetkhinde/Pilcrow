@@ -2,6 +2,9 @@ mod api {
     pub mod todos;
 }
 
+mod backend_client;
+mod contracts;
+
 mod generated_api {
     include!(concat!(env!("OUT_DIR"), "/generated_api_routes.rs"));
 }
@@ -20,8 +23,8 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use pilcrow_api_client_rest::{RestTodosClient, TodosApi};
-use pilcrow_contracts::TodoDto;
+use backend_client::{RestTodosClient, TodosApi};
+use contracts::TodoDto;
 use pilcrow_web::{ResponseExt, SilcrowEvent, StatusCode, ToastLevel, navigate, sse_stream};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

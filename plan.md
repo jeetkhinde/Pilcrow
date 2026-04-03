@@ -20,7 +20,7 @@ a learning path.
 - `build.rs` calling `routekit::compile_to_out_dir` + `watched_source_directories`
 - `.html` templates with `pub struct Props` frontmatter
 - File-based page routes (`pages/`) + API routes (`api/`)
-- BFF pattern: page handler fetches from backend via `api-client-rest`, maps DTO → Props
+- BFF pattern: page handler fetches from backend via app-local REST client, maps DTO → Props
 - SSE stream (live counter or notification feed)
 - `ResponseExt` chaining: toasts, retarget, push_history
 - `pilcrow-cli check-arch` passes on the sandbox workspace
@@ -31,7 +31,7 @@ a learning path.
 | `sandbox/Cargo.toml` | Workspace root — NOT part of framework workspace |
 | `sandbox/apps/web/` | BFF + SSR (pages, api/, build.rs) |
 | `sandbox/apps/backend/` | Minimal service (in-memory todos) |
-| `sandbox/crates/contracts/` | TodoDto, CreateTodoRequest |
+| `sandbox/apps/*` app modules | App-layer transport DTOs + REST client boundary |
 
 **Not included:** database, auth, production config. Those come after.
 

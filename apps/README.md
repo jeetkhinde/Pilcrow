@@ -5,8 +5,9 @@ Demo apps moved to [`sandbox/apps`](../sandbox/apps).
 Use the sandbox workspace as the canonical consumer:
 
 ```bash
+cargo install --path tools/cli --force
 cd sandbox
 cargo run -p pilcrow-backend
 cargo run -p web
-cargo run -p pilcrow-cli -- check-arch
+pilcrow-cli check-arch
 ```

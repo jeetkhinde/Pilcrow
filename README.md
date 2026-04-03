@@ -15,7 +15,7 @@ Pilcrow has one mandatory app architecture.
 crates/
   pilcrow-core/
   pilcrow-web/
-  pilcrow/
+  pilcrow-runtime/
   routekit/
   pilcrow-macros/
 tools/
@@ -24,10 +24,6 @@ sandbox/
   apps/
     web/
     backend/
-  crates/
-    contracts/
-    api-client-rest/
-    api-client-grpc/
 ```
 
 ## Mandatory Rendering Path
@@ -45,6 +41,7 @@ sandbox/
 ## Validate Convention
 
 ```bash
+cargo install --path tools/cli --force
 cd sandbox
-cargo run -p pilcrow-cli -- check-arch
+pilcrow-cli check-arch
 ```

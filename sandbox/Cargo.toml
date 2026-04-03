@@ -1,10 +1,10 @@
 [workspace]
-members = [
-    "apps/web",
-    "apps/backend",
-    "crates/contracts",
-    "crates/api-client-rest",
-    "crates/api-client-grpc",
-    "tools/cli",
-]
+members = ["apps/web", "apps/backend"]
 resolver = "2"
+
+[patch.crates-io]
+pilcrow-routekit = { path = "../crates/routekit" }
+pilcrow-web = { path = "../crates/web" }
+pilcrow-core = { path = "../crates/core" }
+pilcrow-runtime = { path = "../crates/runtime" }
+pilcrow-macros = { path = "../crates/macros" }

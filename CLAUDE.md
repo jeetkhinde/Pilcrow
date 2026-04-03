@@ -34,7 +34,7 @@ Browser --> apps/web/api/     --> (optional) backend --> JSON response
 | Concept | Where it lives | Purpose | Serialized? |
 |---------|---------------|---------|-------------|
 | **Props** | Inside the `.html` template file | What the template needs to render | Never |
-| **DTO** | `sandbox/crates/contracts/` | What crosses the network between web and backend | Always |
+| **DTO** | `apps/web` and `apps/backend` API modules | What crosses the network between web and backend | Always |
 
 - Templates never import from contracts.
 - The web handler maps DTO -> Props. That is its only job.
@@ -67,16 +67,12 @@ pub struct Props {
 ```
 Pilcrow/
   crates/
-    pilcrow/              # Low-level response/runtime (Axum layer)
+    pilcrow-runtime/      # Low-level response/runtime (Axum layer)
     pilcrow-core/         # Domain primitives (envelope, error types)
     pilcrow-web/          # Curated facade for web app developers
     pilcrow-macros/       # Proc macros (sse)
     routekit/             # File-based route + template compiler
   sandbox/
-    crates/
-      contracts/          # Shared wire-format DTOs (Serialize + Deserialize)
-      api-client-rest/    # Typed REST client (web -> backend)
-      api-client-grpc/    # gRPC client (web -> backend)
     apps/
       web/                # BFF + SSR (pages, api, components, layouts)
       backend/            # Domain logic, services, DB, auth, REST APIs
@@ -111,24 +107,19 @@ Pilcrow/
 - This is what `apps/backend` depends on.
 - No web/UI/template imports allowed.
 
-### contracts (wire types, in sandbox)
-- `TodoDto`, `CreateTodoRequest`, `ListTodosResponse`, etc.
-- Always `#[derive(Serialize, Deserialize)]`.
-- Shared between web and backend. No business logic.
-
-### api-client-rest / api-client-grpc (in sandbox)
-- Typed clients that web uses to call backend.
-- Traits use `Pin<Box<dyn Future>>` for dyn-compatibility.
-- No `async-trait` crate. Edition 2024 handles async natively.
+### App transport types
+- DTOs are app-layer wire types.
+- Keep web and backend transport contracts at app boundaries.
+- Handlers map transport DTOs to template Props explicitly.
 
 ## Dependency Boundaries (enforced by check-arch)
 
 ```
-apps/web        --> pilcrow-web, contracts, api-client-rest, api-client-grpc
-apps/backend    --> pilcrow-core, contracts
+apps/web        --> pilcrow-web
+apps/backend    --> pilcrow-core
 apps/web        -/-> apps/backend (never)
 apps/backend    -/-> pilcrow-web (never)
-templates       -/-> contracts (never — Props != DTO)
+templates       -/-> transport DTOs (never — Props != DTO)
 ```
 
 ## Sandbox
@@ -187,7 +178,7 @@ None currently. All known issues were resolved in Phases 1–4.
 
 ### Phase 6 — Tests
 - [ ] routekit: pattern parsing, layout resolution, slot expansion, full pipeline
-- [ ] api-client-rest/grpc: serialization roundtrips, error variants
+- [ ] sandbox web/backend: transport DTO and mapping tests
 - [ ] pilcrow-cli: check-arch pass/fail, scaffold output
 - [ ] pilcrow-core: envelope serialization, error conversion
 

@@ -1,6 +1,6 @@
 # ./Cargo.toml
 [package]
-name = "pilcrow"
+name = "pilcrow-runtime"
 version = "0.1.0"
 edition = "2024"
 description = "Premium response builders and content negotiation for Axum"

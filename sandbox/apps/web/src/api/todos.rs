@@ -1,8 +1,8 @@
 use axum::{Json, Router, extract::State, routing::get};
-use pilcrow_contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
 use pilcrow_web::StatusCode;
 
 use crate::AppState;
+use crate::contracts::{CreateTodoRequest, ListTodosResponse, TodoDto};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(list_todos).post(create_todo))

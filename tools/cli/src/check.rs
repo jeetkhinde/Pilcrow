@@ -13,9 +13,6 @@ pub fn check_arch(root: &Path) -> Result<(), String> {
     if !web_toml.contains("pilcrow-web") {
         failures.push("apps/web must depend on `pilcrow-web`".to_string());
     }
-    if !web_toml.contains("pilcrow-api-client-rest") {
-        failures.push("apps/web must depend on `pilcrow-api-client-rest`".to_string());
-    }
     if !backend_toml.contains("pilcrow-core") {
         failures.push("apps/backend must depend on `pilcrow-core`".to_string());
     }
@@ -28,6 +25,19 @@ pub fn check_arch(root: &Path) -> Result<(), String> {
     }
     if backend_toml.contains("pilcrow-web") {
         failures.push("apps/backend cannot depend on `pilcrow-web`".to_string());
+    }
+
+    if web_toml.contains("path = \"../../../crates/") {
+        failures.push(
+            "apps/web must not use direct framework path dependencies; use version deps + [patch.crates-io]"
+                .to_string(),
+        );
+    }
+    if backend_toml.contains("path = \"../../../crates/") {
+        failures.push(
+            "apps/backend must not use direct framework path dependencies; use version deps + [patch.crates-io]"
+                .to_string(),
+        );
     }
 
     if failures.is_empty() {

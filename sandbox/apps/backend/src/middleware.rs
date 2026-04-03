@@ -3,8 +3,9 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use pilcrow_contracts::ApiErrorBody;
 use pilcrow_core::AppError;
+
+use crate::api::contracts::ApiErrorBody;
 
 pub fn app_error_to_response(err: AppError) -> Response {
     let (status, code, message) = match err {
