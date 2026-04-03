@@ -78,70 +78,74 @@ pub use pipeline::{compile_to_out_dir, watched_source_directories};
 #[derive(Debug, Clone)]
 pub struct Route {
     /// URL pattern like "/users/:id"
-    pub pattern: String,
+    pub(crate) pattern: String,
     /// File path to the template
-    pub template_path: String,
+    pub(crate) template_path: String,
     /// List of parameter names
-    pub params: Vec<String>,
+    pub(crate) params: Vec<String>,
     /// Priority for matching (lower = higher priority)
-    pub priority: usize,
+    pub(crate) priority: usize,
     /// Whether this is a layout route
-    pub is_layout: bool,
+    pub(crate) is_layout: bool,
+    #[allow(dead_code)]
     /// Whether this route has a catch-all parameter
-    pub has_catch_all: bool,
+    pub(crate) has_catch_all: bool,
+    #[allow(dead_code)]
     /// List of optional parameter names
-    pub optional_params: Vec<String>,
+    pub(crate) optional_params: Vec<String>,
     /// Whether this is an error page
-    pub is_error_page: bool,
+    pub(crate) is_error_page: bool,
     /// Whether this is a no-layout marker
-    pub is_nolayout_marker: bool,
-    /// Whether this is a loading UI file (Phase 4.3)
-    pub is_loading: bool,
-    /// Whether this is a template file (Phase 4.4)
-    pub is_template: bool,
-    /// Whether this is a not-found page (Phase 4.5)
-    pub is_not_found: bool,
-    /// Whether this is a parallel route (Phase 5.1)
-    pub is_parallel_route: bool,
-    /// Slot name for parallel routes, e.g., "analytics" from @analytics (Phase 5.1)
-    pub parallel_slot: Option<String>,
-    /// Whether this is an intercepting route (Phase 5.2)
-    pub is_intercepting: bool,
-    /// Interception level for intercepting routes (Phase 5.2)
-    pub intercept_level: Option<InterceptLevel>,
-    /// Original pattern before interception (Phase 5.2)
-    pub intercept_target: Option<String>,
+    pub(crate) is_nolayout_marker: bool,
+    /// Whether this is a loading UI file
+    pub(crate) is_loading: bool,
+    /// Whether this is a template file
+    pub(crate) is_template: bool,
+    /// Whether this is a not-found page
+    pub(crate) is_not_found: bool,
+    /// Whether this is a parallel route
+    pub(crate) is_parallel_route: bool,
+    /// Slot name for parallel routes, e.g., "analytics" from @analytics
+    pub(crate) parallel_slot: Option<String>,
+    /// Whether this is an intercepting route
+    pub(crate) is_intercepting: bool,
+    #[allow(dead_code)]
+    /// Interception level for intercepting routes
+    pub(crate) intercept_level: Option<InterceptLevel>,
+    #[allow(dead_code)]
+    /// Original pattern before interception
+    pub(crate) intercept_target: Option<String>,
     /// Layout resolution strategy
-    pub layout_option: LayoutOption,
+    pub(crate) layout_option: LayoutOption,
     /// Name of this layout (if it's a named layout)
-    pub layout_name: Option<String>,
+    pub(crate) layout_name: Option<String>,
     /// Arbitrary metadata for the route (titles, permissions, cache settings, etc.)
-    pub metadata: HashMap<String, String>,
+    pub(crate) metadata: HashMap<String, String>,
     /// Parameter constraints for validation (param_name → constraint)
-    pub param_constraints: HashMap<String, ParameterConstraint>,
+    pub(crate) param_constraints: HashMap<String, ParameterConstraint>,
     /// Alternative URL patterns that map to this route (for legacy URLs, i18n, etc.)
-    pub aliases: Vec<String>,
+    pub(crate) aliases: Vec<String>,
     /// Optional name for this route (for URL generation and type-safe references)
-    pub name: Option<String>,
+    pub(crate) name: Option<String>,
     /// Whether this is a redirect route
-    pub is_redirect: bool,
+    pub(crate) is_redirect: bool,
     /// Target URL for redirect routes
-    pub redirect_to: Option<String>,
+    pub(crate) redirect_to: Option<String>,
     /// HTTP status code for redirects (301, 302, 307, 308)
-    pub redirect_status: Option<u16>,
+    pub(crate) redirect_status: Option<u16>,
 }
 
 /// Result of matching a route against a path
 #[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct RouteMatch {
-    /// The matched route
-    pub route: Route,
+#[derive(Debug)]
+pub struct RouteMatch<'a> {
+    /// The matched route (borrowed from the Router)
+    pub(crate) route: &'a Route,
     /// Extracted parameters from the path
     pub params: HashMap<String, String>,
 }
 
-impl RouteMatch {
+impl<'a> RouteMatch<'a> {
     /// Checks if this match is a redirect route
     ///
     /// # Examples
@@ -247,14 +251,12 @@ impl Route {
         let is_layout = filename == "_layout" || filename.starts_with("_layout.");
         let is_error_page = filename == "_error";
         let is_nolayout_marker = filename == "_nolayout";
-        let is_loading = filename == "loading"; // Phase 4.3
-        let is_template = filename == "_template"; // Phase 4.4
-        let is_not_found = filename == "not-found"; // Phase 4.5
+        let is_loading = filename == "loading";
+        let is_template = filename == "_template";
+        let is_not_found = filename == "not-found";
 
-        // Phase 5.1: Detect parallel routes (@slot_name)
         let (is_parallel_route, parallel_slot) = route::detect_parallel_route(without_ext);
 
-        // Phase 5.2: Detect intercepting routes ((.), (..), (...), (....))
         let (is_intercepting, intercept_level, intercept_target) =
             route::detect_intercepting_route(without_ext);
 
@@ -1101,7 +1103,6 @@ impl Router {
             return;
         }
 
-        // Store named routes for URL generation (Phase 3.2)
         if let Some(ref name) = route.name {
             self.named_routes.insert(name.clone(), route.clone());
         }
@@ -1118,17 +1119,12 @@ impl Router {
         } else if route.is_error_page {
             self.error_pages.insert(route.pattern.clone(), route);
         } else if route.is_loading {
-            // Phase 4.3: Loading UI pages
             self.loading_pages.insert(route.pattern.clone(), route);
         } else if route.is_template {
-            // Phase 4.4: Template pages
             self.templates.insert(route.pattern.clone(), route);
         } else if route.is_not_found {
-            // Phase 4.5: Not-found pages
             self.not_found_pages.insert(route.pattern.clone(), route);
         } else if route.is_parallel_route {
-            // Phase 5.1: Parallel routes
-            // Store by pattern -> slot -> route
             if let Some(ref slot) = route.parallel_slot {
                 self.parallel_routes
                     .entry(route.pattern.clone())
@@ -1136,7 +1132,6 @@ impl Router {
                     .insert(slot.clone(), route);
             }
         } else if route.is_intercepting {
-            // Phase 5.2: Intercepting routes
             self.intercepting_routes
                 .insert(route.pattern.clone(), route);
         } else {
@@ -1226,22 +1221,19 @@ impl Router {
     /// let route_match = router.match_route("/users/123").unwrap();
     /// assert_eq!(route_match.params.get("id"), Some(&"123".to_string()));
     /// ```
-    pub fn match_route(&self, path: &str) -> Option<RouteMatch> {
+    pub fn match_route(&self, path: &str) -> Option<RouteMatch<'_>> {
         // Functional iteration with short-circuit on first match
         self.routes.iter().find_map(|route| {
             // Try primary pattern first
             if let Some(params) = route.matches_with_options(path, self.case_insensitive) {
-                return Some(RouteMatch {
-                    route: route.clone(),
-                    params,
-                });
+                return Some(RouteMatch { route, params });
             }
 
             // Then try aliases (functional iteration)
             route.aliases.iter().find_map(|alias| {
                 if route.matches_static_alias(path, alias) {
                     Some(RouteMatch {
-                        route: route.clone(),
+                        route,
                         params: HashMap::new(),
                     })
                 } else {
@@ -1328,7 +1320,7 @@ impl Router {
     /// let layout = router.get_layout_for_match(&route_match).unwrap();
     /// assert_eq!(layout.pattern, "/");
     /// ```
-    pub fn get_layout_for_match(&self, route_match: &RouteMatch) -> Option<&Route> {
+    pub fn get_layout_for_match(&self, route_match: &RouteMatch<'_>) -> Option<&Route> {
         self.get_layout_with_option(&route_match.route.pattern, &route_match.route.layout_option)
     }
 
