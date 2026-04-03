@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use super::pattern::PatternSegmentType;
 use super::pattern::classify_segment;
-use crate::ParameterConstraint;
+use crate::routing::constraint::ParameterConstraint;
 
 /// Parses a file path pattern into route components (pure function)
 ///

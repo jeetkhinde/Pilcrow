@@ -1,22 +1,15 @@
 use std::collections::HashMap;
 
-use path::{PathHierarchy, normalize_path};
+use routing::path::{PathHierarchy, normalize_path};
 
-pub(crate) mod codegen;
-pub(crate) mod compiler;
-mod constraint;
-pub(crate) mod discovery;
-mod intercept;
-mod layout;
-pub(crate) mod path;
-pub(crate) mod pipeline;
-pub(crate) mod route;
+pub mod routing;
+pub mod templating;
 
-pub use codegen::{GeneratedApiRoute, GeneratedPageRoute};
-pub use constraint::ParameterConstraint;
-pub use intercept::InterceptLevel;
-pub use layout::LayoutOption;
-pub use pipeline::{compile_to_out_dir, watched_source_directories};
+pub use routing::constraint::ParameterConstraint;
+pub use routing::intercept::InterceptLevel;
+pub use templating::codegen::{GeneratedApiRoute, GeneratedPageRoute};
+pub use templating::layout::LayoutOption;
+pub use templating::pipeline::{compile_to_out_dir, watched_source_directories};
 
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -95,23 +88,27 @@ impl Route {
         let is_template = filename == "_template";
         let is_not_found = filename == "not-found";
 
-        let (is_parallel_route, parallel_slot) = route::detect_parallel_route(without_ext);
+        let (is_parallel_route, parallel_slot) = routing::route::detect_parallel_route(without_ext);
 
         let (is_intercepting, intercept_level, intercept_target) =
-            route::detect_intercepting_route(without_ext);
+            routing::route::detect_intercepting_route(without_ext);
 
         let layout_name = if is_layout {
-            route::extract_layout_name(filename)
+            routing::route::extract_layout_name(filename)
         } else {
             None
         };
 
         let (pattern, params, optional_params, dynamic_count, has_catch_all, param_constraints) =
-            route::parse_pattern(without_ext);
+            routing::route::parse_pattern(without_ext);
 
         let depth = pattern.matches('/').count();
-        let priority =
-            route::calculate_priority(has_catch_all, dynamic_count, depth, &optional_params);
+        let priority = routing::route::calculate_priority(
+            has_catch_all,
+            dynamic_count,
+            depth,
+            &optional_params,
+        );
 
         Route {
             pattern,
@@ -429,7 +426,7 @@ impl Route {
 
         let (pattern, params, optional_params, dynamic_count, has_catch_all, param_constraints) =
             if has_params {
-                route::parse_pattern(&normalized_from)
+                routing::route::parse_pattern(&normalized_from)
             } else {
                 let normalized = if from.starts_with('/') {
                     from.clone()
@@ -440,8 +437,12 @@ impl Route {
             };
 
         let depth = pattern.matches('/').count();
-        let priority =
-            route::calculate_priority(has_catch_all, dynamic_count, depth, &optional_params);
+        let priority = routing::route::calculate_priority(
+            has_catch_all,
+            dynamic_count,
+            depth,
+            &optional_params,
+        );
 
         Route {
             pattern,

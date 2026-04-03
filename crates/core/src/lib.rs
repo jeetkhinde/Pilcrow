@@ -1,5 +1,5 @@
 pub mod envelope;
 pub mod error;
 
-pub use envelope::{ApiEnvelope, Meta};
-pub use error::{AppError, AppResult};
+pub use envelope::envelope::{ApiEnvelope, Meta};
+pub use error::error::{AppError, AppResult};

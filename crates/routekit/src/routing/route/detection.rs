@@ -6,7 +6,7 @@
 /// - Intercepting routes ((.), (..), (...), (....))
 ///
 /// All functions are **pure**: same input → same output, no side effects.
-use crate::InterceptLevel;
+use crate::routing::intercept::InterceptLevel;
 
 /// Extracts layout name from filename (pure function)
 ///

@@ -96,11 +96,8 @@ pub(crate) fn build_api_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<Api
                 .unwrap_or(&file_path)
                 .trim_start_matches('/')
                 .to_owned();
-            let without_ext = relative
-                .strip_suffix(".rs")
-                .unwrap_or(&relative)
-                .to_owned();
-            let (seg_pattern, ..) = crate::route::parse_pattern(&without_ext);
+            let without_ext = relative.strip_suffix(".rs").unwrap_or(&relative).to_owned();
+            let (seg_pattern, ..) = crate::routing::route::parse_pattern(&without_ext);
             let api_pattern = if seg_pattern == "/" {
                 "/api".to_string()
             } else {
@@ -176,25 +173,25 @@ fn build_module_path(without_ext: &str) -> String {
 ///
 /// `users/[id]` → `"api_users_id"`
 fn build_api_symbol(without_ext: &str) -> String {
-    let (normalized, _) = without_ext.chars().fold(
-        (String::new(), false),
-        |(mut s, prev_under), ch| {
-            let mapped = if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            };
-            if mapped == '_' {
-                if !prev_under {
-                    s.push('_');
+    let (normalized, _) =
+        without_ext
+            .chars()
+            .fold((String::new(), false), |(mut s, prev_under), ch| {
+                let mapped = if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '_'
+                };
+                if mapped == '_' {
+                    if !prev_under {
+                        s.push('_');
+                    }
+                    (s, true)
+                } else {
+                    s.push(mapped);
+                    (s, false)
                 }
-                (s, true)
-            } else {
-                s.push(mapped);
-                (s, false)
-            }
-        },
-    );
+            });
 
     let trimmed = normalized.trim_matches('_');
     let base = if trimmed.is_empty() { "index" } else { trimmed };
@@ -348,7 +345,10 @@ mod tests {
         write_file(&src.join("api/users/[id].rs"), "pub fn router() {}");
 
         let routes = build_api_routes(&src).expect("routes should build");
-        let patterns = routes.iter().map(|r| r.pattern.as_str()).collect::<Vec<_>>();
+        let patterns = routes
+            .iter()
+            .map(|r| r.pattern.as_str())
+            .collect::<Vec<_>>();
 
         assert!(patterns.contains(&"/api"), "index.rs -> /api");
         assert!(patterns.contains(&"/api/todos"));

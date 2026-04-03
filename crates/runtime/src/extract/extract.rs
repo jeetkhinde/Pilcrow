@@ -1,6 +1,6 @@
 // ./crates/pilcrow/src/extract.rs
 
-use crate::headers::SilcrowTarget;
+use crate::response::headers::SilcrowTarget;
 use axum::{
     async_trait,
     extract::FromRequestParts,

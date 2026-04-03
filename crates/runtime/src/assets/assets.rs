@@ -3,7 +3,7 @@
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-pub const SILCROW_JS: &str = include_str!("../assets/silcrow.js");
+pub const SILCROW_JS: &str = include_str!("../../assets/silcrow.js");
 
 pub async fn serve_silcrow_js() -> Response {
     (

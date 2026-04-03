@@ -3,13 +3,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::codegen::{
+use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files};
+use crate::templating::codegen::{
     GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
     write_generated_api_routes_module, write_generated_routes_module,
     write_generated_templates_module,
 };
-use crate::compiler::{split_html_module, transpile_component_tags};
-use crate::discovery::{DiscoveredHtmlFiles, discover_html_files};
+use crate::templating::compiler::{split_html_module, transpile_component_tags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {

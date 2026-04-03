@@ -7,7 +7,7 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use syn::parse_quote;
 
-use crate::discovery::{build_api_routes, build_page_routes};
+use crate::routing::discovery::{build_api_routes, build_page_routes};
 
 /// One generated page route entry for build-time manifests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,9 +81,7 @@ pub fn render_generated_api_routes_module(entries: &[GeneratedApiRoute]) -> Stri
     out.push_str("    GENERATED_API_ROUTES\n");
     out.push_str("}\n\n");
     out.push_str("#[allow(dead_code)]\n");
-    out.push_str(
-        "pub fn register_generated_api_routes<R, F>(router: R, register: F) -> R\n",
-    );
+    out.push_str("pub fn register_generated_api_routes<R, F>(router: R, register: F) -> R\n");
     out.push_str("where\n");
     out.push_str("    F: FnMut(R, &'static GeneratedApiRoute) -> R,\n");
     out.push_str("{\n");
@@ -683,7 +681,10 @@ mod tests {
         write_file(&src.join("api/users/[id].rs"), "pub fn router() {}");
 
         let entries = build_generated_api_manifest(&src).expect("manifest should build");
-        let patterns = entries.iter().map(|e| e.pattern.as_str()).collect::<Vec<_>>();
+        let patterns = entries
+            .iter()
+            .map(|e| e.pattern.as_str())
+            .collect::<Vec<_>>();
 
         assert!(patterns.contains(&"/api/todos"));
         assert!(patterns.contains(&"/api/users/:id"));
@@ -721,8 +722,8 @@ mod tests {
         write_file(&src.join("api/todos.rs"), "pub fn router() {}");
         write_file(&src.join("api/users/[id].rs"), "pub fn router() {}");
 
-        let entries =
-            write_generated_api_routes_module(&src, &out_file).expect("should write generated file");
+        let entries = write_generated_api_routes_module(&src, &out_file)
+            .expect("should write generated file");
         assert_eq!(entries.len(), 2);
         assert!(out_file.exists());
 

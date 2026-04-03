@@ -2,7 +2,7 @@
 ///
 /// Pure functional parsing of file-based route patterns into typed segments.
 /// All functions are **pure**: same input → same output, no side effects.
-use crate::ParameterConstraint;
+use crate::routing::constraint::ParameterConstraint;
 
 /// Represents different types of route pattern segments
 ///
