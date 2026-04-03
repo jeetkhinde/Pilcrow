@@ -11,8 +11,13 @@ pub enum RestClientError {
 }
 
 pub trait TodosApi: Send + Sync {
-    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>>;
-    fn create_todo(&self, title: String) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>>;
+    fn list_todos(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>>;
+    fn create_todo(
+        &self,
+        title: String,
+    ) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>>;
 }
 
 #[derive(Clone)]
@@ -31,7 +36,9 @@ impl RestTodosClient {
 }
 
 impl TodosApi for RestTodosClient {
-    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>> {
+    fn list_todos(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, RestClientError>> + Send + '_>> {
         Box::pin(async {
             let response = self
                 .client
@@ -45,7 +52,10 @@ impl TodosApi for RestTodosClient {
         })
     }
 
-    fn create_todo(&self, title: String) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>> {
+    fn create_todo(
+        &self,
+        title: String,
+    ) -> Pin<Box<dyn Future<Output = Result<TodoDto, RestClientError>> + Send + '_>> {
         Box::pin(async move {
             let response = self
                 .client

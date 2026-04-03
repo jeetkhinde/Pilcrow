@@ -4,9 +4,9 @@
 /// All functions are **pure**: same input → same output, no side effects.
 use std::collections::HashMap;
 
+use super::pattern::PatternSegmentType;
 use super::pattern::classify_segment;
 use crate::ParameterConstraint;
-use super::pattern::PatternSegmentType;
 
 /// Parses a file path pattern into route components (pure function)
 ///

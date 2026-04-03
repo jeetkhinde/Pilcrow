@@ -78,7 +78,12 @@ async fn json_with_all_modifiers() {
         .into_response();
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(
-        response.headers().get("x-custom").unwrap().to_str().unwrap(),
+        response
+            .headers()
+            .get("x-custom")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "value"
     );
 }

@@ -8,10 +8,10 @@ license = "MIT"
 repository = "https://github.com/jeetkhinde/pilcrow"
 
 [lib]
-name = "pilcrow"
+name = "runtime"
 path = "src/lib.rs"
 [dependencies]
-pilcrow-macros = { path = "../pilcrow-macros" }
+pilcrow-macros = { path = "../macros" }
 axum = { version = "0.7", features = ["ws"] }
 cookie = "0.18"
 futures-core = "0.3"
@@ -36,4 +36,3 @@ hyper = "1"
 crc32fast = "1"
 minifier = "0.3"
 pilcrow-routekit = { path = "../routekit" }
-

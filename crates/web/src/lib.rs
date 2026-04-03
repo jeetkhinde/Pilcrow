@@ -2,22 +2,22 @@
 //! This crate is the required entrypoint for convention-based `web` apps.
 
 // ── Response builders ────────────────────────────────────────
-pub use pilcrow::{json, navigate, status};
 pub use pilcrow::response::{
     ErrorResponse, JsonResponse, NavigateResponse, ResponseExt, ToastLevel,
 };
+pub use pilcrow::{json, navigate, status};
 
 // ── Request handling ─────────────────────────────────────────
 pub use pilcrow::{RequestMode, SilcrowRequest};
 
 // ── Status & response primitives ─────────────────────────────
-pub use pilcrow::StatusCode;
 pub use pilcrow::Response;
+pub use pilcrow::StatusCode;
 
 // ── SSE ──────────────────────────────────────────────────────
 pub use pilcrow::{
-    EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute,
-    interval, sse_raw, sse_stream, watch,
+    EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute, interval, sse_raw, sse_stream,
+    watch,
 };
 
 // ── WebSocket ────────────────────────────────────────────────

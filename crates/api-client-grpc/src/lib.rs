@@ -19,14 +19,18 @@ pub enum GrpcClientError {
 }
 
 pub trait TodosGrpcApi: Send + Sync {
-    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>>;
+    fn list_todos(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnimplementedTodosGrpcClient;
 
 impl TodosGrpcApi for UnimplementedTodosGrpcClient {
-    fn list_todos(&self) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>> {
+    fn list_todos(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<TodoDto>, GrpcClientError>> + Send + '_>> {
         Box::pin(async { Err(GrpcClientError::Unavailable) })
     }
 }
