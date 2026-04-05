@@ -1,7 +1,4 @@
 ---
-import MainLayout from "layouts/MainLayout.html";
-import StatusBadge from "components/StatusBadge.html";
-
 #[derive(Debug, Clone)]
 pub struct TodoView {
 pub id: i64,
@@ -19,12 +16,12 @@ pub todos: Vec<TodoView>,
     <h1>{{ title }}</h1>
     <p>Canonical Pilcrow sandbox: browser -> web (BFF) -> backend -> web -> browser.</p>
 
-    <form action="/todos" method="post">
+    <form s-post="/api/todos" s-target="#todo-list" s-swap="beforeend">
       <input name="title" placeholder="New todo" required />
       <button type="submit">Create</button>
     </form>
 
-    <p>Live counter: <strong id="live-counter">0</strong></p>
+    <p>Live counter: <strong id="live-counter" s-sse="{{ sse_path }}" s-swap="innerHTML">0</strong></p>
     <p>
       <StatusBadge text="SSE stream active" />
     </p>
@@ -35,17 +32,4 @@ pub todos: Vec<TodoView>,
       {% endfor %}
     </ul>
 
-    <script>
-      (function () {
-        var source = new EventSource("{{ sse_path }}");
-        source.addEventListener("patch", function (event) {
-          var payload = JSON.parse(event.data);
-          var target = document.querySelector(payload.target);
-          if (!target) return;
-          if (!payload.data) return;
-          if (payload.data.count === undefined) return;
-          target.textContent = String(payload.data.count);
-        });
-      })();
-    </script>
   </MainLayout>
