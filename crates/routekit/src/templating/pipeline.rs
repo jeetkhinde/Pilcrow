@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files};
 use crate::templating::codegen::{
     GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
-    write_generated_api_routes_module, write_generated_routes_module,
+    write_generated_api_routes_module, write_generated_app_module, write_generated_routes_module,
     write_generated_templates_module,
 };
 use crate::templating::compiler::{split_html_module, transpile_component_tags};
@@ -38,6 +38,7 @@ pub struct CompilerOutput {
     pub generated_templates: Vec<GeneratedTemplateEntry>,
     pub generated_api_routes_file: PathBuf,
     pub generated_api_routes: Vec<GeneratedApiRoute>,
+    pub generated_app_file: PathBuf,
 }
 
 /// Full compile pipeline for Pilcrow `.html` sources.
@@ -71,12 +72,22 @@ pub fn compile_to_out_dir(
             template_source: file.transpiled_template.clone(),
         })
         .collect::<Vec<_>>();
-    let generated_templates =
+    let templates_output =
         write_generated_templates_module(&template_codegen_inputs, &generated_templates_file)?;
+    let generated_templates = templates_output.entries;
 
     let generated_api_routes_file = out_dir.join("generated_api_routes.rs");
     let generated_api_routes =
         write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
+
+    // Write the unified app module with auto-wired router.
+    let generated_app_file = out_dir.join("generated_app.rs");
+    write_generated_app_module(
+        &generated_routes,
+        &generated_api_routes,
+        &templates_output.load_map,
+        &generated_app_file,
+    )?;
 
     files.sort_by(|a, b| {
         a.template_output_path
@@ -92,6 +103,7 @@ pub fn compile_to_out_dir(
         generated_templates,
         generated_api_routes_file,
         generated_api_routes,
+        generated_app_file,
     })
 }
 

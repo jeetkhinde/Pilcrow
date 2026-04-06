@@ -40,3 +40,36 @@ pub use pilcrow_core::{
 pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
 pub use runtime::start;
+
+// ── Doc-hidden re-exports for generated code ────────────────
+#[doc(hidden)]
+pub use axum;
+#[doc(hidden)]
+pub use pilcrow_client;
+
+/// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
+///
+/// This macro eliminates all manual route wiring. Place it at the top of your
+/// `main.rs` and use `pilcrow_router()` to get a fully-wired `axum::Router`:
+///
+/// ```ignore
+/// pilcrow_web::pilcrow_app!();
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let app = pilcrow_router();
+///     pilcrow_web::start(app).await
+/// }
+/// ```
+#[macro_export]
+macro_rules! pilcrow_app {
+    () => {
+        mod __pilcrow_app {
+            include!(concat!(env!("OUT_DIR"), "/generated_app.rs"));
+        }
+
+        fn pilcrow_router() -> ::pilcrow_web::axum::Router {
+            __pilcrow_app::build_router()
+        }
+    };
+}

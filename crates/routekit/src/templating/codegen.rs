@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
@@ -131,6 +132,8 @@ pub struct GeneratedTemplateEntry {
 pub struct GeneratedTemplatesModule {
     pub source: String,
     pub entries: Vec<GeneratedTemplateEntry>,
+    /// Map from module_name to whether the frontmatter contains a `load()` fn.
+    pub load_map: HashMap<String, bool>,
 }
 
 /// Build a page-route manifest from `src/pages/**/*.html`.
@@ -264,9 +267,10 @@ pub fn render_generated_templates_module(
     out.push_str("}\n\n");
 
     let mut metadata = Vec::with_capacity(ordered.len());
+    let mut load_map = HashMap::new();
 
     for entry in ordered {
-        let frontmatter = instrument_frontmatter(
+        let instrumented = instrument_frontmatter(
             &entry.rust_frontmatter,
             &entry.template_source,
             &entry.source_path,
@@ -274,9 +278,11 @@ pub fn render_generated_templates_module(
         let module_ident = syn::Ident::new(&entry.module_name, Span::call_site());
         let render_ident = syn::Ident::new(&entry.render_symbol, Span::call_site());
 
+        load_map.insert(entry.module_name.clone(), instrumented.has_load);
+
         let _ = writeln!(out, "#[allow(dead_code)]");
         let _ = writeln!(out, "pub mod {module_ident} {{");
-        for line in frontmatter.lines() {
+        for line in instrumented.source.lines() {
             out.push_str("    ");
             out.push_str(line);
             out.push('\n');
@@ -316,14 +322,21 @@ pub fn render_generated_templates_module(
     Ok(GeneratedTemplatesModule {
         source: out,
         entries: metadata,
+        load_map,
     })
+}
+
+/// Output from writing generated templates module.
+pub struct WrittenTemplatesOutput {
+    pub entries: Vec<GeneratedTemplateEntry>,
+    pub load_map: HashMap<String, bool>,
 }
 
 /// Generate and write the compiled templates module to `out_file`.
 pub fn write_generated_templates_module(
     entries: &[TemplateCodegenInput],
     out_file: impl AsRef<Path>,
-) -> io::Result<Vec<GeneratedTemplateEntry>> {
+) -> io::Result<WrittenTemplatesOutput> {
     let generated = render_generated_templates_module(entries)?;
 
     let out_file = out_file.as_ref();
@@ -332,14 +345,23 @@ pub fn write_generated_templates_module(
     }
     fs::write(out_file, generated.source)?;
 
-    Ok(generated.entries)
+    Ok(WrittenTemplatesOutput {
+        entries: generated.entries,
+        load_map: generated.load_map,
+    })
+}
+
+/// Result of instrumenting a template's Rust frontmatter.
+struct InstrumentedFrontmatter {
+    source: String,
+    has_load: bool,
 }
 
 fn instrument_frontmatter(
     rust_frontmatter: &str,
     template_source: &str,
     source_path: &str,
-) -> io::Result<String> {
+) -> io::Result<InstrumentedFrontmatter> {
     let mut file = syn::parse_file(rust_frontmatter).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -377,6 +399,10 @@ fn instrument_frontmatter(
         ));
     }
 
+    let has_load = file.items.iter().any(|item| {
+        matches!(item, syn::Item::Fn(f) if f.sig.ident == "load")
+    });
+
     for item in &mut file.items {
         match item {
             syn::Item::Struct(item_struct) => ensure_serialize_derive(&mut item_struct.attrs),
@@ -396,6 +422,11 @@ fn instrument_frontmatter(
         unreachable!("validated Props item is not struct")
     };
 
+    // Inject Default derive for static pages (no load function).
+    if !has_load && !has_derive_trait(&props_struct.attrs, &["Default"]) {
+        props_struct.attrs.push(parse_quote!(#[derive(Default)]));
+    }
+
     inject_props_attrs(props_struct, template_source);
     let mut out = String::new();
     out.push_str("#[allow(unused_imports)]\n");
@@ -408,7 +439,10 @@ fn instrument_frontmatter(
         out.push_str(&item.into_token_stream().to_string());
         out.push('\n');
     }
-    Ok(out)
+    Ok(InstrumentedFrontmatter {
+        source: out,
+        has_load,
+    })
 }
 
 fn inject_props_attrs(props: &mut syn::ItemStruct, template_source: &str) {
@@ -515,6 +549,153 @@ fn normalize_path_text(path: &Path) -> String {
 
 fn rust_string(value: &str) -> String {
     format!("{value:?}")
+}
+
+// ── App module codegen (auto-wired router) ──────────────────
+
+/// Build a nested `mod` tree from API route module paths.
+///
+/// Given `["api::todos", "api::users::id"]`, produces:
+/// ```text
+/// mod api {
+///     pub mod todos;
+///     pub mod users {
+///         pub mod id;
+///     }
+/// }
+/// ```
+fn render_mod_tree(api_entries: &[GeneratedApiRoute]) -> String {
+    #[derive(Default)]
+    struct ModNode {
+        children: std::collections::BTreeMap<String, ModNode>,
+        is_leaf: bool,
+    }
+
+    fn insert(node: &mut ModNode, segments: &[&str]) {
+        if segments.is_empty() {
+            return;
+        }
+        let child = node
+            .children
+            .entry(segments[0].to_string())
+            .or_default();
+        if segments.len() == 1 {
+            child.is_leaf = true;
+        } else {
+            insert(child, &segments[1..]);
+        }
+    }
+
+    fn emit(node: &ModNode, indent: usize) -> String {
+        let mut out = String::new();
+        let pad = "    ".repeat(indent);
+        for (name, child) in &node.children {
+            if child.is_leaf && child.children.is_empty() {
+                let _ = writeln!(out, "{pad}pub mod {name};");
+            } else {
+                let _ = writeln!(out, "{pad}pub mod {name} {{");
+                out.push_str(&emit(child, indent + 1));
+                let _ = writeln!(out, "{pad}}}");
+            }
+        }
+        out
+    }
+
+    let mut root = ModNode::default();
+    for entry in api_entries {
+        let segments: Vec<&str> = entry.module_path.split("::").collect();
+        insert(&mut root, &segments);
+    }
+
+    emit(&root, 0)
+}
+
+/// Render the full app module that auto-wires all page and API routes.
+///
+/// This generates `generated_app.rs` containing:
+/// - The API `mod` tree
+/// - An include of `generated_templates.rs`
+/// - A `build_router()` function returning a fully-wired `axum::Router`
+pub fn render_generated_app_module(
+    page_entries: &[GeneratedPageRoute],
+    api_entries: &[GeneratedApiRoute],
+    load_map: &HashMap<String, bool>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("// @generated by pilcrow-routekit. Do not edit manually.\n\n");
+
+    // API mod tree
+    let mod_tree = render_mod_tree(api_entries);
+    if !mod_tree.is_empty() {
+        out.push_str(&mod_tree);
+        out.push('\n');
+    }
+
+    // Include generated templates
+    out.push_str("#[allow(dead_code)]\n");
+    out.push_str("mod __pilcrow_gen {\n");
+    out.push_str("    include!(concat!(env!(\"OUT_DIR\"), \"/generated_templates.rs\"));\n");
+    out.push_str("}\n\n");
+
+    // build_router function
+    // Use pilcrow_web re-exports so consumers don't need direct axum/pilcrow-client deps.
+    out.push_str("#[allow(dead_code)]\n");
+    out.push_str("pub fn build_router() -> ::pilcrow_web::axum::Router {\n");
+    out.push_str("    ::pilcrow_web::axum::Router::new()\n");
+
+    // Page routes
+    for entry in page_entries {
+        let has_load = load_map.get(&entry.symbol).copied().unwrap_or(false);
+        let pattern = rust_string(&entry.pattern);
+        let mod_name = &entry.symbol;
+        let render_fn = &entry.render_symbol;
+
+        if has_load {
+            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|client: ::pilcrow_web::pilcrow_client::PilcrowClient| async move {{");
+            let _ = writeln!(out, "            let props = __pilcrow_gen::{mod_name}::load(client).await?;");
+            let _ = writeln!(out, "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props)");
+            out.push_str("                .map_err(|_| ::pilcrow_web::AppError::Internal)?;\n");
+            out.push_str("            Ok::<_, ::pilcrow_web::AppError>(::pilcrow_web::axum::response::Html(html))\n");
+            out.push_str("        }))");
+        } else {
+            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|| async move {{");
+            let _ = writeln!(out, "            let props = __pilcrow_gen::{mod_name}::Props::default();");
+            let _ = writeln!(out, "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props)");
+            out.push_str("                .map_err(|_| ::pilcrow_web::AppError::Internal)?;\n");
+            out.push_str("            Ok::<_, ::pilcrow_web::AppError>(::pilcrow_web::axum::response::Html(html))\n");
+            out.push_str("        }))");
+        }
+        out.push('\n');
+    }
+
+    // API routes
+    for entry in api_entries {
+        let pattern = rust_string(&entry.pattern);
+        let mod_path = &entry.module_path;
+        let _ = writeln!(out, "        .nest({pattern}, {mod_path}::router())");
+    }
+
+    out.push_str("}\n");
+
+    out
+}
+
+/// Generate and write the app module to `out_file`.
+pub fn write_generated_app_module(
+    page_entries: &[GeneratedPageRoute],
+    api_entries: &[GeneratedApiRoute],
+    load_map: &HashMap<String, bool>,
+    out_file: impl AsRef<Path>,
+) -> io::Result<()> {
+    let source = render_generated_app_module(page_entries, api_entries, load_map);
+
+    let out_file = out_file.as_ref();
+    if let Some(parent) = out_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(out_file, source)?;
+
+    Ok(())
 }
 
 #[cfg(test)]
