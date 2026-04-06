@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/web", "apps/backend"]
+members = ["apps/web", "apps/backend", "apps/demo_todo"]
 resolver = "2"
 
 [patch.crates-io]
@@ -8,3 +8,4 @@ pilcrow-web = { path = "../crates/web" }
 pilcrow-core = { path = "../crates/core" }
 pilcrow-runtime = { path = "../crates/runtime" }
 pilcrow-macros = { path = "../crates/macros" }
+pilcrow-client = { path = "../crates/client" }

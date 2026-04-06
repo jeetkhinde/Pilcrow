@@ -1,0 +1,41 @@
+---
+import MainLayout from "layouts/MainLayout.html";
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Todo {
+pub id: i64,
+pub title: String,
+pub done: bool,
+}
+
+pub struct Props {
+pub title: String,
+pub todos: Vec<Todo>,
+  }
+
+  pub async fn load(client: PilcrowClient) -> PilcrowResult<Props> {
+    let todos: Vec<Todo> = client.get("/api/todos").await?;
+      Ok(Props {
+      title: "Demo Todos".to_string(),
+      todos,
+      })
+      }
+      ---
+      <MainLayout title={title.clone()}>
+        <h1>{{ title }}</h1>
+
+        <form s-post="/api/todos" s-target="#todo-list" s-swap="beforeend">
+          <input name="title" placeholder="New todo" required />
+          <button type="submit">Add</button>
+        </form>
+
+        <ul id="todo-list">
+          {% for todo in todos %}
+          <li data-id="{{ todo.id }}">
+            {% if todo.done %}[x]{% else %}[ ]{% endif %} {{ todo.title }}
+          </li>
+          {% endfor %}
+        </ul>
+      </MainLayout>

@@ -5,8 +5,9 @@ pub mod extract;
 pub mod generated_routes;
 pub mod response;
 pub mod sse;
+pub mod start;
 pub mod ws;
-
+pub use start::start;
 // ── Core API re-exports ──────────────────────────────────────
 pub use axum::http::StatusCode;
 pub use axum::response::Response;

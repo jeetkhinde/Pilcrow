@@ -5,6 +5,7 @@ members = [
     "crates/macros",
     "crates/core",
     "crates/web",
+    "crates/client",
 ]
 exclude = ["tools/cli", "sandbox"]
 resolver = "2"

@@ -5,6 +5,12 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
+mod handler;
+
+#[proc_macro_attribute]
+pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    handler::expand(item)
+}
 
 struct SseEntry {
     stream: Expr,

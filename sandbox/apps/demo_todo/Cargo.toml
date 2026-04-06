@@ -1,0 +1,16 @@
+[package]
+name = "demo-todo"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+pilcrow-routekit = "0.1.0"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+pilcrow-web = "0.1.0"
+pilcrow-macros = "0.1.0"
+pilcrow-client = "0.1.0"
+serde = { version = "1", features = ["derive"] }
+askama = "0.12"
+axum = "0.7"

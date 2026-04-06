@@ -351,6 +351,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
+name = "demo-todo"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "axum",
+ "pilcrow-client",
+ "pilcrow-macros",
+ "pilcrow-routekit",
+ "pilcrow-web",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -946,6 +960,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilcrow-client"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "pilcrow-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pilcrow-core"
 version = "0.1.0"
 dependencies = [
@@ -959,6 +985,7 @@ dependencies = [
 name = "pilcrow-macros"
 version = "0.1.0"
 dependencies = [
+ "pilcrow-client",
  "proc-macro2",
  "quote",
  "syn",
@@ -984,8 +1011,10 @@ dependencies = [
  "futures-core",
  "headers",
  "minifier",
+ "pilcrow-core",
  "pilcrow-macros",
  "pilcrow-routekit",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -998,7 +1027,9 @@ dependencies = [
 name = "pilcrow-web"
 version = "0.1.0"
 dependencies = [
+ "pilcrow-client",
  "pilcrow-core",
+ "pilcrow-macros",
  "pilcrow-runtime",
 ]
 

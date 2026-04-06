@@ -36,3 +36,7 @@ pub use runtime::assets;
 pub use pilcrow_core::{
     ApiEnvelope, AppError, AppResult, BackendConfig, Meta, PilcrowConfig, WebConfig,
 };
+
+pub use pilcrow_client::PilcrowClient;
+pub use pilcrow_macros::handler;
+pub use runtime::start;

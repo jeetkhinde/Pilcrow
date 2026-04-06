@@ -285,7 +285,7 @@ pub fn render_generated_templates_module(
             out,
             "    pub fn {render_ident}(props: Props) -> Result<String, askama::Error> {{"
         );
-        out.push_str("        askama::Template::render(&props)\n");
+        out.push_str("        Ok(askama::Template::render(&props)?)\n");
         out.push_str("    }\n");
         out.push_str("}\n\n");
 
@@ -397,13 +397,17 @@ fn instrument_frontmatter(
     };
 
     inject_props_attrs(props_struct, template_source);
-
     let mut out = String::new();
+    out.push_str("#[allow(unused_imports)]\n");
+    out.push_str("use pilcrow_client::PilcrowClient;\n");
+    out.push_str("#[allow(unused_imports)]\n");
+    out.push_str("use pilcrow_web::AppResult;\n");
+    out.push_str("#[allow(unused_imports)]\n");
+    out.push_str("use pilcrow_web::AppResult as PilcrowResult;\n");
     for item in file.items {
         out.push_str(&item.into_token_stream().to_string());
         out.push('\n');
     }
-
     Ok(out)
 }
 
