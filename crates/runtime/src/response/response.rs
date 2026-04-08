@@ -281,3 +281,4 @@ impl ResponseExt for NavigateResponse {
         &mut self.base
     }
 }
+

@@ -64,6 +64,9 @@ pub use pilcrow_client;
 #[macro_export]
 macro_rules! pilcrow_app {
     () => {
+        // API mod tree at crate root so `mod api { pub mod health; }` resolves to src/api/health.rs
+        include!(concat!(env!("OUT_DIR"), "/generated_api_mods.rs"));
+
         mod __pilcrow_app {
             include!(concat!(env!("OUT_DIR"), "/generated_app.rs"));
         }

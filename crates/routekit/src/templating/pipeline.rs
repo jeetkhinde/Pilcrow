@@ -81,13 +81,14 @@ pub fn compile_to_out_dir(
         write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
 
     // Write the unified app module with auto-wired router.
-    let generated_app_file = out_dir.join("generated_app.rs");
     write_generated_app_module(
         &generated_routes,
         &generated_api_routes,
         &templates_output.load_map,
-        &generated_app_file,
+        src_root,
+        out_dir,
     )?;
+    let generated_app_file = out_dir.join("generated_app.rs");
 
     files.sort_by(|a, b| {
         a.template_output_path
