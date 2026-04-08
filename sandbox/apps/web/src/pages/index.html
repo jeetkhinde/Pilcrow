@@ -1,35 +1,19 @@
 ---
+import MainLayout from "layouts/MainLayout.html";
+
 pub struct Props {
-    pub title: String,
-    pub message: String,
+pub title: String,
+pub message: String,
 }
 
-impl Default for Props {
-    fn default() -> Self {
-        Self {
-            title: "Pilcrow".to_string(),
-            message: "Welcome to Pilcrow — an Astro-like web framework for Rust.".to_string(),
-        }
-    }
-}
----
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8" />
-    <title>{{ title }}</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 640px; margin: 4rem auto; padding: 0 1rem; }
-        h1 { font-size: 2rem; }
-        nav a { margin-right: 1rem; }
-    </style>
-</head>
-<body>
-    <nav>
-        <a href="/">Home</a>
-        <a href="/about">About</a>
-    </nav>
-    <h1>{{ title }}</h1>
-    <p>{{ message }}</p>
-</body>
-</html>
+pub async fn load(_client: PilcrowClient) -> AppResult<Props> {
+    let data = crate::api::index::fetch();
+    Ok(Props {
+    title: data.title,
+    message: data.message,
+    })}
+    ---
+    <MainLayout title={title.clone()}>
+        <h1>{{ title }}</h1>
+        <p>{{ message }}</p>
+    </MainLayout>

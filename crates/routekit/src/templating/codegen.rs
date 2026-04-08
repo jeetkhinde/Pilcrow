@@ -692,7 +692,7 @@ pub fn render_generated_app_module(
         let render_fn = &entry.render_symbol;
 
         if has_load {
-            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|client: ::pilcrow_web::PilcrowClient| async move -> ::pilcrow_web::axum::response::Response {{");
+            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|client: ::pilcrow_web::PilcrowClient| async move {{");
             let _ = writeln!(out, "            use ::pilcrow_web::axum::response::IntoResponse;");
             let _ = writeln!(out, "            let props = match __pilcrow_gen::{mod_name}::load(client).await {{");
             out.push_str("                Ok(p) => p,\n");
