@@ -1,0 +1,66 @@
+---
+import MainLayout from "layouts/MainLayout.html";
+import ProductCard from "components/ProductCard.html";
+
+use pilcrow_web::AppError;
+
+#[derive(serde::Deserialize)]
+pub struct Product {
+    pub id: u32,
+    pub title: String,
+    pub price: f64,
+    pub image: String,
+    pub category: String,
+}
+
+pub struct Category {
+    pub label: String,
+    pub slug: String,
+}
+
+pub struct Props {
+    pub products: Vec<Product>,
+    pub categories: Vec<Category>,
+}
+
+pub async fn load() -> AppResult<Props> {
+    let products: Vec<Product> = ::reqwest::get("https://fakestoreapi.com/products")
+        .await
+        .map_err(|_| AppError::Internal)?
+        .json()
+        .await
+        .map_err(|_| AppError::Internal)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut raw_cats: Vec<String> = products
+        .iter()
+        .map(|p| p.category.clone())
+        .filter(|c| seen.insert(c.clone()))
+        .collect();
+    raw_cats.sort();
+
+    let categories = raw_cats
+        .into_iter()
+        .map(|label| {
+            let slug = label.replace(' ', "%20");
+            Category { label, slug }
+        })
+        .collect();
+
+    Ok(Props { products, categories })
+}
+---
+<MainLayout title="Products">
+    <h1>Products</h1>
+    <div class="categories">
+        <button s-action="/products" s-target="#page-content">All</button>
+        {% for cat in &categories %}
+        <button s-action="/api/products?category={{ cat.slug }}" s-target="#product-grid">{{ cat.label }}</button>
+        {% endfor %}
+    </div>
+    <div id="product-grid" class="product-grid">
+        {% for product in &products %}
+        <ProductCard id={product.id} title={product.title} price={product.price} image={product.image} category={product.category} />
+        {% endfor %}
+    </div>
+</MainLayout>
