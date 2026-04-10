@@ -2,18 +2,24 @@
 import MainLayout from "layouts/MainLayout.html";
 
 pub struct Props {
-pub title: String,
-pub message: String,
+pub title: &'static str,
+pub message: &'static str,
 }
 
-pub async fn load(_client: PilcrowClient) -> AppResult<Props> {
-    let data = crate::api::index::fetch();
-    Ok(Props {
-    title: data.title,
-    message: data.message,
-    })}
-    ---
-    <MainLayout title={title.clone()}>
-        <h1>{{ title }}</h1>
-        <p>{{ message }}</p>
-    </MainLayout>
+pub fn load() -> Props {
+// Page owns its read path. In a real app this would call a backend
+// service, query a DB, or read from a CMS.
+Ok {
+title: "Pilcrow",
+message: "Welcome to Pilcrow — an Astro-like web framework for Rust.",
+}
+}
+props! {
+title: "Pilcrow",
+message: "Welcome to Pilcrow — an Astro-like web framework for Rust."
+}
+---
+<MainLayout title={title}>
+    <h1>{{ title }}</h1>
+    <p>{{ message }}</p>
+</MainLayout>

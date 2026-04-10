@@ -2,19 +2,18 @@
 import MainLayout from "layouts/MainLayout.html";
 
 pub struct Props {
-    pub title: String,
-    pub description: String,
+    pub title: &'static str,
+    pub description: &'static str,
 }
 
-pub async fn load(_client: PilcrowClient) -> AppResult<Props> {
-    let data = crate::api::about::fetch();
-    Ok(Props {
-        title: data.title,
-        description: data.description,
-    })
+pub fn load() -> Props {
+    Props {
+        title: "About",
+        description: "Pilcrow compiles .html templates with Rust frontmatter into type-safe Askama render functions at build time.",
+    }
 }
 ---
-<MainLayout title={title.clone()}>
+<MainLayout title={title}>
     <h1>{{ title }}</h1>
     <p>{{ description }}</p>
 </MainLayout>

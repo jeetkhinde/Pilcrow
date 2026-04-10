@@ -1815,15 +1815,23 @@ pub struct Props {
     }
 
     #[test]
-    fn compile_pipeline_fails_on_invalid_html_module() {
-        let root = mk_temp_root("compile_pipeline_bad");
+    fn compile_pipeline_accepts_fenceless_html_as_static_page() {
+        let root = mk_temp_root("compile_pipeline_fenceless");
         let src = root.join("src");
         let out = root.join("out");
 
+        // No `---` frontmatter fences → treated as a pure static page.
+        // Routekit synthesizes an empty `pub struct Props;`.
         write_file(&src.join("pages/index.html"), "<h1>Missing fences</h1>");
 
-        let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let output = compile_to_out_dir(&src, &out).expect("fenceless page should compile");
+        let entry = output
+            .preprocessed_files
+            .iter()
+            .find(|f| f.module_name == "page_index")
+            .expect("page_index should be present");
+        assert_eq!(entry.rust_frontmatter, "");
+        assert_eq!(entry.transpiled_template, "<h1>Missing fences</h1>");
 
         cleanup(&root);
     }

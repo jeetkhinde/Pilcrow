@@ -127,13 +127,24 @@ pub struct GeneratedTemplateEntry {
     pub render_symbol: String,
 }
 
+/// Shape of a page's `load()` function. Absent means the page is static.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LoadSignature {
+    /// Whether `load` was declared `async fn`.
+    pub is_async: bool,
+    /// Whether the return type is `Result<_, _>` / `AppResult<_>`.
+    pub returns_result: bool,
+    /// Whether the parameter list declares a `PilcrowClient` argument.
+    pub wants_client: bool,
+}
+
 /// In-memory generated module + metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedTemplatesModule {
     pub source: String,
     pub entries: Vec<GeneratedTemplateEntry>,
-    /// Map from module_name to whether the frontmatter contains a `load()` fn.
-    pub load_map: HashMap<String, bool>,
+    /// Map from module_name to `Some(sig)` when the frontmatter contains a `load()` fn.
+    pub load_map: HashMap<String, Option<LoadSignature>>,
 }
 
 /// Build a page-route manifest from `src/pages/**/*.html`.
@@ -278,7 +289,7 @@ pub fn render_generated_templates_module(
         let module_ident = syn::Ident::new(&entry.module_name, Span::call_site());
         let render_ident = syn::Ident::new(&entry.render_symbol, Span::call_site());
 
-        load_map.insert(entry.module_name.clone(), instrumented.has_load);
+        load_map.insert(entry.module_name.clone(), instrumented.load_signature);
 
         let _ = writeln!(out, "#[allow(dead_code)]");
         let _ = writeln!(out, "pub mod {module_ident} {{");
@@ -291,7 +302,7 @@ pub fn render_generated_templates_module(
             out,
             "    pub fn {render_ident}(props: Props) -> Result<String, askama::Error> {{"
         );
-        out.push_str("        Ok(askama::Template::render(&props)?)\n");
+        out.push_str("        askama::Template::render(&props)\n");
         out.push_str("    }\n");
         out.push_str("}\n\n");
 
@@ -329,7 +340,7 @@ pub fn render_generated_templates_module(
 /// Output from writing generated templates module.
 pub struct WrittenTemplatesOutput {
     pub entries: Vec<GeneratedTemplateEntry>,
-    pub load_map: HashMap<String, bool>,
+    pub load_map: HashMap<String, Option<LoadSignature>>,
 }
 
 /// Generate and write the compiled templates module to `out_file`.
@@ -354,7 +365,7 @@ pub fn write_generated_templates_module(
 /// Result of instrumenting a template's Rust frontmatter.
 struct InstrumentedFrontmatter {
     source: String,
-    has_load: bool,
+    load_signature: Option<LoadSignature>,
 }
 
 fn instrument_frontmatter(
@@ -384,12 +395,6 @@ fn instrument_frontmatter(
         }
     }
 
-    if props_indices.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("frontmatter in {source_path} is missing required `pub struct Props`"),
-        ));
-    }
     if props_indices.len() > 1 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -399,8 +404,15 @@ fn instrument_frontmatter(
         ));
     }
 
-    let has_load = file.items.iter().any(|item| {
-        matches!(item, syn::Item::Fn(f) if f.sig.ident == "load")
+    // Detect `load()` function signature. Absent means the page/component is static.
+    let load_signature = file.items.iter().find_map(|item| {
+        if let syn::Item::Fn(f) = item
+            && f.sig.ident == "load"
+        {
+            Some(detect_load_signature(&f.sig))
+        } else {
+            None
+        }
     });
 
     let has_manual_default = file.items.iter().any(|item| {
@@ -421,7 +433,15 @@ fn instrument_frontmatter(
         }
     }
 
-    let props_index = props_indices[0];
+    // If the user didn't declare `pub struct Props`, synthesize a unit struct.
+    // This lets purely-static pages and components skip the ceremony entirely.
+    let props_index = if let Some(idx) = props_indices.first().copied() {
+        idx
+    } else {
+        file.items.push(parse_quote!(pub struct Props;));
+        file.items.len() - 1
+    };
+
     let props_item = file
         .items
         .get_mut(props_index)
@@ -433,7 +453,10 @@ fn instrument_frontmatter(
 
     // Inject Default derive for static pages (no load function),
     // but only if the user hasn't provided their own Default impl.
-    if !has_load && !has_manual_default && !has_derive_trait(&props_struct.attrs, &["Default"]) {
+    if load_signature.is_none()
+        && !has_manual_default
+        && !has_derive_trait(&props_struct.attrs, &["Default"])
+    {
         props_struct.attrs.push(parse_quote!(#[derive(Default)]));
     }
 
@@ -451,8 +474,44 @@ fn instrument_frontmatter(
     }
     Ok(InstrumentedFrontmatter {
         source: out,
-        has_load,
+        load_signature,
     })
+}
+
+/// Inspect a `load()` `fn` signature to decide how the generated handler
+/// should call it: sync vs async, infallible vs `Result`, with/without
+/// `PilcrowClient` injection.
+fn detect_load_signature(sig: &syn::Signature) -> LoadSignature {
+    let is_async = sig.asyncness.is_some();
+
+    let returns_result = match &sig.output {
+        syn::ReturnType::Default => false,
+        syn::ReturnType::Type(_, ty) => type_last_ident(ty)
+            .map(|ident| ident == "Result" || ident == "AppResult" || ident == "PilcrowResult")
+            .unwrap_or(false),
+    };
+
+    let wants_client = sig.inputs.iter().any(|arg| {
+        if let syn::FnArg::Typed(pat) = arg {
+            type_last_ident(&pat.ty)
+                .map(|ident| ident == "PilcrowClient")
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    });
+
+    LoadSignature {
+        is_async,
+        returns_result,
+        wants_client,
+    }
+}
+
+/// Return the last path segment ident for a type like `foo::Bar<T>` → `Bar`.
+fn type_last_ident(ty: &syn::Type) -> Option<&syn::Ident> {
+    let syn::Type::Path(tp) = ty else { return None };
+    tp.path.segments.last().map(|seg| &seg.ident)
 }
 
 fn inject_props_attrs(props: &mut syn::ItemStruct, template_source: &str) {
@@ -667,7 +726,7 @@ pub fn render_generated_api_mods(
 pub fn render_generated_app_module(
     page_entries: &[GeneratedPageRoute],
     api_entries: &[GeneratedApiRoute],
-    load_map: &HashMap<String, bool>,
+    load_map: &HashMap<String, Option<LoadSignature>>,
 ) -> String {
     let mut out = String::new();
     out.push_str("// @generated by pilcrow-routekit. Do not edit manually.\n\n");
@@ -686,27 +745,66 @@ pub fn render_generated_app_module(
 
     // Page routes
     for entry in page_entries {
-        let has_load = load_map.get(&entry.symbol).copied().unwrap_or(false);
+        let load_sig = load_map.get(&entry.symbol).copied().flatten();
         let pattern = rust_string(&entry.pattern);
         let mod_name = &entry.symbol;
         let render_fn = &entry.render_symbol;
 
-        if has_load {
-            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|client: ::pilcrow_web::PilcrowClient| async move {{");
-            let _ = writeln!(out, "            use ::pilcrow_web::axum::response::IntoResponse;");
-            let _ = writeln!(out, "            let props = match __pilcrow_gen::{mod_name}::load(client).await {{");
-            out.push_str("                Ok(p) => p,\n");
-            out.push_str("                Err(e) => return (::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),\n");
-            out.push_str("            };\n");
-            let _ = writeln!(out, "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");");
-            out.push_str("            ::pilcrow_web::axum::response::Html(html).into_response()\n");
-            out.push_str("        }))");
-        } else {
-            let _ = writeln!(out, "        .route({pattern}, ::pilcrow_web::axum::routing::get(|| async move {{");
-            let _ = writeln!(out, "            let props = __pilcrow_gen::{mod_name}::Props::default();");
-            let _ = writeln!(out, "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");");
-            out.push_str("            ::pilcrow_web::axum::response::Html(html)\n");
-            out.push_str("        }))");
+        match load_sig {
+            Some(sig) => {
+                let closure_args = if sig.wants_client {
+                    "client: ::pilcrow_web::PilcrowClient"
+                } else {
+                    ""
+                };
+                let call_args = if sig.wants_client { "client" } else { "" };
+                let call_expr = format!("__pilcrow_gen::{mod_name}::load({call_args})");
+                let awaited = if sig.is_async {
+                    format!("{call_expr}.await")
+                } else {
+                    call_expr
+                };
+
+                let _ = writeln!(
+                    out,
+                    "        .route({pattern}, ::pilcrow_web::axum::routing::get(|{closure_args}| async move {{"
+                );
+                out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+
+                if sig.returns_result {
+                    let _ = writeln!(out, "            let props = match {awaited} {{");
+                    out.push_str("                Ok(p) => p,\n");
+                    out.push_str("                Err(e) => return (::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),\n");
+                    out.push_str("            };\n");
+                } else {
+                    let _ = writeln!(out, "            let props = {awaited};");
+                }
+
+                let _ = writeln!(
+                    out,
+                    "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
+                );
+                out.push_str(
+                    "            ::pilcrow_web::axum::response::Html(html).into_response()\n",
+                );
+                out.push_str("        }))");
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "        .route({pattern}, ::pilcrow_web::axum::routing::get(|| async move {{"
+                );
+                let _ = writeln!(
+                    out,
+                    "            let props = __pilcrow_gen::{mod_name}::Props::default();"
+                );
+                let _ = writeln!(
+                    out,
+                    "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
+                );
+                out.push_str("            ::pilcrow_web::axum::response::Html(html)\n");
+                out.push_str("        }))");
+            }
         }
         out.push('\n');
     }
@@ -727,7 +825,7 @@ pub fn render_generated_app_module(
 pub fn write_generated_app_module(
     page_entries: &[GeneratedPageRoute],
     api_entries: &[GeneratedApiRoute],
-    load_map: &HashMap<String, bool>,
+    load_map: &HashMap<String, Option<LoadSignature>>,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
 ) -> io::Result<()> {
@@ -839,21 +937,21 @@ mod tests {
     }
 
     #[test]
-    fn render_generated_templates_module_fails_without_props() {
-        let err = render_generated_templates_module(&[TemplateCodegenInput {
+    fn render_generated_templates_module_synthesizes_missing_props() {
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
             module_name: "page_index".to_string(),
             render_symbol: "render_page_index".to_string(),
             source_path: "/tmp/src/pages/index.html".to_string(),
             rust_frontmatter: "pub fn helper() {}".to_string(),
             template_source: "<h1>Home</h1>".to_string(),
         }])
-        .expect_err("missing props should fail");
+        .expect("synthesized Props should compile");
 
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(
-            err.to_string()
-                .contains("missing required `pub struct Props`")
-        );
+        // A unit struct is synthesized when the frontmatter omits Props.
+        assert!(generated.source.contains("pub struct Props"));
+        assert!(generated.source.contains("template (source"));
+        // Static page (no load fn) → entry is None.
+        assert_eq!(generated.load_map.get("page_index"), Some(&None));
     }
 
     #[test]

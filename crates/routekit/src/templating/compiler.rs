@@ -41,6 +41,20 @@ impl std::error::Error for HtmlModuleParseError {}
 /// <h1>Template</h1>
 /// ```
 pub fn split_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleParseError> {
+    // A file with no leading `---` fence is treated as pure template body with
+    // empty Rust frontmatter. This lets purely-static pages and components omit
+    // the ceremony of declaring an empty `pub struct Props {}`.
+    if !input.trim_start().starts_with("---") {
+        let template = input.trim();
+        if template.is_empty() {
+            return Err(HtmlModuleParseError::EmptyTemplate);
+        }
+        return Ok(HtmlModuleParts {
+            rust: String::new(),
+            template: template.to_string(),
+        });
+    }
+
     let mut parts = input.splitn(3, "---");
     let leading = parts.next().unwrap_or_default();
     let rust = parts.next().ok_or(HtmlModuleParseError::MissingFence)?;
@@ -527,9 +541,10 @@ pub struct Props {
     }
 
     #[test]
-    fn split_html_module_rejects_missing_fence() {
-        let err = split_html_module("<h1>Only template</h1>").expect_err("expected an error");
-        assert_eq!(err, HtmlModuleParseError::MissingFence);
+    fn split_html_module_allows_missing_fence_as_static_template() {
+        let parts = split_html_module("<h1>Only template</h1>").expect("expected valid split");
+        assert_eq!(parts.rust, "");
+        assert_eq!(parts.template, "<h1>Only template</h1>");
     }
 
     #[test]
