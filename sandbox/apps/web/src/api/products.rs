@@ -1,60 +1,64 @@
-use pilcrow_web::*;
+use pilcrow_web::axum::{self, extract::Query, response::Html, routing};
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Default)]
 struct Product {
     title: String,
     price: f64,
-    image: String,
+    thumbnail: String,
     category: String,
 }
 
+#[derive(serde::Deserialize, Default)]
+struct ApiResponse {
+    products: Vec<Product>,
+}
+
 #[derive(serde::Deserialize)]
-struct Query {
+struct Params {
     category: Option<String>,
 }
 
-#[handler]
-async fn get(
-    axum::extract::Query(q): axum::extract::Query<Query>,
-) -> AppResult<Response> {
-    let url = match q.category.as_deref().filter(|s| !s.is_empty()) {
+async fn get(Query(params): Query<Params>) -> Html<String> {
+    let url = match params.category.as_deref().filter(|s| !s.is_empty()) {
         Some(cat) => format!(
-            "https://fakestoreapi.com/products/category/{}",
+            "https://dummyjson.com/products/category/{}?limit=20",
             urlencoding::encode(cat)
         ),
-        None => "https://fakestoreapi.com/products".to_string(),
+        None => "https://dummyjson.com/products?limit=20".to_string(),
     };
 
-    let products: Vec<Product> = ::reqwest::get(&url)
-        .await
-        .map_err(|_| AppError::Internal)?
-        .json()
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let resp: ApiResponse = match reqwest::get(&url).await {
+        Ok(r) => r.json().await.unwrap_or_default(),
+        Err(_) => ApiResponse::default(),
+    };
 
-    let cards: String = products
+    Html(render_cards(&resp.products))
+}
+
+fn render_cards(products: &[Product]) -> String {
+    if products.is_empty() {
+        return r#"<p style="color:#888;padding:1rem 0">No products found.</p>"#.to_string();
+    }
+    products
         .iter()
         .map(|p| {
             format!(
                 r#"<div class="product-card">
-  <img src="{}" alt="{}" loading="lazy" />
+  <img src="{img}" alt="{title}" loading="lazy" />
   <div class="product-info">
-    <span class="product-category">{}</span>
-    <h3 class="product-title">{}</h3>
-    <p class="product-price">${:.2}</p>
+    <span class="product-category">{cat}</span>
+    <h3 class="product-title">{title}</h3>
+    <p class="product-price">${price:.2}</p>
   </div>
 </div>"#,
-                p.image,
-                escape(&p.title),
-                escape(&p.category),
-                escape(&p.title),
-                p.price,
+                img = escape(&p.thumbnail),
+                title = escape(&p.title),
+                cat = escape(&p.category),
+                price = p.price,
             )
         })
         .collect::<Vec<_>>()
-        .join("\n");
-
-    Ok(html(cards))
+        .join("\n")
 }
 
 fn escape(s: &str) -> String {
@@ -65,5 +69,5 @@ fn escape(s: &str) -> String {
 }
 
 pub fn router() -> axum::Router {
-    axum::Router::new().route("/", axum::routing::get(get))
+    axum::Router::new().route("/", routing::get(get))
 }

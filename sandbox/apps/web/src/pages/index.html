@@ -2,15 +2,15 @@
 import MainLayout from "layouts/MainLayout.html";
 
 pub struct Props {
-    pub title: &'static str,
-    pub message: &'static str,
+pub title: &'static str,
+pub message: &'static str,
 }
 
 pub fn load() -> Props {
-    Props {
-        title: "Pilcrow",
-        message: "Welcome to Pilcrow — an Astro-like web framework for Rust.",
-    }
+Props {
+title: "Pilcrow",
+message: "Welcome to Pilcrow — an Astro-like web framework for Rust.",
+}
 }
 ---
 <MainLayout title={title}>
@@ -22,7 +22,7 @@ pub fn load() -> Props {
         above to see SPA-style transitions with no browser loading indicator.
     </p>
     <p>
-        Check out the <a href="/products" s-action="/products" s-target="#page-content">Products</a>
+        Check out the <a href="/products">Products</a>
         page for a live example fetching data from FakeStoreAPI with category filtering.
     </p>
 </MainLayout>

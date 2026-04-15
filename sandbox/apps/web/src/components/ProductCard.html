@@ -2,15 +2,9 @@
 pub struct Props {
     pub id: u32,
     pub title: String,
-    pub price: f64,
+    pub price_display: String,
     pub image: String,
     pub category: String,
-}
-
-impl Props {
-    pub fn price_display(&self) -> String {
-        format!("${:.2}", self.price)
-    }
 }
 ---
 <div class="product-card">
@@ -18,6 +12,6 @@ impl Props {
     <div class="product-info">
         <span class="product-category">{{ category }}</span>
         <h3 class="product-title">{{ title }}</h3>
-        <p class="product-price">{{ self.price_display() }}</p>
+        <p class="product-price">{{ price_display }}</p>
     </div>
 </div>
