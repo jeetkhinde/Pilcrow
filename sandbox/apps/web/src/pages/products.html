@@ -68,9 +68,9 @@ pub products: Vec<Product>,
                     <MainLayout title="Products">
                         <h1>Products</h1>
                         <div class="categories">
-                            <button s-action="/products">All</button>
+                            <button s-action="/products" s-preload s-target="#product-grid">All</button>
                             {% for cat in &categories %}
-                            <button s-action="/api/products?category={{ cat.slug }}" s-prefetch
+                            <button s-action="/api/products?category={{ cat.slug }}" s-preload
                                 s-target="#product-grid">{{ cat.label }}</button>
                             {% endfor %}
                         </div>
