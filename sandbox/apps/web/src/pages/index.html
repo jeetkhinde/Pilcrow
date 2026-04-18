@@ -1,28 +1,12 @@
----
-import MainLayout from "layouts/MainLayout.html";
-
-pub struct Props {
-pub title: &'static str,
-pub message: &'static str,
-}
-
-pub fn load() -> Props {
-Props {
-title: "Pilcrow",
-message: "Welcome to Pilcrow — an Astro-like web framework for Rust.",
-}
-}
----
-<MainLayout title={title}>
-    <h1>{{ title }}</h1>
-    <p>{{ message }}</p>
-    <p>
-        This sandbox demonstrates Pilcrow's file-based routing, server-side rendering,
-        and silcrow.js — the client-side hypermedia runtime. Navigate using the links
-        above to see SPA-style transitions with no browser loading indicator.
-    </p>
-    <p>
-        Check out the <a href="/products">Products</a>
-        page for a live example fetching data from FakeStoreAPI with category filtering.
-    </p>
-</MainLayout>
+<Fragment slot="title"><title>{{ title }} — Pilcrow</title></Fragment>
+<h1>{{ title }}</h1>
+<p>{{ message }}</p>
+<p>
+    This sandbox demonstrates Pilcrow's file-based routing, server-side rendering,
+    and silcrow.js — the client-side hypermedia runtime. Navigate using the links
+    above to see SPA-style transitions with no browser loading indicator.
+</p>
+<p>
+    Check out the <a href="/products">Products</a>
+    page for a live example fetching data from FakeStoreAPI with category filtering.
+</p>

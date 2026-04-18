@@ -1,83 +1,19 @@
 ---
-import MainLayout from "layouts/MainLayout.html";
-import ProductCard from "components/ProductCard.html";
-
-use pilcrow_web::AppError;
-
-#[derive(serde::Deserialize)]
-pub struct ApiResponse {
-pub products: Vec<Product>,
-    }
-
-    #[derive(serde::Deserialize)]
-    pub struct Product {
-    pub id: u32,
-    pub title: String,
-    pub price: f64,
-    pub thumbnail: String,
-    pub category: String,
-    }
-
-    #[derive(serde::Deserialize)]
-    pub struct CategoryInfo {
-    pub slug: String,
-    pub name: String,
-    }
-
-    pub struct Category {
-    pub label: String,
-    pub slug: String,
-    }
-
-    pub struct Props {
-    pub products: Vec<Product>,
-        pub categories: Vec<Category>,
-            }
-
-            pub async fn load() -> AppResult<Props> {
-                let response: ApiResponse =
-                ::reqwest::get("https://dummyjson.com/products?limit=20")
-                .await
-                .map_err(|_| AppError::Internal)?
-                .json()
-                .await
-                .map_err(|_| AppError::Internal)?;
-
-                let raw_cats: Vec<CategoryInfo> =
-                    ::reqwest::get("https://dummyjson.com/products/categories")
-                    .await
-                    .map_err(|_| AppError::Internal)?
-                    .json()
-                    .await
-                    .map_err(|_| AppError::Internal)?;
-
-                    let categories = raw_cats
-                    .into_iter()
-                    .map(|c| Category {
-                    label: c.name,
-                    slug: c.slug,
-                    })
-                    .collect();
-
-                    Ok(Props {
-                    products: response.products,
-                    categories,
-                    })
-                    }
-                    ---
-                    <MainLayout title="Products">
-                        <h1>Products</h1>
-                        <div class="categories">
-                            <button s-action="/products" s-preload s-target="#product-grid">All</button>
-                            {% for cat in &categories %}
-                            <button s-action="/api/products?category={{ cat.slug }}" s-preload
-                                s-target="#product-grid">{{ cat.label }}</button>
-                            {% endfor %}
-                        </div>
-                        <div id="product-grid" class="product-grid">
-                            {% for product in &products %}
-                            <ProductCard id={product.id} title={product.title} price_display={format!("${:.2}",
-                                product.price)} image={product.thumbnail} category={product.category} />
-                            {% endfor %}
-                        </div>
-                    </MainLayout>
+import ProductCard from "ui/ProductCard.html";
+---
+<Fragment slot="title"><title>Products — Pilcrow</title></Fragment>
+<h1>Products</h1>
+<div class="categories">
+    <a href="/products" s-boost s-target="#page-content"
+       class="{% if active_category.is_empty() %}active{% endif %}">All</a>
+    {% for cat in &categories %}
+    <a href="/products?category={{ cat.slug }}" s-boost s-target="#page-content"
+       class="{% if active_category == cat.slug %}active{% endif %}">{{ cat.label }}</a>
+    {% endfor %}
+</div>
+<div id="product-grid" class="product-grid">
+    {% for product in &products %}
+    <ProductCard id={product.id} title={product.title} price_display={format!("${:.2}",
+        product.price)} image={product.thumbnail} category={product.category} />
+    {% endfor %}
+</div>
