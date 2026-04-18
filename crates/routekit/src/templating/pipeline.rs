@@ -9,13 +9,28 @@ use crate::templating::codegen::{
     write_generated_api_routes_module, write_generated_app_module, write_generated_routes_module,
     write_generated_templates_module,
 };
-use crate::templating::compiler::{split_html_module, transpile_component_tags};
+use crate::templating::compiler::{inject_form_method_attrs, split_html_module, transpile_component_tags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
     Page,
-    Component,
-    Layout,
+    Ui,
+    /// `_layout.html` files discovered inside `src/pages/` subdirectories.
+    /// They auto-wrap sibling and descendant pages; they are not routable themselves.
+    AutoLayout,
+    /// `_error.html` files discovered inside `src/pages/` subdirectories.
+    /// Rendered when a page's `load()` returns `Err`. Not routable.
+    /// Props are framework-injected: `{ status: u16, message: String }`.
+    ErrorPage,
+    /// `_not_found.html` files discovered inside `src/pages/`.
+    /// Registered as the axum fallback handler. Not routable.
+    /// Props are framework-injected: `{}`.
+    NotFoundPage,
+    /// `_loading.html` files discovered inside `src/pages/` subdirectories.
+    /// Embedded as a `<template id="__pilcrow_loading">` in sibling/descendant pages.
+    /// silcrow.js shows this skeleton immediately when navigation begins.
+    /// Props are framework-injected: `{}`.
+    LoadingPage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +42,9 @@ pub struct PreprocessedHtmlFile {
     pub transpiled_template: String,
     pub module_name: String,
     pub render_symbol: String,
+    /// Ordered layout chain for this page: [outermost_auto_layout, ..., explicit_layout].
+    /// Only meaningful for `Page` kind; empty for `Ui`, `Layout`, and `AutoLayout`.
+    pub layout_chain: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +64,7 @@ pub struct CompilerOutput {
 /// Output layout in `out_dir`:
 /// - `generated_routes.rs` (route manifest + registration helpers)
 /// - `generated_templates.rs` (compile-time Askama render functions)
-/// - `pilcrow_templates/{pages,components,layouts}/...` (transpiled Askama templates)
+/// - `pilcrow_templates/{pages,ui,layouts}/...` (transpiled Askama templates)
 pub fn compile_to_out_dir(
     src_root: impl AsRef<Path>,
     out_dir: impl AsRef<Path>,
@@ -70,6 +88,7 @@ pub fn compile_to_out_dir(
             source_path: normalize_path_text(&file.source_path),
             rust_frontmatter: file.rust_frontmatter.clone(),
             template_source: file.transpiled_template.clone(),
+            layout_chain: file.layout_chain.clone(),
         })
         .collect::<Vec<_>>();
     let templates_output =
@@ -80,11 +99,108 @@ pub fn compile_to_out_dir(
     let generated_api_routes =
         write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
 
+    // Build directory-keyed maps for special page lookups (nearest-ancestor wins).
+    let pages_dir = src_root.join("pages");
+
+    // directory → error module name
+    let error_dir_map: HashMap<String, String> = files
+        .iter()
+        .filter(|f| f.kind == HtmlSourceKind::ErrorPage)
+        .filter_map(|f| {
+            let dir = f.source_path.parent()?;
+            let dir_rel = dir.strip_prefix(&pages_dir).ok()?;
+            Some((normalize_path_text(dir_rel), f.module_name.clone()))
+        })
+        .collect();
+
+    // For each page route, find the nearest error module by walking up the directory tree.
+    let error_module_for_page: HashMap<String, String> = generated_routes
+        .iter()
+        .filter_map(|route| {
+            let abs_path = PathBuf::from(&route.template_path);
+            let page_dir = abs_path.parent()?;
+            let page_dir_rel = page_dir.strip_prefix(&pages_dir).ok()?;
+
+            let mut dir = page_dir_rel;
+            loop {
+                let key = normalize_path_text(dir);
+                if let Some(module) = error_dir_map.get(&key) {
+                    return Some((route.symbol.clone(), module.clone()));
+                }
+                if dir.as_os_str().is_empty() {
+                    break;
+                }
+                dir = dir.parent().unwrap_or(Path::new(""));
+            }
+            None
+        })
+        .collect();
+
+    // Root-level _not_found.html is preferred; fall back to the first found.
+    let not_found_module: Option<String> = {
+        let root_key = normalize_path_text(Path::new(""));
+        files
+            .iter()
+            .filter(|f| f.kind == HtmlSourceKind::NotFoundPage)
+            .find(|f| {
+                f.source_path
+                    .parent()
+                    .and_then(|d| d.strip_prefix(&pages_dir).ok())
+                    .map(|rel| normalize_path_text(rel) == root_key)
+                    .unwrap_or(false)
+            })
+            .or_else(|| files.iter().find(|f| f.kind == HtmlSourceKind::NotFoundPage))
+            .map(|f| f.module_name.clone())
+    };
+
+    // directory → loading module name
+    let loading_dir_map: HashMap<String, String> = files
+        .iter()
+        .filter(|f| f.kind == HtmlSourceKind::LoadingPage)
+        .filter_map(|f| {
+            let dir = f.source_path.parent()?;
+            let dir_rel = dir.strip_prefix(&pages_dir).ok()?;
+            Some((normalize_path_text(dir_rel), f.module_name.clone()))
+        })
+        .collect();
+
+    // For each page route, find the nearest loading module by walking up the directory tree.
+    let loading_module_for_page: HashMap<String, String> = generated_routes
+        .iter()
+        .filter_map(|route| {
+            let abs_path = PathBuf::from(&route.template_path);
+            let page_dir = abs_path.parent()?;
+            let page_dir_rel = page_dir.strip_prefix(&pages_dir).ok()?;
+
+            let mut dir = page_dir_rel;
+            loop {
+                let key = normalize_path_text(dir);
+                if let Some(module) = loading_dir_map.get(&key) {
+                    return Some((route.symbol.clone(), module.clone()));
+                }
+                if dir.as_os_str().is_empty() {
+                    break;
+                }
+                dir = dir.parent().unwrap_or(Path::new(""));
+            }
+            None
+        })
+        .collect();
+
+    // Detect optional src/middleware.rs — if present, a global axum layer is generated.
+    let has_middleware = src_root.join("middleware.rs").exists();
+
     // Write the unified app module with auto-wired router.
     write_generated_app_module(
         &generated_routes,
         &generated_api_routes,
         &templates_output.load_map,
+        &templates_output.layout_fields_map,
+        &error_module_for_page,
+        not_found_module.as_deref(),
+        &loading_module_for_page,
+        &templates_output.action_map,
+        has_middleware,
         src_root,
         out_dir,
     )?;
@@ -108,14 +224,14 @@ pub fn compile_to_out_dir(
     })
 }
 
-/// Canonical directories that should trigger rebuilds in Cargo build scripts.
+/// Canonical directories and files that should trigger rebuilds in Cargo build scripts.
 pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     let src_root = src_root.as_ref();
     vec![
         src_root.join("pages"),
-        src_root.join("components"),
-        src_root.join("layouts"),
+        src_root.join("ui"),
         src_root.join("api"),
+        src_root.join("middleware.rs"),
     ]
 }
 
@@ -129,6 +245,9 @@ struct HtmlModuleSource {
     module_name: String,
     render_symbol: String,
     imports: HashMap<String, PathBuf>,
+    /// Ordered layout chain for this page: [outermost_auto_layout, ..., explicit_layout].
+    /// Populated during `preprocess_discovered_sources` after all modules are loaded.
+    layout_chain: Vec<String>,
 }
 
 fn preprocess_discovered_sources(
@@ -138,30 +257,105 @@ fn preprocess_discovered_sources(
 ) -> io::Result<Vec<PreprocessedHtmlFile>> {
     let mut modules = HashMap::<PathBuf, HtmlModuleSource>::new();
 
+    // Auto-layouts live inside pages/ but are treated as layout modules.
+    // Load them first so their module names are available when building page chains.
+    let pages_dir = src_root.join("pages");
+    load_source_group(
+        src_root,
+        HtmlSourceKind::AutoLayout,
+        &discovered.auto_layouts,
+        &pages_dir,
+        &templates_root.join("auto_layouts"),
+        &mut modules,
+    )?;
+    // Error boundaries, not-found, and loading pages are also in pages/ but not routable.
+    load_source_group(
+        src_root,
+        HtmlSourceKind::ErrorPage,
+        &discovered.error_pages,
+        &pages_dir,
+        &templates_root.join("error_pages"),
+        &mut modules,
+    )?;
+    load_source_group(
+        src_root,
+        HtmlSourceKind::NotFoundPage,
+        &discovered.not_found_pages,
+        &pages_dir,
+        &templates_root.join("not_found_pages"),
+        &mut modules,
+    )?;
+    load_source_group(
+        src_root,
+        HtmlSourceKind::LoadingPage,
+        &discovered.loading_pages,
+        &pages_dir,
+        &templates_root.join("loading_pages"),
+        &mut modules,
+    )?;
     load_source_group(
         src_root,
         HtmlSourceKind::Page,
         &discovered.pages,
-        &src_root.join("pages"),
+        &pages_dir,
         &templates_root.join("pages"),
         &mut modules,
     )?;
     load_source_group(
         src_root,
-        HtmlSourceKind::Component,
-        &discovered.components,
-        &src_root.join("components"),
-        &templates_root.join("components"),
+        HtmlSourceKind::Ui,
+        &discovered.ui,
+        &src_root.join("ui"),
+        &templates_root.join("ui"),
         &mut modules,
     )?;
-    load_source_group(
-        src_root,
-        HtmlSourceKind::Layout,
-        &discovered.layouts,
-        &src_root.join("layouts"),
-        &templates_root.join("layouts"),
-        &mut modules,
-    )?;
+
+    // Now that all modules are loaded, inject auto-layout wrapping for each page.
+    // Walk up the page's directory to find _layout.html files; wrap the template.
+    let page_paths: Vec<PathBuf> = modules
+        .keys()
+        .filter(|p| {
+            modules.get(*p).map_or(false, |m| m.kind == HtmlSourceKind::Page)
+        })
+        .cloned()
+        .collect();
+
+    for page_path in &page_paths {
+        let auto_chain = build_auto_layout_chain(page_path, &pages_dir, &modules);
+        if auto_chain.is_empty() {
+            continue;
+        }
+
+        // Inject synthetic imports and wrap the template.
+        {
+            let page_module = modules.get_mut(page_path).expect("page path exists");
+            let original = page_module.template_source.clone();
+
+            // Add synthetic import aliases: PilcrowAutoLayout0 (outermost), PilcrowAutoLayout1, ...
+            for (i, (layout_path, _)) in auto_chain.iter().enumerate() {
+                let alias = format!("PilcrowAutoLayout{i}");
+                page_module.imports.insert(alias, layout_path.clone());
+            }
+
+            // Wrap template from innermost to outermost.
+            let mut wrapped = original;
+            for i in (0..auto_chain.len()).rev() {
+                let alias = format!("PilcrowAutoLayout{i}");
+                wrapped = format!("<{alias}>{wrapped}</{alias}>");
+            }
+            page_module.template_source = wrapped;
+        }
+
+        // Prepend auto-layout module names to the layout_chain (outermost first).
+        {
+            let page_module = modules.get_mut(page_path).expect("page path exists");
+            let auto_module_names: Vec<String> =
+                auto_chain.iter().map(|(_, name)| name.clone()).collect();
+            let explicit: Vec<String> = page_module.layout_chain.drain(..).collect();
+            page_module.layout_chain = auto_module_names;
+            page_module.layout_chain.extend(explicit);
+        }
+    }
 
     let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
     module_paths.sort();
@@ -180,7 +374,8 @@ fn preprocess_discovered_sources(
             &mut stack,
             0,
         )?;
-        let final_template = transpile_component_tags(&expanded);
+        let after_components = transpile_component_tags(&expanded);
+        let final_template = inject_form_method_attrs(&after_components);
 
         if let Some(parent) = module.template_output_path.parent() {
             fs::create_dir_all(parent)?;
@@ -195,6 +390,7 @@ fn preprocess_discovered_sources(
             transpiled_template: final_template,
             module_name: module.module_name.clone(),
             render_symbol: module.render_symbol.clone(),
+            layout_chain: module.layout_chain.clone(),
         });
     }
 
@@ -217,13 +413,69 @@ fn load_source_group(
                 format!("failed to parse {}: {err}", source_path.display()),
             )
         })?;
-        let (cleaned_frontmatter, imports) =
-            strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+
+        // Error and not-found pages have framework-injected Props.
+        // Their frontmatter (if any) may only contain `import` statements.
+        let (cleaned_frontmatter, imports) = if matches!(
+            kind,
+            HtmlSourceKind::ErrorPage | HtmlSourceKind::NotFoundPage | HtmlSourceKind::LoadingPage
+        ) {
+            let (leftover, imports) =
+                strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+            if !leftover.trim().is_empty() {
+                return Err(template_compile_error(
+                    source_path,
+                    "frontmatter in this special page may only contain `import` \
+                     statements — Props are provided by the framework",
+                ));
+            }
+            let injected_props = match kind {
+                HtmlSourceKind::ErrorPage => {
+                    "pub struct Props {\n    pub status: u16,\n    pub message: String,\n}\n"
+                }
+                HtmlSourceKind::NotFoundPage | HtmlSourceKind::LoadingPage => {
+                    "pub struct Props {}\n"
+                }
+                _ => unreachable!(),
+            };
+            (injected_props.to_string(), imports)
+        } else {
+            // Code-behind: if a sibling `.rs` file exists, it carries all Rust logic.
+            // The `---` block in the `.html` file must then contain only `import` statements.
+            let codebehind_path = source_path.with_extension("rs");
+            if codebehind_path.exists() {
+                let (leftover, imports) =
+                    strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+                if !leftover.trim().is_empty() {
+                    return Err(template_compile_error(
+                        source_path,
+                        "frontmatter may only contain `import` statements when a \
+                         code-behind `.rs` file is present — move Rust logic there",
+                    ));
+                }
+                let rs_content = fs::read_to_string(&codebehind_path).map_err(|err| {
+                    template_compile_error(
+                        source_path,
+                        format!(
+                            "failed to read code-behind `{}`: {err}",
+                            codebehind_path.display()
+                        ),
+                    )
+                })?;
+                (rs_content, imports)
+            } else {
+                strip_frontmatter_imports(&parts.rust, src_root, source_path)?
+            }
+        };
 
         let relative = source_path.strip_prefix(source_root).unwrap_or(source_path);
         let template_output_path = out_root.join(relative);
         let module_name = build_module_name(kind, relative);
         let render_symbol = format!("render_{module_name}");
+
+        // layout_chain starts empty; auto-layout entries are prepended in
+        // `preprocess_discovered_sources` after all modules are loaded.
+        let layout_chain: Vec<String> = vec![];
 
         modules.insert(
             source_path.clone(),
@@ -236,6 +488,7 @@ fn load_source_group(
                 module_name,
                 render_symbol,
                 imports,
+                layout_chain,
             },
         );
     }
@@ -243,18 +496,113 @@ fn load_source_group(
     Ok(())
 }
 
+/// Walk up from a page's directory (within `pages_dir`) and collect any
+/// `_layout.html` auto-layout files found along the way.
+///
+/// Returns `(absolute_path, module_name)` pairs ordered **outermost first**
+/// (i.e. root `_layout.html` before subdirectory-level ones).
+fn build_auto_layout_chain(
+    page_path: &Path,
+    pages_dir: &Path,
+    modules: &HashMap<PathBuf, HtmlModuleSource>,
+) -> Vec<(PathBuf, String)> {
+    let relative = page_path.strip_prefix(pages_dir).unwrap_or(page_path);
+    let mut dir = relative.parent().unwrap_or(Path::new(""));
+    let mut chain: Vec<(PathBuf, String)> = Vec::new();
+
+    loop {
+        let layout_rel = dir.join("_layout.html");
+        let layout_abs = pages_dir.join(&layout_rel);
+        if modules.contains_key(&layout_abs) {
+            let module_name = build_module_name(HtmlSourceKind::AutoLayout, &layout_rel);
+            chain.push((layout_abs, module_name));
+        }
+        if dir.as_os_str().is_empty() {
+            break;
+        }
+        dir = dir.parent().unwrap_or(Path::new(""));
+    }
+
+    // Collected innermost-first; reverse to get outermost-first.
+    chain.reverse();
+    chain
+}
+
 fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
+    // AutoLayout, ErrorPage, and NotFoundPage are all named by their parent directory,
+    // not by filename. Extract a helper closure for that logic.
+    let dir_based_name = |prefix: &str, fallback: &str| -> String {
+        let parent = relative.parent().unwrap_or(Path::new(""));
+        let dir_str = parent.to_string_lossy().replace('\\', "/");
+        let dir_part = dir_str.trim_matches('/');
+        if dir_part.is_empty() {
+            return format!("{prefix}_{fallback}");
+        }
+        // Strip layout-group segments and normalise to a symbol.
+        let stripped: String = dir_part
+            .split('/')
+            .filter(|seg| !(seg.starts_with('(') && seg.ends_with(')')))
+            .collect::<Vec<_>>()
+            .join("/");
+        let mut symbol = String::new();
+        let mut prev_under = false;
+        for ch in stripped.chars() {
+            let mapped = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' };
+            if mapped == '_' {
+                if !prev_under { symbol.push('_'); }
+                prev_under = true;
+            } else {
+                symbol.push(mapped);
+                prev_under = false;
+            }
+        }
+        let symbol = symbol.trim_matches('_').to_string();
+        if symbol.is_empty() {
+            format!("{prefix}_{fallback}")
+        } else {
+            format!("{prefix}_{symbol}")
+        }
+    };
+
     let prefix = match kind {
         HtmlSourceKind::Page => "page",
-        HtmlSourceKind::Component => "component",
-        HtmlSourceKind::Layout => "layout",
+        HtmlSourceKind::Ui => "ui",
+        HtmlSourceKind::AutoLayout => {
+            // `products/_layout.html` → `layout_auto_products`
+            // `_layout.html`         → `layout_auto_root`
+            return dir_based_name("layout_auto", "root");
+        }
+        HtmlSourceKind::ErrorPage => {
+            // `products/_error.html` → `error_products`
+            // `_error.html`         → `error_root`
+            return dir_based_name("error", "root");
+        }
+        HtmlSourceKind::NotFoundPage => {
+            // `products/_not_found.html` → `not_found_products`
+            // `_not_found.html`          → `not_found_root`
+            return dir_based_name("not_found", "root");
+        }
+        HtmlSourceKind::LoadingPage => {
+            // `products/_loading.html` → `loading_products`
+            // `_loading.html`          → `loading_root`
+            return dir_based_name("loading", "root");
+        }
     };
 
     let relative = relative.to_string_lossy().replace('\\', "/");
     let without_ext = relative.strip_suffix(".html").unwrap_or(&relative);
+
+    // Strip layout-group segments `(group)` so they don't pollute module names.
+    // e.g. `(app)/settings/profile` → `settings/profile`
+    let stripped: String = without_ext
+        .split('/')
+        .filter(|seg| !(seg.starts_with('(') && seg.ends_with(')')))
+        .collect::<Vec<_>>()
+        .join("/");
+
     let mut symbol = String::new();
     let mut prev_underscore = false;
-    for ch in without_ext.chars() {
+    for ch in stripped.chars() {
         let mapped = if ch.is_ascii_alphanumeric() {
             ch.to_ascii_lowercase()
         } else {
@@ -335,7 +683,7 @@ fn suggested_import_paths(
                 return None;
             }
             let rel = src_relative_display_path(&module.source_path);
-            if rel.starts_with("components/") || rel.starts_with("layouts/") {
+            if rel.starts_with("ui/") {
                 Some(rel)
             } else {
                 None
@@ -450,11 +798,12 @@ fn resolve_import_path(
             format!("invalid import path `{normalized}`; expected `.html` import"),
         ));
     }
-    if !(normalized.starts_with("components/") || normalized.starts_with("layouts/")) {
+    if !normalized.starts_with("ui/") {
         return Err(template_compile_error(
             source_path,
             format!(
-                "invalid import path `{normalized}`; only `components/...` and `layouts/...` are allowed"
+                "invalid import path `{normalized}`; only `ui/...` imports are allowed \
+                 (layouts are handled automatically via `_layout.html`)"
             ),
         ));
     }
@@ -525,8 +874,8 @@ fn expand_known_components(
                 let suggestions = suggested_import_paths(&invocation.name, modules);
                 if suggestions.is_empty() {
                     msg.push_str(&format!(
-                        " Add `import {} from \"components/...\";` or `import {} from \"layouts/...\";` in frontmatter.",
-                        invocation.name, invocation.name
+                        " Add `import {} from \"ui/...\";` in frontmatter.",
+                        invocation.name
                     ));
                 } else if suggestions.len() == 1 {
                     msg.push_str(&format!(
@@ -1169,6 +1518,13 @@ fn parse_component_invocation(input: &str) -> Option<ParsedComponentInvocation> 
     }
 
     let name = input[idx..name_end].to_string();
+
+    // Fragment is a built-in slot wrapper, not a user component.
+    // Let it pass through as plain HTML so the slot system can handle it.
+    if name == "Fragment" {
+        return None;
+    }
+
     idx = name_end;
 
     let attrs_start = idx;
@@ -1509,22 +1865,27 @@ mod tests {
         let src = root.join("src");
         let out = root.join("out");
 
+        // Root auto-layout wraps all pages automatically.
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<html><body><slot /></body></html>"#,
+        );
         write_file(
             &src.join("pages/index.html"),
             r#"---
-import Layout from "layouts/Layout.html";
-import Card from "components/Card.html";
+import Card from "ui/Card.html";
 
 pub struct Props {
     pub title: String,
 }
 ---
-<Layout title={title}>
-    <Card title={title} />
-</Layout>"#,
+<Card title={title} />"#,
         );
         write_file(
-            &src.join("components/Card.html"),
+            &src.join("ui/Card.html"),
             r#"---
 pub struct Props {
     pub title: String,
@@ -1532,18 +1893,10 @@ pub struct Props {
 ---
 <article>{{ title }}</article>"#,
         );
-        write_file(
-            &src.join("layouts/Layout.html"),
-            r#"---
-pub struct Props {
-    pub title: String,
-}
----
-<html><body><slot /></body></html>"#,
-        );
 
         let result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
 
+        // auto-layout + page + ui card = 3 modules
         assert_eq!(result.preprocessed_files.len(), 3);
         assert!(result.generated_routes_file.exists());
         assert!(result.generated_templates_file.exists());
@@ -1572,25 +1925,22 @@ pub struct Props {
         let src = root.join("src");
         let out = root.join("out");
 
+        // Auto-layout with named slots; page content is passed through slots.
         write_file(
-            &src.join("pages/index.html"),
-            r#"---
-import Layout from "layouts/Layout.html";
-
-pub struct Props {}
----
-<Layout>
-    <h1 slot="header">Top</h1>
-    <p>Body</p>
-</Layout>"#,
-        );
-        write_file(
-            &src.join("layouts/Layout.html"),
+            &src.join("pages/_layout.html"),
             r#"---
 pub struct Props {}
 ---
 <header><slot name="header" /></header>
 <main><slot /></main>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+---
+<h1 slot="header">Top</h1>
+<p>Body</p>"#,
         );
 
         let _result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
@@ -1614,7 +1964,7 @@ pub struct Props {}
         write_file(
             &src.join("pages/index.html"),
             r#"---
-import List from "components/List.html";
+import List from "ui/List.html";
 
 pub struct Props {
     pub title: String,
@@ -1625,7 +1975,7 @@ pub struct Props {
 </List>"#,
         );
         write_file(
-            &src.join("components/List.html"),
+            &src.join("ui/List.html"),
             r#"---
 pub struct Props {
     pub title: String,
@@ -1688,7 +2038,7 @@ pub struct Props {}
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
         assert!(msg.contains("file: pages/index.html"));
-        assert!(msg.contains("only `components/...` and `layouts/...` are allowed"));
+        assert!(msg.contains("only `ui/...` imports are allowed"));
 
         cleanup(&root);
     }
@@ -1702,21 +2052,21 @@ pub struct Props {}
         write_file(
             &src.join("pages/index.html"),
             r#"---
-import Card from "components/Card.html";
-import Card from "components/OtherCard.html";
+import Card from "ui/Card.html";
+import Card from "ui/OtherCard.html";
 pub struct Props {}
 ---
 <Card />"#,
         );
         write_file(
-            &src.join("components/Card.html"),
+            &src.join("ui/Card.html"),
             r#"---
 pub struct Props {}
 ---
 <div>Card</div>"#,
         );
         write_file(
-            &src.join("components/OtherCard.html"),
+            &src.join("ui/OtherCard.html"),
             r#"---
 pub struct Props {}
 ---
@@ -1740,23 +2090,23 @@ pub struct Props {}
         write_file(
             &src.join("pages/index.html"),
             r#"---
-import A from "components/A.html";
+import A from "ui/A.html";
 pub struct Props {}
 ---
 <A />"#,
         );
         write_file(
-            &src.join("components/A.html"),
+            &src.join("ui/A.html"),
             r#"---
-import B from "components/B.html";
+import B from "ui/B.html";
 pub struct Props {}
 ---
 <B />"#,
         );
         write_file(
-            &src.join("components/B.html"),
+            &src.join("ui/B.html"),
             r#"---
-import A from "components/A.html";
+import A from "ui/A.html";
 pub struct Props {}
 ---
 <A />"#,
@@ -1766,8 +2116,8 @@ pub struct Props {}
         let msg = err.to_string();
         assert!(msg.contains("file:"));
         assert!(msg.contains("component import cycle detected"));
-        assert!(msg.contains("components/A.html"));
-        assert!(msg.contains("components/B.html"));
+        assert!(msg.contains("ui/A.html"));
+        assert!(msg.contains("ui/B.html"));
 
         cleanup(&root);
     }
@@ -1781,20 +2131,20 @@ pub struct Props {}
         write_file(
             &src.join("pages/index.html"),
             r#"---
-import ParentCard from "components/ParentCard.html";
+import ParentCard from "ui/ParentCard.html";
 pub struct Props {}
 ---
 <ParentCard />"#,
         );
         write_file(
-            &src.join("components/ParentCard.html"),
+            &src.join("ui/ParentCard.html"),
             r#"---
 pub struct Props {}
 ---
 <StatusBadge text="nested" />"#,
         );
         write_file(
-            &src.join("components/StatusBadge.html"),
+            &src.join("ui/StatusBadge.html"),
             r#"---
 pub struct Props {
     pub text: String,
@@ -1805,11 +2155,11 @@ pub struct Props {
 
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
-        assert!(msg.contains("file: components/ParentCard.html"));
+        assert!(msg.contains("file: ui/ParentCard.html"));
         assert!(msg.contains("line 1, column 1"));
         assert!(msg.contains("missing explicit import"));
         assert!(msg.contains("<StatusBadge>"));
-        assert!(msg.contains("components/ParentCard.html"));
+        assert!(msg.contains("ui/ParentCard.html"));
 
         cleanup(&root);
     }
@@ -1837,12 +2187,195 @@ pub struct Props {
     }
 
     #[test]
-    fn watched_dirs_are_pages_components_layouts() {
+    fn compile_pipeline_code_behind_rs_file_provides_rust_frontmatter() {
+        let root = mk_temp_root("compile_codebehind_ok");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        // .html has no frontmatter (auto-layout wraps it); .rs has Props + load()
+        write_file(
+            &src.join("pages/index.html"),
+            "<h1>{{ title }}</h1>",
+        );
+        write_file(
+            &src.join("pages/index.rs"),
+            r#"pub struct Props {
+    pub title: String,
+}
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { title: "Home".to_string() })
+}"#,
+        );
+
+        let result = compile_to_out_dir(&src, &out).expect("code-behind pipeline should compile");
+        let page = result
+            .preprocessed_files
+            .iter()
+            .find(|f| f.module_name == "page_index")
+            .expect("page_index should exist");
+        assert!(page.rust_frontmatter.contains("pub struct Props"));
+        assert!(page.rust_frontmatter.contains("pub async fn load"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_code_behind_rejects_rust_in_html_frontmatter() {
+        let root = mk_temp_root("compile_codebehind_err");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        // Both .html frontmatter and .rs file have Rust — should error
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+---
+<h1>Hello</h1>"#,
+        );
+        write_file(&src.join("pages/index.rs"), r#"pub struct Props {}"#);
+
+        let err =
+            compile_to_out_dir(&src, &out).expect_err("mixed frontmatter should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("frontmatter may only contain"));
+        assert!(msg.contains("code-behind"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn watched_dirs_are_pages_ui_api() {
         let src = PathBuf::from("/tmp/project/src");
         let dirs = watched_source_directories(&src);
         assert_eq!(dirs[0], PathBuf::from("/tmp/project/src/pages"));
-        assert_eq!(dirs[1], PathBuf::from("/tmp/project/src/components"));
-        assert_eq!(dirs[2], PathBuf::from("/tmp/project/src/layouts"));
+        assert_eq!(dirs[1], PathBuf::from("/tmp/project/src/ui"));
+        assert_eq!(dirs[2], PathBuf::from("/tmp/project/src/api"));
+    }
+
+    #[test]
+    fn compile_pipeline_layout_group_strips_group_from_url_and_module() {
+        let root = mk_temp_root("layout_group");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        // (public) group: layout group directory invisible in URLs
+        write_file(
+            &src.join("pages/(public)/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<div class="public"><slot /></div>"#,
+        );
+        write_file(&src.join("pages/(public)/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/(public)/about.html"), "<h1>About</h1>");
+
+        // (app) group: different layout
+        write_file(
+            &src.join("pages/(app)/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<div class="app"><slot /></div>"#,
+        );
+        write_file(&src.join("pages/(app)/dashboard.html"), "<h1>Dashboard</h1>");
+
+        let result = compile_to_out_dir(&src, &out).expect("layout groups should compile");
+
+        // URLs should not contain the group name
+        let patterns: Vec<_> = result.generated_routes.iter()
+            .map(|r| r.pattern.as_str()).collect();
+        assert!(patterns.contains(&"/"), "index → /");
+        assert!(patterns.contains(&"/about"), "about → /about");
+        assert!(patterns.contains(&"/dashboard"), "dashboard → /dashboard");
+        assert!(patterns.iter().all(|p| !p.contains("public")), "no group in URL");
+        assert!(patterns.iter().all(|p| !p.contains("app")), "no group in URL");
+
+        // Module symbols should also strip the group
+        let symbols: Vec<_> = result.generated_routes.iter()
+            .map(|r| r.symbol.as_str()).collect();
+        assert!(symbols.contains(&"page_index"));
+        assert!(symbols.contains(&"page_about"));
+        assert!(symbols.contains(&"page_dashboard"));
+
+        // Each page should be wrapped by its group's _layout.html
+        let index_tpl = out.join("pilcrow_templates/pages/(public)/index.html");
+        let index_rendered = fs::read_to_string(index_tpl).expect("read index");
+        assert!(index_rendered.contains(r#"class="public""#), "public layout applied to index");
+        assert!(!index_rendered.contains(r#"class="app""#));
+
+        let dashboard_tpl = out.join("pilcrow_templates/pages/(app)/dashboard.html");
+        let dashboard_rendered = fs::read_to_string(dashboard_tpl).expect("read dashboard");
+        assert!(dashboard_rendered.contains(r#"class="app""#), "app layout applied to dashboard");
+        assert!(!dashboard_rendered.contains(r#"class="public""#));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_rejects_load_without_req() {
+        let root = mk_temp_root("load_missing_req");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            "<h1>{{ title }}</h1>",
+        );
+        write_file(
+            &src.join("pages/index.rs"),
+            r#"pub struct Props { pub title: String }
+pub async fn load() -> AppResult<Props> {
+    Ok(Props { title: "oops".to_string() })
+}"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("missing Req should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("must take `req: Req`"), "got: {msg}");
+        assert!(msg.contains("pages/index"), "got: {msg}");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_rejects_non_async_load() {
+        let root = mk_temp_root("load_not_async");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(&src.join("pages/index.html"), "<h1>hi</h1>");
+        write_file(
+            &src.join("pages/index.rs"),
+            r#"pub struct Props {}
+pub fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("non-async load should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("must be declared `async`"), "got: {msg}");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_rejects_load_without_result_return() {
+        let root = mk_temp_root("load_no_result");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(&src.join("pages/index.html"), "<h1>hi</h1>");
+        write_file(
+            &src.join("pages/index.rs"),
+            r#"pub struct Props {}
+pub async fn load(_req: Req) -> Props { Props {} }"#,
+        );
+
+        let err = compile_to_out_dir(&src, &out).expect_err("non-Result load should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("must return `AppResult<Props>`"), "got: {msg}");
+
+        cleanup(&root);
     }
 
     fn mk_temp_root(prefix: &str) -> PathBuf {
@@ -1871,5 +2404,143 @@ pub struct Props {
         if path.exists() {
             fs::remove_dir_all(path).expect("cleanup temp dir");
         }
+    }
+
+    #[test]
+    fn compile_pipeline_auto_layout_wraps_page_template() {
+        let root = mk_temp_root("auto_layout_wrap");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        // A root-level _layout.html auto-layout in pages/
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<div class="root-layout"><slot /></div>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            "<h1>Home</h1>",
+        );
+
+        let result = compile_to_out_dir(&src, &out).expect("auto-layout pipeline should compile");
+
+        // index.html should be wrapped by the auto-layout
+        let page_template =
+            out.join("pilcrow_templates/pages/index.html");
+        let rendered = fs::read_to_string(page_template).expect("read page template");
+        assert!(
+            rendered.contains("<div class=\"root-layout\">"),
+            "page should be wrapped by auto-layout"
+        );
+        assert!(rendered.contains("<h1>Home</h1>"), "original content preserved");
+
+        // _layout.html should NOT appear in route list
+        assert!(
+            result.generated_routes.iter().all(|r| r.pattern != "/_layout"),
+            "_layout.html should not be a route"
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_auto_layout_nested_wrapping() {
+        let root = mk_temp_root("auto_layout_nested");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        // Outer auto-layout at pages root
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<html><slot /></html>"#,
+        );
+        // Inner auto-layout in products/
+        write_file(
+            &src.join("pages/products/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<section class="products"><slot /></section>"#,
+        );
+        write_file(
+            &src.join("pages/products/index.html"),
+            "<h1>Products</h1>",
+        );
+        // A page NOT under products/ should only get the root layout
+        write_file(&src.join("pages/about.html"), "<h1>About</h1>");
+
+        let result = compile_to_out_dir(&src, &out).expect("nested auto-layout should compile");
+
+        let products_template =
+            out.join("pilcrow_templates/pages/products/index.html");
+        let products_rendered = fs::read_to_string(products_template).expect("read products");
+        assert!(products_rendered.contains("<html>"), "outer layout applied");
+        assert!(
+            products_rendered.contains("<section class=\"products\">"),
+            "inner layout applied"
+        );
+        assert!(products_rendered.contains("<h1>Products</h1>"), "content preserved");
+
+        let about_template = out.join("pilcrow_templates/pages/about.html");
+        let about_rendered = fs::read_to_string(about_template).expect("read about");
+        assert!(about_rendered.contains("<html>"), "root layout applied to about");
+        assert!(
+            !about_rendered.contains("<section class=\"products\">"),
+            "products layout NOT applied to about"
+        );
+
+        // Neither _layout.html should be a route
+        assert!(result.generated_routes.iter().all(|r| !r.pattern.contains("_layout")));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_auto_layout_chain_info_recorded() {
+        let root = mk_temp_root("auto_layout_chain_info");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {
+    pub site_name: String,
+}
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { site_name: "MySite".to_string() })
+}
+---
+<html><body><slot /></body></html>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            "<h1>Home</h1>",
+        );
+
+        let result = compile_to_out_dir(&src, &out).expect("chain info should compile");
+
+        // The generated templates module should include __MergedProps for the page
+        let templates_src =
+            fs::read_to_string(out.join("generated_templates.rs")).expect("read templates");
+        assert!(
+            templates_src.contains("__MergedProps"),
+            "page with auto-layout load() should get __MergedProps"
+        );
+        assert!(
+            templates_src.contains("site_name"),
+            "__MergedProps should have layout's site_name field"
+        );
+
+        // _layout.html is not a route
+        assert!(result.generated_routes.iter().all(|r| r.pattern != "/_layout"));
+
+        cleanup(&root);
     }
 }
