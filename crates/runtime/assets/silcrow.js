@@ -882,6 +882,8 @@ function connectSseHub(hub) {
     } else {
       hub.subscribers.forEach(function (el) {invalidate(el);});
     }
+    // Evict all cached GET responses so the next s-get re-fetches from the server.
+    bustCacheOnMutation();
   });
 
   es.addEventListener("navigate", function (e) {
@@ -1429,6 +1431,9 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (sideEffects.invalidate) {
     const el = document.querySelector(sideEffects.invalidate);
     if (el) invalidate(el);
+    // Evict all cached GET responses — the server has signalled staleness for this
+    // selector and any cached URL feeding it would serve stale content on the next request.
+    bustCacheOnMutation();
   }
 
   if (sideEffects.navigate) {
