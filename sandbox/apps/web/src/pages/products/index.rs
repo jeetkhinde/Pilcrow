@@ -13,7 +13,13 @@ pub struct Product {
     pub thumbnail: String,
     pub category: String,
 }
-
+pub struct ProductView {
+    pub id: u32,
+    pub title: String,
+    pub price_display: String,
+    pub image: String,
+    pub category: String,
+}
 #[derive(serde::Deserialize)]
 pub struct CategoryInfo {
     pub slug: String,
@@ -26,7 +32,7 @@ pub struct Category {
 }
 
 pub struct Props {
-    pub products: Vec<Product>,
+    pub products: Vec<ProductView>,
     pub categories: Vec<Category>,
     pub active_category: String,
 }
@@ -67,8 +73,19 @@ pub async fn load(req: Req) -> AppResult<Props> {
         })
         .collect();
 
+    let products = response.products
+        .into_iter()
+        .map(|p| ProductView {
+            id: p.id,
+            title: p.title,
+            price_display: format!("${:.2}", p.price),
+            image: p.thumbnail,
+            category: p.category,
+        })
+        .collect();
+
     Ok(Props {
-        products: response.products,
+        products,
         categories,
         active_category,
     })

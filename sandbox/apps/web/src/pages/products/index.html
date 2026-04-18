@@ -1,8 +1,12 @@
 ---
 import ProductCard from "ui/ProductCard.html";
 ---
-<Fragment slot="title"><title>Products — Pilcrow</title></Fragment>
+<Fragment slot="title">
+    <title>Products — Pilcrow</title>
+</Fragment>
+
 <h1>Products</h1>
+
 <div class="categories">
     <a href="/products" s-boost s-target="#page-content"
        class="{% if active_category.is_empty() %}active{% endif %}">All</a>
@@ -13,7 +17,11 @@ import ProductCard from "ui/ProductCard.html";
 </div>
 <div id="product-grid" class="product-grid">
     {% for product in &products %}
-    <ProductCard id={product.id} title={product.title} price_display={format!("${:.2}",
-        product.price)} image={product.thumbnail} category={product.category} />
+    <ProductCard
+                 id={product.id}
+                 title={product.title}
+                 price_display={product.price_display}
+                 image={product.image}
+                 category={product.category} />
     {% endfor %}
 </div>
