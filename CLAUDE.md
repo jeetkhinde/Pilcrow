@@ -68,7 +68,7 @@ The `pilcrow_app!()` macro in `main.rs` includes these generated files.
 src/
   pages/
     index.html          # Route: GET /
-    index.rs            # Code-behind: Props struct, load(), actions()
+    index.rs            # Code-behind: Props struct, load(), named action fns
     products.html       # Route: GET /products
     products.rs
     _layout.html        # Auto-wraps all sibling/child pages — not a route
@@ -93,7 +93,7 @@ Each page has two files: `products.html` (template) and `products.rs` (logic).
 `products.rs` exports:
 - `pub struct Props { ... }` — passed to the template
 - `pub async fn load(req: Req) -> AppResult<Props>` — GET handler (**required** if `.rs` file exists)
-- `pub async fn actions(req: Req) -> ActionResult` — handles all POST actions (optional)
+- `pub async fn <name>(req: Req) -> ActionResult` — one fn per named action. The URL fragment `?/<name>` dispatches to `fn <name>` (POST only). Any number of action fns may be defined; none are required.
 
 **`load()` signature is enforced by the build pipeline.** Any `load()` in `src/pages/` (pages and layouts) must be `async`, return `AppResult<Props>`, and take `req: Req`. The build fails with a clear error otherwise. If you don't need the request, use `_req: Req`. If a page needs no dynamic data, omit the `.rs` file entirely — the page is served as a static template.
 
@@ -101,7 +101,7 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 
 ## Key Types
 
-**`Req`** (`FromRequest`, body-consuming) — unified request context for both `load()` and `actions()`:
+**`Req`** (`FromRequest`, body-consuming) — unified request context for both `load()` and action fns:
 - `.params: HashMap<String, String>` — URL path params (`/posts/:id`)
 - `.query: HashMap<String, String>` — query string (`?category=shoes`)
 - `.form: FormMap` — URL-encoded form body (empty on GET)
@@ -113,7 +113,7 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 - `.res: Res` — response modifier: set headers, cookies, toasts from inside any handler
 
 **`Req` methods:**
-- `req.action() -> &str` — reads `?action=`, `?_action=`, or form body `_action`; returns `""` for default
+- `req.action() -> &str` — the name of the current action (from the `?/<name>` URL fragment). Returns `""` for plain POSTs with no action. Rarely needed in app code — the router already dispatches to the named fn.
 - `req.fail(FormErrors) -> ActionResult` — JSON if enhanced, flash cookie + redirect if plain POST
 - `req.take_form_flash() -> Option<FormErrors>` — reads and clears the `silcrow_form_flash` cookie
 
@@ -131,13 +131,13 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 
 **`FormMap`** — `.get(key) -> Option<&str>`, `.get_all(key) -> &[String]`, `.contains(key)`
 
-**`ActionResult`** — `Result<Response, AppError>` — return type for `actions()`
+**`ActionResult`** — `Result<Response, AppError>` — return type for action fns
 
 ## Response Builders (from `pilcrow_web::*`)
 
 | Builder | Use |
 |---|---|
-| `redirect("/path")` | `ActionResult`: 303 redirect (use in `actions()`) |
+| `redirect("/path")` | `ActionResult`: 303 redirect (use in action fns) |
 | `navigate("/path")` | `NavigateResponse`: 303 redirect with `ResponseExt` |
 | `json(value)` | JSON response |
 | `status(StatusCode::...)` | Bare status |
@@ -148,31 +148,37 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 
 ## Actions Pattern
 
-A single `actions()` function handles all POST variants via `match req.action()`:
+Each named action is its own `pub async fn <name>(req: Req) -> ActionResult`. The URL fragment `?/<name>` maps 1:1 to the function named `<name>` in the code-behind file.
 
 ```rust
-pub async fn actions(req: Req) -> ActionResult {
-    match req.action() {
-        "create" => {
-            let name = req.form.get("name").unwrap_or("");
-            // ...
-            redirect("/items")
-        }
-        "delete" => {
-            // ...
-            redirect("/items")
-        }
-        _ => redirect("/"),
-    }
+// src/pages/items.rs
+pub async fn create(req: Req) -> ActionResult {
+    let name = req.form.get("name").unwrap_or("");
+    // ...
+    redirect("/items")
+}
+
+pub async fn delete(req: Req) -> ActionResult {
+    // ...
+    redirect("/items")
 }
 ```
 
-Named actions: use `s-post="?action=create"` on forms. The server dispatches by checking `?action=`, then `?_action=`, then form body `_action`. Default action (`""`) handles unmatched POSTs.
+```html
+<form s-post="?/create" s-target="#items">...</form>
+<button s-post="?/delete">Delete</button>
+```
+
+**Rules:**
+- POST only. There is no default action — a plain `POST /items` with no `?/<name>` fragment hits no action route and returns 404.
+- Unknown action names (e.g. `?/nonexistent`) return `AppError::NotFound` via the page's `_error.html`.
+- Action fns are discovered at build time by signature: `pub async fn <name>(req: Req) -> ActionResult` (or any `Result`-shaped return). `load()` is excluded. Layouts cannot define actions; UI components must not define them (build error).
+- Action fns run on the page's own URL — no separate route is registered.
 
 ## Form Validation
 
 ```rust
-pub async fn actions(req: Req) -> ActionResult {
+pub async fn signup(req: Req) -> ActionResult {
     let email = req.form.get("email").unwrap_or("");
     if email.is_empty() {
         return req.fail(form_errors()
@@ -214,7 +220,7 @@ pub async fn middleware(req: Req, next: Next) -> Response {
 }
 ```
 
-- `req.locals` and `req.res` set in middleware are shared with all downstream `load()` / `actions()` handlers
+- `req.locals` and `req.res` set in middleware are shared with all downstream `load()` and action fns
 - `next.run().await` forwards the original request (body intact) to the route handler
 - Short-circuit by returning a `Response` directly without calling `next.run()`
 - `src/middleware.rs` is auto-added to Cargo's rerun-if-changed watch list
@@ -241,7 +247,7 @@ Elements get one of: `s-get`, `s-post`, `s-put`, `s-patch`, `s-delete` with a UR
 
 ```html
 <a s-get="/products?category=shoes" s-target="#product-list">Shoes</a>
-<form s-post="?action=create" s-target="#my-form" id="my-form">...</form>
+<form s-post="?/create" s-target="#my-form" id="my-form">...</form>
 <button s-delete="/items/:key">Delete</button>   <!-- :key interpolated from nearest [:key] ancestor -->
 ```
 
@@ -327,7 +333,7 @@ Silcrow.onError(handler)
 
 This is the most complex file. Key structs:
 - `LoadSignature` — tracks whether `load()` exists, is async, returns Result, wants `Req`, wants `PilcrowClient`. All page/layout load functions are validated to have `is_async=true`, `returns_result=true`, `wants_req=true` — the flexible fields exist for internal tracking but non-conforming signatures are rejected at build time in `instrument_frontmatter`.
-- `ActionsSignature` — tracks `actions()` presence: `is_async`, `returns_result`, `wants_req`
+- `ActionFn` — one entry per discovered action: `name` (the URL key), `is_async`, `returns_result`, `wants_req`. `action_map: HashMap<page, Vec<ActionFn>>` drives `emit_action_route`, which emits one POST route per page with an inner `match req.action()` dispatch to the named fns (unknown names → `AppError::NotFound`).
 - `InstrumentedFrontmatter` — parsed code-behind with injected imports, detected signatures
 - `GeneratedTemplatesModule` — all per-page codegen state including `action_map`
 - `make_merged_props_struct` — builds `__MergedProps` (layout fields + page fields) when a layout has `load()`. Detects field name collisions between layout and page `Props` at build time and fails with a clear message (e.g. `Props field 'title' is defined in both the layout and the page`).

@@ -3,7 +3,6 @@ use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
-    response::IntoResponse,
     routing::{get, post},
 };
 use http_body_util::BodyExt;
@@ -149,11 +148,11 @@ fn formmap_contains() {
 // ── req.action() ─────────────────────────────────────────────
 
 #[tokio::test]
-async fn req_action_from_query_param() {
+async fn req_action_from_slash_prefix() {
     let resp = action_echo_app()
         .oneshot(
             Request::builder()
-                .uri("/?action=create")
+                .uri("/?/create")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -163,28 +162,12 @@ async fn req_action_from_query_param() {
 }
 
 #[tokio::test]
-async fn req_action_from_underscore_query() {
+async fn req_action_alongside_other_query_params() {
     let resp = action_echo_app()
         .oneshot(
             Request::builder()
-                .uri("/?_action=delete")
+                .uri("/?category=shoes&/update")
                 .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(body_string(resp).await, "delete");
-}
-
-#[tokio::test]
-async fn req_action_from_form_body() {
-    let resp = action_echo_app()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("_action=update"))
                 .unwrap(),
         )
         .await
@@ -202,20 +185,44 @@ async fn req_action_defaults_to_empty() {
 }
 
 #[tokio::test]
-async fn req_action_query_wins_over_form_body() {
-    // ?action= in query wins over _action in form body.
+async fn req_action_ignores_form_body() {
+    // Form body is not consulted for action dispatch — only `?/name`.
     let resp = action_echo_app()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/?action=from_query")
+                .uri("/")
                 .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("_action=from_body"))
+                .body(Body::from("action=create&_action=create"))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(body_string(resp).await, "from_query");
+    assert_eq!(body_string(resp).await, "");
+}
+
+#[tokio::test]
+async fn req_action_slash_key_stripped_from_query_map() {
+    // The `?/<name>` entry must not leak into req.query.
+    let app = Router::new().route(
+        "/",
+        post(|req: Req| async move {
+            let has_action_key = req.query.keys().any(|k| k.starts_with('/'));
+            let sibling = req.query.get("tag").cloned().unwrap_or_default();
+            format!("stripped={} tag={}", !has_action_key, sibling)
+        }),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/?/create&tag=ok")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_string(resp).await, "stripped=true tag=ok");
 }
 
 // ── req.is_enhanced ──────────────────────────────────────────

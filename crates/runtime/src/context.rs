@@ -205,6 +205,27 @@ impl Res {
     }
 }
 
+// ── Action parsing ───────────────────────────────────────────
+
+/// Extract the named action from a raw URL query string (`?/<name>`).
+///
+/// Scans the query string for the first key that starts with `/` and returns
+/// the URL-decoded remainder as the action name. Returns `None` when no such
+/// key is present.
+fn extract_action_from_query(raw_query: Option<&str>) -> Option<String> {
+    let query = raw_query?;
+    for pair in query.split('&') {
+        let key = pair.split('=').next()?;
+        if let Some(stripped) = key.strip_prefix('/') {
+            return match urlencoding::decode(stripped) {
+                Ok(decoded) => Some(decoded.into_owned()),
+                Err(_) => Some(stripped.to_string()),
+            };
+        }
+    }
+    None
+}
+
 // ── FormMap ───────────────────────────────────────────────────
 
 /// Parsed URL-encoded form body. Supports multi-value keys.
@@ -230,7 +251,7 @@ impl FormMap {
 
 // ── Req ──────────────────────────────────────────────────────
 
-/// Unified request context for both `load()` and `actions()`.
+/// Unified request context for both `load()` and named action handlers.
 ///
 /// Replaces the old `PageContext` / `ActionContext` split — one type, same mental
 /// model everywhere.  `req.form` is empty on GET requests; `req.res` accumulates
@@ -244,15 +265,10 @@ impl FormMap {
 ///     Ok(Props { user })
 /// }
 ///
-/// pub async fn actions(req: Req) -> ActionResult {
-///     match req.action() {
-///         "create" => {
-///             let name = req.form.get("name").unwrap_or("");
-///             // ...
-///             redirect("/items")
-///         }
-///         _ => redirect("/"),
-///     }
+/// // Named action — invoked when the client POSTs `?/create`.
+/// pub async fn create(req: Req) -> ActionResult {
+///     let name = req.form.get("name").unwrap_or("");
+///     redirect("/items")
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -260,6 +276,9 @@ pub struct Req {
     /// Named path capture groups. `/posts/[id]` → `{"id": "42"}`.
     pub params: HashMap<String, String>,
     /// Query string as a flat map. `?category=shoes` → `{"category": "shoes"}`.
+    ///
+    /// The `?/name` action marker is stripped out of this map — read it via
+    /// [`Req::action`] instead.
     pub query: HashMap<String, String>,
     /// Parsed URL-encoded form body. Empty on GET requests.
     pub form: FormMap,
@@ -278,30 +297,27 @@ pub struct Req {
     pub locals: Locals,
     /// Response modifier: set headers, cookies, toasts from inside any handler.
     pub res: Res,
+    /// The named action, parsed from `?/<name>`. `None` when the URL has no
+    /// action marker (default POST / GET). See [`Req::action`].
+    action: Option<String>,
 }
 
 impl Req {
-    /// Return the named action from the current request.
+    /// Return the named action from the current request URL.
     ///
-    /// Reads `?action=<name>` (primary), then `?_action=<name>`, then the form
-    /// body field `_action`. Returns `""` for a default (un-named) action.
+    /// The server parses `?/<name>` from the query string — matching the
+    /// SvelteKit convention. Returns `""` when no action marker is present.
     ///
     /// ```rust,ignore
-    /// pub async fn actions(req: Req) -> ActionResult {
-    ///     match req.action() {
-    ///         "create" => { /* ... */ redirect("/items") }
-    ///         "delete" => { /* ... */ redirect("/items") }
-    ///         _ => redirect("/"),
-    ///     }
+    /// // HTML: <form s-post="?/create">…</form>
+    /// // Code-behind:
+    /// pub async fn create(req: Req) -> ActionResult {
+    ///     let name = req.form.get("name").unwrap_or("");
+    ///     redirect("/items")
     /// }
     /// ```
     pub fn action(&self) -> &str {
-        self.query
-            .get("action")
-            .map(|s| s.as_str())
-            .or_else(|| self.query.get("_action").map(|s| s.as_str()))
-            .or_else(|| self.form.get("_action"))
-            .unwrap_or("")
+        self.action.as_deref().unwrap_or("")
     }
 
     /// Return the smart form-error response for the current request context.
@@ -386,10 +402,13 @@ impl Req {
             .map(|p| p.0)
             .unwrap_or_default();
 
-        let query = Query::<HashMap<String, String>>::from_request_parts(parts, state)
+        let action = extract_action_from_query(parts.uri.query());
+
+        let mut query = Query::<HashMap<String, String>>::from_request_parts(parts, state)
             .await
             .map(|q| q.0)
             .unwrap_or_default();
+        query.retain(|k, _| !k.starts_with('/'));
 
         let cookies = CookieJar::from_request_parts(parts, state)
             .await
@@ -430,6 +449,7 @@ impl Req {
             is_enhanced,
             locals,
             res,
+            action,
         }
     }
 }
@@ -446,10 +466,13 @@ impl<S: Send + Sync> FromRequest<S> for Req {
             .map(|p| p.0)
             .unwrap_or_default();
 
-        let query = Query::<HashMap<String, String>>::from_request_parts(&mut parts, state)
+        let action = extract_action_from_query(parts.uri.query());
+
+        let mut query = Query::<HashMap<String, String>>::from_request_parts(&mut parts, state)
             .await
             .map(|q| q.0)
             .unwrap_or_default();
+        query.retain(|k, _| !k.starts_with('/'));
 
         let cookies = CookieJar::from_request_parts(&mut parts, state)
             .await
@@ -495,6 +518,6 @@ impl<S: Send + Sync> FromRequest<S> for Req {
         }
         let form = FormMap(raw_map);
 
-        Ok(Req { params, query, form, cookies, headers, path, is_enhanced, locals, res })
+        Ok(Req { params, query, form, cookies, headers, path, is_enhanced, locals, res, action })
     }
 }

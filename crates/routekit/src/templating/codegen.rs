@@ -154,9 +154,15 @@ pub struct LoadSignature {
     pub wants_req: bool,
 }
 
-/// Shape of the `actions()` function in a page's code-behind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActionsSignature {
+/// One discovered named action handler in a page's code-behind.
+///
+/// Named actions are `pub` fns whose signature matches
+/// `pub async fn NAME(req: Req) -> ActionResult` (name other than `load`).
+/// The client invokes them by POSTing to the page URL with `?/<name>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionFn {
+    /// Function name — also the URL key (`?/<name>`).
+    pub name: String,
     pub is_async: bool,
     /// Whether the return type is `Result<_, _>` / `ActionResult`.
     pub returns_result: bool,
@@ -173,8 +179,8 @@ pub struct GeneratedTemplatesModule {
     pub load_map: HashMap<String, Option<LoadSignature>>,
     /// Map from page module_name to layout field info, for pages whose layout has `load()`.
     pub layout_fields_map: HashMap<String, LayoutFieldsInfo>,
-    /// Map from page module_name to its `actions()` function signature.
-    pub action_map: HashMap<String, ActionsSignature>,
+    /// Map from page module_name to its list of discovered named action handlers.
+    pub action_map: HashMap<String, Vec<ActionFn>>,
 }
 
 /// Build a page-route manifest from `src/pages/**/*.html`.
@@ -318,7 +324,7 @@ pub fn render_generated_templates_module(
 
     let mut metadata = Vec::with_capacity(ordered.len());
     let mut load_map = HashMap::new();
-    let mut action_map: HashMap<String, ActionsSignature> = HashMap::new();
+    let mut action_map: HashMap<String, Vec<ActionFn>> = HashMap::new();
 
     for entry in &ordered {
         let is_layout = entry.module_name.starts_with("layout_");
@@ -380,8 +386,8 @@ pub fn render_generated_templates_module(
 
         load_map.insert(entry.module_name.clone(), instrumented.load_signature);
 
-        if let Some(sig) = instrumented.actions_signature {
-            action_map.insert(entry.module_name.clone(), sig);
+        if !instrumented.actions.is_empty() {
+            action_map.insert(entry.module_name.clone(), instrumented.actions.clone());
         }
 
         let module_ident = syn::Ident::new(&entry.module_name, Span::call_site());
@@ -444,7 +450,7 @@ pub struct WrittenTemplatesOutput {
     pub load_map: HashMap<String, Option<LoadSignature>>,
     /// Forwarded from `GeneratedTemplatesModule`; passed on to the app module writer.
     pub layout_fields_map: HashMap<String, LayoutFieldsInfo>,
-    pub action_map: HashMap<String, ActionsSignature>,
+    pub action_map: HashMap<String, Vec<ActionFn>>,
 }
 
 /// Generate and write the compiled templates module to `out_file`.
@@ -474,8 +480,8 @@ struct InstrumentedFrontmatter {
     load_signature: Option<LoadSignature>,
     /// Named fields declared in the module's own `Props` struct (before any injection).
     own_syn_fields: Vec<syn::Field>,
-    /// `actions()` function signature discovered in the frontmatter (pages only).
-    actions_signature: Option<ActionsSignature>,
+    /// Named action handlers discovered in the frontmatter (pages only).
+    actions: Vec<ActionFn>,
 }
 
 /// `extra_fields` contains the named fields from a layout's Props struct when the layout
@@ -530,19 +536,36 @@ fn instrument_frontmatter(
         }
     });
 
-    // Detect single `actions()` function (pages only; layouts/UI are excluded below).
-    let actions_signature: Option<ActionsSignature> = file.items.iter().find_map(|item| {
-        let syn::Item::Fn(f) = item else { return None };
-        if f.sig.ident != "actions" {
-            return None;
+    // Discover named action handlers. An action is any `pub` fn in a page's
+    // code-behind with an `ActionResult`-shaped return. The fn name is the URL
+    // key (`?/<name>`). `load` is excluded — it is the GET handler.
+    let in_pages = source_path.contains("/pages/");
+    let in_ui = source_path.contains("/ui/");
+    let mut actions: Vec<ActionFn> = Vec::new();
+
+    for item in &file.items {
+        let syn::Item::Fn(f) = item else { continue };
+        let name = f.sig.ident.to_string();
+        if name == "load" {
+            continue;
         }
-        let is_async = f.sig.asyncness.is_some();
+        if !matches!(f.vis, syn::Visibility::Public(_)) {
+            continue;
+        }
+
+        // Helpers use any non-Result return type; only action-shaped fns are considered.
         let returns_result = match &f.sig.output {
-            syn::ReturnType::Default => false,
-            syn::ReturnType::Type(_, ty) => type_last_ident(ty)
-                .map(|id| id == "Result" || id == "ActionResult")
-                .unwrap_or(false),
+            syn::ReturnType::Default => continue,
+            syn::ReturnType::Type(_, ty) => {
+                let Some(ident) = type_last_ident(ty) else { continue };
+                if ident != "Result" && ident != "ActionResult" {
+                    continue;
+                }
+                true
+            }
         };
+
+        let is_async = f.sig.asyncness.is_some();
         let wants_req = f.sig.inputs.iter().any(|arg| {
             if let syn::FnArg::Typed(pat) = arg {
                 type_last_ident(&pat.ty).map(|id| id == "Req").unwrap_or(false)
@@ -550,28 +573,54 @@ fn instrument_frontmatter(
                 false
             }
         });
-        Some(ActionsSignature { is_async, returns_result, wants_req })
-    });
+
+        if in_ui {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "action handler `{name}` is not allowed in `{source_path}`; \
+                     ui components cannot handle form actions — move it to a page."
+                ),
+            ));
+        }
+
+        // Layouts do not own actions. Skip silently so users can still define
+        // helper fns there if their signature happens to match.
+        if !in_pages {
+            continue;
+        }
+
+        if !is_async {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "action `{name}` in `{source_path}` must be declared `async`.\n\
+                     Required signature: pub async fn {name}(req: Req) -> ActionResult"
+                ),
+            ));
+        }
+        if !wants_req {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "action `{name}` in `{source_path}` must take `req: Req` as a parameter.\n\
+                     Required signature: pub async fn {name}(req: Req) -> ActionResult"
+                ),
+            ));
+        }
+
+        actions.push(ActionFn { name, is_async, returns_result, wants_req });
+    }
 
     // UI components are Props-only: they display data, they don't fetch it.
     // Layouts CAN have load() — they provide shared data to every page they wrap.
-    if source_path.contains("/ui/") && load_signature.is_some() {
+    if in_ui && load_signature.is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
                 "`load()` is not allowed in `{source_path}`; \
                  ui components are Props-only. \
                  Fetch data in a page (`pages/`) or layout (`layouts/`) and pass it via Props."
-            ),
-        ));
-    }
-
-    if source_path.contains("/ui/") && actions_signature.is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "`actions()` is not allowed in `{source_path}`; \
-                 ui components cannot handle form actions."
             ),
         ));
     }
@@ -702,7 +751,7 @@ fn instrument_frontmatter(
         source: out,
         load_signature,
         own_syn_fields,
-        actions_signature,
+        actions,
     })
 }
 
@@ -1054,7 +1103,7 @@ pub fn render_generated_app_module(
     error_module_for_page: &HashMap<String, String>,
     not_found_module: Option<&str>,
     loading_module_for_page: &HashMap<String, String>,
-    action_map: &HashMap<String, ActionsSignature>,
+    action_map: &HashMap<String, Vec<ActionFn>>,
     has_middleware: bool,
 ) -> String {
     let mut out = String::new();
@@ -1077,7 +1126,7 @@ pub fn render_generated_app_module(
         let chain_info = layout_fields_map.get(&entry.symbol);
         let error_mod = error_module_for_page.get(&entry.symbol).map(String::as_str);
         let loading_mod = loading_module_for_page.get(&entry.symbol).map(String::as_str);
-        let page_actions = action_map.get(&entry.symbol).copied();
+        let page_actions: Option<&Vec<ActionFn>> = action_map.get(&entry.symbol);
 
         let pattern = rust_string(&entry.pattern);
         let mod_name = &entry.symbol;
@@ -1304,9 +1353,11 @@ pub fn render_generated_app_module(
 
         out.push_str("        }))\n");
 
-        // ── Action POST route (same URL) ────────────────────────────────────────
-        if let Some(actions_sig) = page_actions {
-            out.push_str(&emit_action_route(&actions_sig, &entry.pattern, mod_name, error_mod));
+        // ── Action POST route (same URL, dispatched by `?/<name>`) ──────────────
+        if let Some(actions) = page_actions {
+            if !actions.is_empty() {
+                out.push_str(&emit_action_route(actions, &entry.pattern, mod_name, error_mod));
+            }
         }
     }
 
@@ -1362,46 +1413,76 @@ pub fn render_generated_app_module(
     out
 }
 
-/// Generate the `Err(e)` match arm body for a load() or action() error.
+/// Emit the body that runs when an `AppError` (bound to `e`) needs to be
+/// converted into a response. Used from both `Err(e) => { ... }` match arms
+/// and from the unknown-action branch of the dispatch table.
 ///
-/// `AppError::Redirect` is always handled first — it issues a 303 before any error-page logic.
+/// `AppError::Redirect` is handled first — it issues a 303 before any error-page logic.
 /// If `error_mod` is `Some`, other errors render the scoped `_error.html` page.
 /// Otherwise they fall back to a plain-text 500.
-fn emit_error_branch(error_mod: Option<&str>) -> String {
+///
+/// `req.res` modifiers (toasts, headers, cookies) are applied to both the
+/// redirect response and the error-page response so middleware / load-phase
+/// side-effects are not silently dropped.
+///
+/// `indent_levels` sets the number of 4-space indents on the first line; every
+/// subsequent line is indented relative to that. This lets callers drop the
+/// body into arbitrarily-nested `match` arms.
+fn emit_app_error_body(error_mod: Option<&str>, indent_levels: usize) -> String {
+    let pad = "    ".repeat(indent_levels);
     let mut s = String::new();
-    s.push_str("                Err(e) => {\n");
-    // Redirect short-circuit — must come before the status-code / error-page logic.
-    // Apply `req.res` modifiers (toasts, headers) even on redirect so middleware effects are preserved.
-    s.push_str("                    if let ::pilcrow_web::AppError::Redirect(ref __path) = e {\n");
-    s.push_str("                        let mut __redir = ::pilcrow_web::axum::response::Redirect::to(__path).into_response();\n");
-    s.push_str("                        __resp_handle.apply_to(&mut __redir);\n");
-    s.push_str("                        return __redir;\n");
-    s.push_str("                    }\n");
+
+    // Redirect short-circuit
+    let _ = writeln!(s, "{pad}if let ::pilcrow_web::AppError::Redirect(ref __path) = e {{");
+    let _ = writeln!(s, "{pad}    let mut __redir = ::pilcrow_web::axum::response::Redirect::to(__path).into_response();");
+    let _ = writeln!(s, "{pad}    __resp_handle.apply_to(&mut __redir);");
+    let _ = writeln!(s, "{pad}    return __redir;");
+    let _ = writeln!(s, "{pad}}}");
 
     if let Some(err_mod) = error_mod {
         let render_fn = format!("render_{err_mod}");
-        s.push_str("                    let __status = e.status_code();\n");
-        let _ = write!(s, "                    let __err_props = __pilcrow_gen::{err_mod}::Props {{\n");
-        s.push_str("                        status: __status,\n");
-        s.push_str("                        message: e.to_string(),\n");
-        s.push_str("                    };\n");
-        let _ = writeln!(
-            s,
-            "                    let __err_html = __pilcrow_gen::{err_mod}::{render_fn}(__err_props)"
-        );
-        s.push_str(
-            "                        .unwrap_or_else(|_| format!(\"<h1>{} Error</h1>\", __status));\n",
-        );
-        s.push_str("                    return (\n");
-        s.push_str("                        ::pilcrow_web::StatusCode::from_u16(__status)\n");
-        s.push_str("                            .unwrap_or(::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR),\n");
-        s.push_str("                        ::pilcrow_web::axum::response::Html(__err_html)\n");
-        s.push_str("                    ).into_response();\n");
+        let _ = writeln!(s, "{pad}let __status = e.status_code();");
+        let _ = writeln!(s, "{pad}let __err_props = __pilcrow_gen::{err_mod}::Props {{");
+        let _ = writeln!(s, "{pad}    status: __status,");
+        let _ = writeln!(s, "{pad}    message: e.to_string(),");
+        let _ = writeln!(s, "{pad}}};");
+        let _ = writeln!(s, "{pad}let __err_html = __pilcrow_gen::{err_mod}::{render_fn}(__err_props)");
+        let _ = writeln!(s, "{pad}    .unwrap_or_else(|_| format!(\"<h1>{{}} Error</h1>\", __status));");
+        let _ = writeln!(s, "{pad}let mut __err_resp = (");
+        let _ = writeln!(s, "{pad}    ::pilcrow_web::StatusCode::from_u16(__status)");
+        let _ = writeln!(s, "{pad}        .unwrap_or(::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR),");
+        let _ = writeln!(s, "{pad}    ::pilcrow_web::axum::response::Html(__err_html)");
+        let _ = writeln!(s, "{pad}).into_response();");
+        let _ = writeln!(s, "{pad}__resp_handle.apply_to(&mut __err_resp);");
+        let _ = writeln!(s, "{pad}return __err_resp;");
     } else {
-        s.push_str("                    return (::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();\n");
+        let _ = writeln!(s, "{pad}let mut __err_resp = (::pilcrow_web::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();");
+        let _ = writeln!(s, "{pad}__resp_handle.apply_to(&mut __err_resp);");
+        let _ = writeln!(s, "{pad}return __err_resp;");
     }
-    s.push_str("                },\n");
     s
+}
+
+/// Generate the `Err(e) => { ... },` match arm at the load/action call site.
+fn emit_error_branch(error_mod: Option<&str>) -> String {
+    emit_error_branch_indented(error_mod, 4)
+}
+
+/// Same as [`emit_error_branch`] but lets the caller specify the indent level
+/// of the `Err(e) =>` line (in 4-space increments). Used for the dispatch-
+/// table inner match arms, which sit one level deeper than a top-level match.
+fn emit_error_branch_indented(error_mod: Option<&str>, indent_levels: usize) -> String {
+    let pad = "    ".repeat(indent_levels);
+    let mut s = String::new();
+    let _ = writeln!(s, "{pad}Err(e) => {{");
+    s.push_str(&emit_app_error_body(error_mod, indent_levels + 1));
+    let _ = writeln!(s, "{pad}}},");
+    s
+}
+
+/// Emit the unknown-action fallback body (bound `e: AppError`, no match wrapper).
+fn emit_app_error_branch_body(error_mod: Option<&str>, indent_levels: usize) -> String {
+    emit_app_error_body(error_mod, indent_levels)
 }
 
 /// Append the loading skeleton `<template>` to the rendered page HTML.
@@ -1424,13 +1505,14 @@ fn emit_loading_append(loading_mod: Option<&str>) -> String {
     }
 }
 
-/// Generate a POST `.route(...)` for a page's `actions()` function.
+/// Generate a single POST `.route(...)` that dispatches to one of the page's
+/// discovered named action handlers.
 ///
-/// The generated handler calls `actions(req)` directly.  Action dispatch
-/// (matching `req.action()` against `"create"`, `"delete"`, etc.) is handled
-/// inside the user's `actions()` function via a plain `match`.
+/// The client POSTs to the page URL with `?/<name>` to invoke `fn <name>`.
+/// An unknown action returns `404 Not Found`. The dispatch table is static —
+/// handlers are discovered at build time by [`instrument_frontmatter`].
 fn emit_action_route(
-    sig: &ActionsSignature,
+    actions: &[ActionFn],
     pattern: &str,
     mod_name: &str,
     error_mod: Option<&str>,
@@ -1443,22 +1525,28 @@ fn emit_action_route(
     );
     s.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
     s.push_str("            let __resp_handle = req.res.clone();\n");
+    s.push_str("            let __action = req.action().to_owned();\n");
+    s.push_str("            let mut __response = match __action.as_str() {\n");
 
-    let call_arg = if sig.wants_req { "req" } else { "" };
-    let call_expr = format!("__pilcrow_gen::{mod_name}::actions({call_arg})");
-    let awaited = if sig.is_async { format!("{call_expr}.await") } else { call_expr };
+    for action in actions {
+        let name = rust_string(&action.name);
+        let fn_ident = &action.name;
+        let call_arg = if action.wants_req { "req" } else { "" };
+        let call_expr = format!("__pilcrow_gen::{mod_name}::{fn_ident}({call_arg})");
+        let awaited = if action.is_async { format!("{call_expr}.await") } else { call_expr };
 
-    if sig.returns_result {
-        s.push_str("            let mut __response = match ");
-        s.push_str(&awaited);
-        s.push_str(" {\n");
-        s.push_str("                Ok(r) => r,\n");
-        s.push_str(&emit_error_branch(error_mod));
-        s.push_str("            };\n");
-    } else {
-        let _ = writeln!(s, "            let mut __response = {awaited}.into_response();");
+        let _ = writeln!(s, "                {name} => match {awaited} {{");
+        s.push_str("                    Ok(r) => r,\n");
+        s.push_str(&emit_error_branch_indented(error_mod, 5));
+        s.push_str("                },\n");
     }
 
+    // Unknown action → 404 with the same error-page rendering as other errors.
+    s.push_str("                _ => {\n");
+    s.push_str("                    let e = ::pilcrow_web::AppError::NotFound(format!(\"unknown action: {}\", __action));\n");
+    s.push_str(&emit_app_error_branch_body(error_mod, 5));
+    s.push_str("                }\n");
+    s.push_str("            };\n");
     s.push_str("            __resp_handle.apply_to(&mut __response);\n");
     s.push_str("            __response\n");
     s.push_str("        }))\n");
@@ -1474,7 +1562,7 @@ pub fn write_generated_app_module(
     error_module_for_page: &HashMap<String, String>,
     not_found_module: Option<&str>,
     loading_module_for_page: &HashMap<String, String>,
-    action_map: &HashMap<String, ActionsSignature>,
+    action_map: &HashMap<String, Vec<ActionFn>>,
     has_middleware: bool,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
@@ -1724,5 +1812,63 @@ mod tests {
         assert!(generated.contains("api_users_id"));
 
         cleanup(&root);
+    }
+
+    #[test]
+    fn emit_action_route_emits_named_dispatch_table() {
+        let actions = vec![
+            ActionFn {
+                name: "create".to_string(),
+                is_async: true,
+                returns_result: true,
+                wants_req: true,
+            },
+            ActionFn {
+                name: "delete".to_string(),
+                is_async: true,
+                returns_result: true,
+                wants_req: true,
+            },
+        ];
+
+        let source = emit_action_route(&actions, "/items", "page_items", None);
+
+        // POST handler shape
+        assert!(source.contains(".route(\"/items\""));
+        assert!(source.contains("::pilcrow_web::axum::routing::post"));
+        assert!(source.contains("let __resp_handle = req.res.clone();"));
+        assert!(source.contains("let __action = req.action().to_owned();"));
+        assert!(source.contains("match __action.as_str()"));
+
+        // Per-action dispatch arms calling the code-behind fns
+        assert!(source.contains("\"create\" => match __pilcrow_gen::page_items::create(req).await"));
+        assert!(source.contains("\"delete\" => match __pilcrow_gen::page_items::delete(req).await"));
+
+        // Unknown action → 404 via AppError::NotFound
+        assert!(source.contains("_ => {"));
+        assert!(source.contains("::pilcrow_web::AppError::NotFound"));
+        assert!(source.contains("unknown action:"));
+
+        // Redirect short-circuit still present and __resp_handle applied
+        assert!(source.contains("::pilcrow_web::AppError::Redirect"));
+        assert!(source.contains("__resp_handle.apply_to(&mut __response);"));
+    }
+
+    #[test]
+    fn emit_action_route_uses_custom_error_module_when_provided() {
+        let actions = vec![ActionFn {
+            name: "update".to_string(),
+            is_async: true,
+            returns_result: true,
+            wants_req: true,
+        }];
+
+        let source = emit_action_route(&actions, "/settings", "page_settings", Some("error_root"));
+
+        // Error-page render goes through the provided error module
+        assert!(source.contains("__pilcrow_gen::error_root::Props"));
+        assert!(source.contains("__pilcrow_gen::error_root::render_error_root"));
+        // And __resp_handle is applied to the error response too
+        assert!(source.contains("__resp_handle.apply_to(&mut __err_resp);"));
     }
 }
