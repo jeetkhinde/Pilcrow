@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "codegen-inspector": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["tools/mcp/codegen-inspector/server.js"],
+      "env": {}
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "pilcrow-codegen-inspector",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "MCP server for inspecting Pilcrow build-time codegen output",
+  "main": "server.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  }
+}
