@@ -1,8 +1,10 @@
 // ./src/lib.rs
 
 pub mod assets;
+pub mod context;
 pub mod extract;
 pub mod generated_routes;
+pub mod middleware;
 pub mod response;
 pub mod sse;
 pub mod start;
@@ -11,6 +13,8 @@ pub use start::start;
 // ── Core API re-exports ──────────────────────────────────────
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
+pub use context::{FormMap, Locals, Req, Res};
+pub use middleware::Next;
 pub use extract::extract::{RequestMode, SilcrowRequest};
 pub use generated_routes::{
     GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,
@@ -18,7 +22,10 @@ pub use generated_routes::{
 };
 pub use pilcrow_macros::sse;
 pub use response::response::ToastLevel;
-pub use response::response::{ErrorResponse, ResponseExt, json, navigate, status};
+pub use response::response::{
+    ActionResult, ErrorResponse, FormErrorItem, FormErrors, JsonResponse, NavigateResponse,
+    ResponseExt, form_errors, json, navigate, redirect, status,
+};
 pub use sse::watch;
 pub use sse::{
     EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute, interval, sse_raw, sse_stream,
