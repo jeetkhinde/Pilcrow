@@ -7,7 +7,16 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use cookie::time::Duration;
 use headers::HeaderMapExt;
+use pilcrow_core::AppError;
 use serde::{Deserialize, Serialize};
+
+/// Return type for `actions()` handlers.
+///
+/// A type alias for `Result<Response, AppError>`.  Use [`redirect`] for
+/// successful navigation and [`Req::fail`](crate::context::Req::fail) for form
+/// validation errors.  The `?` operator propagates infrastructure `AppError`s
+/// (database failures, auth errors, etc.) automatically.
+pub type ActionResult = Result<Response, AppError>;
 
 pub type ErrorResponse = Response;
 
@@ -111,10 +120,14 @@ pub trait ResponseExt: Sized {
         self
     }
     fn trigger_event(mut self, event_name: &str) -> Self {
-        let map = serde_json::json!({ event_name: {} });
-        self.base_mut()
+        let base = self.base_mut();
+        let mut map = base
             .headers
-            .typed_insert(SilcrowTrigger(map.to_string()));
+            .typed_get::<SilcrowTrigger>()
+            .and_then(|h| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&h.0).ok())
+            .unwrap_or_default();
+        map.insert(event_name.to_string(), serde_json::json!({}));
+        base.headers.typed_insert(SilcrowTrigger(serde_json::Value::Object(map).to_string()));
         self
     }
     fn retarget(mut self, selector: &str) -> Self {
@@ -243,6 +256,88 @@ impl IntoResponse for NavigateResponse {
     }
 }
 
+// ── FormErrors ────────────────────────────────────────────────
+
+/// JSON response type for returning form validation errors from `action()` functions.
+///
+/// silcrow.js receives this as JSON and calls `patch(data, targetEl)`, updating elements
+/// with `:text="errors.field"`, `:show="errors.field"`, and `:value="values.field"` bindings
+/// in the submitted form — no full page re-render needed.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// pub async fn action_create(ctx: ActionContext) -> Result<impl IntoResponse, AppError> {
+///     let email = ctx.form.get("email").unwrap_or("");
+///     if email.is_empty() {
+///         return Ok(form_errors()
+///             .error("email", "Email is required")
+///             .value("email", email)
+///             .into_response());
+///     }
+///     Ok(navigate("/dashboard"))
+/// }
+/// ```
+///
+/// Matching template:
+/// ```html
+/// <form s-action="?/create" s-target="#my-form" id="my-form">
+///   <input name="email" :value="values.email" />
+///   <span class="error" :text="errors.email" :show="errors.email"></span>
+/// </form>
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FormErrors {
+    /// Per-field error messages. Keys match form field names.
+    pub errors: std::collections::HashMap<String, String>,
+    /// Echoed field values to restore input state on error.
+    pub values: std::collections::HashMap<String, String>,
+    /// `true` when any error is present — bind to `:show="has_errors"` on an error summary.
+    pub has_errors: bool,
+    /// Flat list for `template[s-for]` error summaries.
+    pub error_list: Vec<FormErrorItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormErrorItem {
+    pub field: String,
+    pub message: String,
+}
+
+impl FormErrors {
+    /// Add a field-level error message.
+    pub fn error(mut self, field: impl Into<String>, message: impl Into<String>) -> Self {
+        let field = field.into();
+        let message = message.into();
+        self.error_list.push(FormErrorItem { field: field.clone(), message: message.clone() });
+        self.errors.insert(field, message);
+        self.has_errors = true;
+        self
+    }
+
+    /// Echo a field value back so the input is repopulated on error.
+    pub fn value(mut self, field: impl Into<String>, value: impl Into<String>) -> Self {
+        self.values.insert(field.into(), value.into());
+        self
+    }
+
+    /// `true` if no errors have been added.
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
+impl IntoResponse for FormErrors {
+    fn into_response(self) -> Response {
+        Json(self).into_response()
+    }
+}
+
+/// Construct a new [`FormErrors`] builder.
+pub fn form_errors() -> FormErrors {
+    FormErrors::default()
+}
+
 pub fn html(data: impl Into<String>) -> HtmlResponse {
     HtmlResponse {
         data: data.into(),
@@ -264,6 +359,32 @@ pub fn navigate(path: impl Into<String>) -> NavigateResponse {
         path: path.into(),
         base: BaseResponse::default(),
     }
+}
+
+/// Issue a `303 See Other` redirect from an `actions()` handler.
+///
+/// This is the idiomatic way to complete a successful action:
+///
+/// ```rust,ignore
+/// pub async fn actions(req: Req) -> ActionResult {
+///     db::create_item(&req.form).await?;
+///     redirect("/items")
+/// }
+/// ```
+///
+/// If you need to add a toast or header alongside the redirect, set it on
+/// `req.res` before calling `redirect`:
+///
+/// ```rust,ignore
+/// req.res.with_toast("Item created!", ToastLevel::Success);
+/// redirect("/items")
+/// ```
+pub fn redirect(path: impl Into<String>) -> ActionResult {
+    Ok(NavigateResponse {
+        path: path.into(),
+        base: BaseResponse::default(),
+    }
+    .into_response())
 }
 
 impl ResponseExt for HtmlResponse {

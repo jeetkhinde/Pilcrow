@@ -664,7 +664,7 @@ fn instrument_frontmatter(
         // and used by the render function and the generated handler.
         // serde::Serialize was already added by the loop above; askama::Template
         // goes on __MergedProps only.
-        let merged = make_merged_props_struct(extra_fields, &own_syn_fields, template_source);
+        let merged = make_merged_props_struct(extra_fields, &own_syn_fields, template_source)?;
         file.items.push(syn::Item::Struct(merged));
     }
 
@@ -800,11 +800,27 @@ fn named_field_names(fields: &[syn::Field]) -> Vec<String> {
 ///
 /// Fields order: layout fields first, then the page's own fields.
 /// Derives `askama::Template` and `serde::Serialize`; attaches the Askama template source.
+/// Returns an error if any field name appears in both `extra_fields` and `own_fields`.
 fn make_merged_props_struct(
     extra_fields: &[syn::Field],
     own_fields: &[syn::Field],
     template_source: &str,
-) -> syn::ItemStruct {
+) -> io::Result<syn::ItemStruct> {
+    // Detect field name collisions between layout Props and page Props up front.
+    let layout_names = named_field_names(extra_fields);
+    let page_names = named_field_names(own_fields);
+    for name in &page_names {
+        if layout_names.contains(name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Props field `{name}` is defined in both the layout and the page — \
+                     rename one of them to avoid a collision in __MergedProps"
+                ),
+            ));
+        }
+    }
+
     let template_lit = syn::LitStr::new(template_source, Span::call_site());
 
     // Start with an empty named struct and populate the fields list.
@@ -825,7 +841,7 @@ fn make_merged_props_struct(
         named_fields.named.push(f.clone());
     }
 
-    item
+    Ok(item)
 }
 
 fn ensure_serialize_derive(attrs: &mut Vec<syn::Attribute>) {
@@ -1355,8 +1371,11 @@ fn emit_error_branch(error_mod: Option<&str>) -> String {
     let mut s = String::new();
     s.push_str("                Err(e) => {\n");
     // Redirect short-circuit — must come before the status-code / error-page logic.
+    // Apply `req.res` modifiers (toasts, headers) even on redirect so middleware effects are preserved.
     s.push_str("                    if let ::pilcrow_web::AppError::Redirect(ref __path) = e {\n");
-    s.push_str("                        return ::pilcrow_web::axum::response::Redirect::to(__path).into_response();\n");
+    s.push_str("                        let mut __redir = ::pilcrow_web::axum::response::Redirect::to(__path).into_response();\n");
+    s.push_str("                        __resp_handle.apply_to(&mut __redir);\n");
+    s.push_str("                        return __redir;\n");
     s.push_str("                    }\n");
 
     if let Some(err_mod) = error_mod {

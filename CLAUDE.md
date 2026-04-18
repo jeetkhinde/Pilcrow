@@ -125,7 +125,7 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 **`Res`** — response modifier accessed as `req.res`:
 - `.with_status(StatusCode)`, `.with_header(key, value)`, `.with_cookie(Cookie)`
 - `.no_cache()`, `.with_toast(msg, ToastLevel::*)`
-- `.trigger_event(name)`, `.retarget(selector)`, `.push_history(url)`
+- `.trigger_event(name)`, `.retarget(selector)`, `.push_history(url)` — multiple `trigger_event` calls accumulate; all events are sent in one header
 - `.patch_target(selector, &data)`, `.invalidate_target(selector)`
 - `.client_navigate(path)`, `.sse(path)`, `.ws(path)`
 
@@ -229,7 +229,7 @@ AppError::Internal           // 500
 AppError::Redirect(String)   // 303 — use from load() to redirect before render
 ```
 
-`AppError::Redirect` short-circuits before any error page render in the generated handler.
+`AppError::Redirect` short-circuits before any error page render in the generated handler. Any `req.res` modifiers set before returning `Err(AppError::Redirect(...))` — such as `req.res.with_toast(...)` — are applied to the redirect response.
 
 ## silcrow.js
 
@@ -330,5 +330,6 @@ This is the most complex file. Key structs:
 - `ActionsSignature` — tracks `actions()` presence: `is_async`, `returns_result`, `wants_req`
 - `InstrumentedFrontmatter` — parsed code-behind with injected imports, detected signatures
 - `GeneratedTemplatesModule` — all per-page codegen state including `action_map`
+- `make_merged_props_struct` — builds `__MergedProps` (layout fields + page fields) when a layout has `load()`. Detects field name collisions between layout and page `Props` at build time and fails with a clear message (e.g. `Props field 'title' is defined in both the layout and the page`).
 
 When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeline tests exercise the full compile path including codegen.
