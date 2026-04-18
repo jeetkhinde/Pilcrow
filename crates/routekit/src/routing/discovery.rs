@@ -19,27 +19,107 @@ pub(crate) struct ApiRoute {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveredHtmlFiles {
     pub pages: Vec<PathBuf>,
-    pub components: Vec<PathBuf>,
-    pub layouts: Vec<PathBuf>,
+    pub ui: Vec<PathBuf>,
+    /// Auto-layouts: `_layout.html` files found inside `src/pages/` subdirectories.
+    /// These are NOT page routes — they automatically wrap sibling and child pages.
+    pub auto_layouts: Vec<PathBuf>,
+    /// Error boundaries: `_error.html` files found inside `src/pages/` subdirectories.
+    /// Rendered when a page's `load()` returns `Err`. Not routable.
+    pub error_pages: Vec<PathBuf>,
+    /// Not-found pages: `_not_found.html` files found inside `src/pages/`.
+    /// Rendered for unmatched routes. Not routable.
+    pub not_found_pages: Vec<PathBuf>,
+    /// Loading skeletons: `_loading.html` files found inside `src/pages/` subdirectories.
+    /// Their rendered HTML is embedded as a `<template>` in sibling/descendant pages
+    /// so silcrow.js can show them immediately while a navigation is in-flight.
+    pub loading_pages: Vec<PathBuf>,
 }
 
-/// Discover all `.html` files from `src/pages`, `src/components`, and `src/layouts`.
+/// Discover all `.html` files from `src/pages` and `src/ui`.
+///
+/// Special files inside `src/pages/` are separated from routable pages:
+/// - `_layout.html`    → `auto_layouts`
+/// - `_error.html`     → `error_pages`
+/// - `_not_found.html` → `not_found_pages`
 ///
 /// `src_root` should point to the project `src` directory.
 pub fn discover_html_files(src_root: impl AsRef<Path>) -> io::Result<DiscoveredHtmlFiles> {
     let src_root = src_root.as_ref();
 
-    let mut discovered = DiscoveredHtmlFiles {
-        pages: collect_html_files(&src_root.join("pages"))?,
-        components: collect_html_files(&src_root.join("components"))?,
-        layouts: collect_html_files(&src_root.join("layouts"))?,
-    };
+    let all_page_files = collect_html_files(&src_root.join("pages"))?;
 
-    discovered.pages.sort();
-    discovered.components.sort();
-    discovered.layouts.sort();
+    let mut pages = Vec::new();
+    let mut auto_layouts = Vec::new();
+    let mut error_pages = Vec::new();
+    let mut not_found_pages = Vec::new();
 
-    Ok(discovered)
+    let mut loading_pages = Vec::new();
+
+    for path in all_page_files {
+        if is_auto_layout_file(&path) {
+            auto_layouts.push(path);
+        } else if is_error_page_file(&path) {
+            error_pages.push(path);
+        } else if is_not_found_page_file(&path) {
+            not_found_pages.push(path);
+        } else if is_loading_page_file(&path) {
+            loading_pages.push(path);
+        } else {
+            pages.push(path);
+        }
+    }
+
+    let mut ui = collect_html_files(&src_root.join("ui"))?;
+
+    pages.sort();
+    ui.sort();
+    auto_layouts.sort();
+    error_pages.sort();
+    not_found_pages.sort();
+    loading_pages.sort();
+
+    Ok(DiscoveredHtmlFiles {
+        pages,
+        ui,
+        auto_layouts,
+        error_pages,
+        not_found_pages,
+        loading_pages,
+    })
+}
+
+/// Returns `true` if the file is a `_layout.html` auto-layout inside `pages/`.
+fn is_auto_layout_file(path: &Path) -> bool {
+    filename_is(path, "_layout.html")
+}
+
+/// Returns `true` if the file is a `_error.html` error boundary inside `pages/`.
+fn is_error_page_file(path: &Path) -> bool {
+    filename_is(path, "_error.html")
+}
+
+/// Returns `true` if the file is a `_not_found.html` not-found page inside `pages/`.
+fn is_not_found_page_file(path: &Path) -> bool {
+    filename_is(path, "_not_found.html")
+}
+
+/// Returns `true` if the file is a `_loading.html` loading skeleton inside `pages/`.
+fn is_loading_page_file(path: &Path) -> bool {
+    filename_is(path, "_loading.html")
+}
+
+fn filename_is(path: &Path, name: &str) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == name)
+}
+
+/// Returns `true` if the file is a special framework file (not a routable page).
+fn is_special_page_file(path: &Path) -> bool {
+    is_auto_layout_file(path)
+        || is_error_page_file(path)
+        || is_not_found_page_file(path)
+        || is_loading_page_file(path)
 }
 
 /// Build `Route` entries from discovered page files in `src/pages`.
@@ -47,6 +127,8 @@ pub fn build_page_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<Route>> {
     let src_root = src_root.as_ref();
     let pages_dir = src_root.join("pages");
     let mut page_files = collect_html_files(&pages_dir)?;
+    // Special files (_layout, _error, _not_found) are not routable pages.
+    page_files.retain(|p| !is_special_page_file(p));
     page_files.sort();
 
     let pages_dir_text = path_to_unix_slashes(&pages_dir);
@@ -244,15 +326,102 @@ mod tests {
 
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("pages/posts/[id].html"), "<h1>Post</h1>");
-        write_file(&src.join("components/Card.html"), "<div>Card</div>");
-        write_file(&src.join("layouts/Main.html"), "<main>{% block %}</main>");
+        write_file(&src.join("ui/Card.html"), "<div>Card</div>");
         write_file(&src.join("pages/ignore.txt"), "ignored");
 
         let discovered = discover_html_files(&src).expect("expected discovery to succeed");
 
         assert_eq!(discovered.pages.len(), 2);
-        assert_eq!(discovered.components.len(), 1);
-        assert_eq!(discovered.layouts.len(), 1);
+        assert_eq!(discovered.ui.len(), 1);
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn discover_html_files_separates_auto_layouts() {
+        let root = mk_temp_root("discover_auto_layouts");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/_layout.html"), "<slot />");
+        write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
+        write_file(&src.join("pages/products/_layout.html"), "<div><slot /></div>");
+
+        let discovered = discover_html_files(&src).expect("expected discovery to succeed");
+
+        // _layout.html files are auto_layouts, not pages
+        assert_eq!(discovered.pages.len(), 2, "only non-layout pages");
+        assert_eq!(discovered.auto_layouts.len(), 2, "two auto-layouts found");
+        assert!(discovered.pages.iter().all(|p| {
+            p.file_name().and_then(|n| n.to_str()) != Some("_layout.html")
+        }), "_layout.html must not appear in pages");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn discover_html_files_separates_error_and_not_found_pages() {
+        let root = mk_temp_root("discover_error_nf");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/_error.html"), "<h1>Error</h1>");
+        write_file(&src.join("pages/_not_found.html"), "<h1>404</h1>");
+        write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
+        write_file(&src.join("pages/products/_error.html"), "<h1>Products Error</h1>");
+
+        let discovered = discover_html_files(&src).expect("discovery should succeed");
+
+        assert_eq!(discovered.pages.len(), 2, "only routable pages");
+        assert_eq!(discovered.error_pages.len(), 2, "two _error.html files");
+        assert_eq!(discovered.not_found_pages.len(), 1, "one _not_found.html file");
+        assert!(
+            discovered.pages.iter().all(|p| {
+                let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                n != "_error.html" && n != "_not_found.html"
+            }),
+            "special files must not appear in pages"
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn build_page_routes_excludes_auto_layout_files() {
+        let root = mk_temp_root("routes_exclude_auto_layout");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/_layout.html"), "<slot />");
+        write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
+        write_file(&src.join("pages/products/_layout.html"), "<div><slot /></div>");
+
+        let routes = build_page_routes(&src).expect("routes should build");
+        let patterns: Vec<_> = routes.iter().map(|r| r.pattern.as_str()).collect();
+
+        assert!(patterns.contains(&"/"), "index page is a route");
+        assert!(patterns.contains(&"/products"), "products page is a route");
+        assert!(
+            patterns.iter().all(|p| !p.contains("_layout")),
+            "_layout.html files must not become routes"
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn build_page_routes_excludes_error_and_not_found_files() {
+        let root = mk_temp_root("routes_exclude_special");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/_error.html"), "<h1>Error</h1>");
+        write_file(&src.join("pages/_not_found.html"), "<h1>404</h1>");
+
+        let routes = build_page_routes(&src).expect("routes should build");
+        let patterns: Vec<_> = routes.iter().map(|r| r.pattern.as_str()).collect();
+
+        assert_eq!(patterns, vec!["/"], "only index.html is a route");
 
         cleanup(&root);
     }

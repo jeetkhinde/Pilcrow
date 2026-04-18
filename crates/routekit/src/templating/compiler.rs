@@ -80,11 +80,212 @@ pub fn split_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleParse
 /// This performs:
 /// 1. `---` fence splitting
 /// 2. component tag transpilation in the template section
+/// 3. form progressive-enhancement injection
 #[allow(dead_code)]
 pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleParseError> {
     let mut parts = split_html_module(input)?;
     parts.template = transpile_component_tags(&parts.template);
+    parts.template = inject_form_method_attrs(&parts.template);
     Ok(parts)
+}
+
+// ── HTTP Verb Attributes ──────────────────────────────────────
+
+/// Maps silcrow verb attributes to their native HTTP method strings.
+/// HTML forms only support GET/POST natively; all mutation verbs map to POST.
+const VERB_ATTRS: &[(&str, &str)] = &[
+    ("s-post",   "post"),
+    ("s-put",    "post"),
+    ("s-patch",  "post"),
+    ("s-delete", "post"),
+];
+
+/// Injects `method` and `action` attributes into `<form>` elements that carry
+/// a silcrow verb attribute (`s-post`, `s-put`, `s-patch`, `s-delete`).
+///
+/// This enables progressive enhancement: a form with `s-post="?action=create"`
+/// works as a native HTML form submit when JS is unavailable, and silcrow.js
+/// intercepts it when JS is present.
+///
+/// Rules:
+/// - `s-post`   → `method="post"`
+/// - `s-put|s-patch|s-delete` → `method="post"` (HTML only supports GET/POST natively)
+/// - If `method` already exists on the element: not overwritten.
+/// - If `action` already exists on the element: not overwritten.
+/// - `s-get` on forms is left alone — GET is already the HTML default.
+pub fn inject_form_method_attrs(template: &str) -> String {
+    let mut output = String::with_capacity(template.len() + 64);
+    let mut i = 0;
+
+    while i < template.len() {
+        // Fast path: look for the literal substring "<form"
+        if template[i..].starts_with("<form") {
+            let after = i + 5;
+            let next_char = template[after..].chars().next();
+            // Must be followed by whitespace or '>' to be a real <form> tag
+            if matches!(next_char, Some(c) if c.is_whitespace() || c == '>') {
+                if let Some((transformed, consumed)) = try_inject_form_tag(&template[i..]) {
+                    output.push_str(&transformed);
+                    i += consumed;
+                    continue;
+                }
+            }
+        }
+
+        let c = template[i..].chars().next().unwrap();
+        output.push(c);
+        i += c.len_utf8();
+    }
+
+    output
+}
+
+/// Try to transform a `<form ...>` opening tag by injecting progressive-enhancement
+/// attributes. Returns `None` if the tag has no silcrow verb attribute (no-op).
+fn try_inject_form_tag(input: &str) -> Option<(String, usize)> {
+    debug_assert!(input.starts_with("<form"));
+
+    // Collect the raw text of the opening tag's attribute section (between "<form" and ">").
+    let mut idx = 5; // skip "<form"
+    let mut raw_attrs = String::new();
+    let mut quote: Option<char> = None;
+    let mut brace_depth: usize = 0;
+
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        let c_len = c.len_utf8();
+
+        if let Some(q) = quote {
+            raw_attrs.push(c);
+            if c == q { quote = None; }
+            idx += c_len;
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => { quote = Some(c); raw_attrs.push(c); idx += c_len; }
+            '{' => { brace_depth += 1; raw_attrs.push(c); idx += c_len; }
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '>' if brace_depth == 0 => {
+                // Found the end of the opening tag.
+                let tag_end = idx + 1; // include '>'
+
+                // Does this form have a silcrow mutation verb attribute?
+                let verb_match = VERB_ATTRS.iter().find_map(|&(attr, method)| {
+                    html_attr_value(&raw_attrs, attr).map(|url| (method, url))
+                });
+
+                let (http_method, url) = verb_match?; // no verb → return None (no-op)
+
+                let has_method = html_has_attr(&raw_attrs, "method");
+                let has_action = html_has_attr(&raw_attrs, "action");
+
+                if has_method && has_action {
+                    return None; // nothing to inject
+                }
+
+                let mut inject = String::new();
+                if !has_method {
+                    inject.push_str(&format!(" method=\"{http_method}\""));
+                }
+                if !has_action {
+                    let safe_url = url.replace('"', "&quot;");
+                    inject.push_str(&format!(" action=\"{safe_url}\""));
+                }
+
+                let transformed = format!("<form{raw_attrs}{inject}>");
+                return Some((transformed, tag_end));
+            }
+            _ => { raw_attrs.push(c); idx += c_len; }
+        }
+    }
+
+    None
+}
+
+/// Extract the value of a named HTML attribute from a raw attribute string.
+/// Handles `name="value"`, `name='value'`. Returns `None` if not found.
+fn html_attr_value(attrs: &str, name: &str) -> Option<String> {
+    let mut i = 0;
+    while i < attrs.len() {
+        i = skip_ws(attrs, i);
+        if i >= attrs.len() { break; }
+
+        let (attr_name, next) = scan_html_attr_name(attrs, i);
+        i = skip_ws(attrs, next);
+
+        if i < attrs.len() && attrs[i..].starts_with('=') {
+            i += 1; // skip '='
+            i = skip_ws(attrs, i);
+            if let Some((val, end)) = scan_html_attr_val(attrs, i) {
+                if attr_name == name {
+                    return Some(val);
+                }
+                i = end;
+            } else {
+                i = next; // can't parse value; skip
+            }
+        } else {
+            // Bare attribute (no value)
+            if attr_name == name { return Some(String::new()); }
+        }
+    }
+    None
+}
+
+/// Return true if a named attribute is present in the raw attribute string.
+fn html_has_attr(attrs: &str, name: &str) -> bool {
+    html_attr_value(attrs, name).is_some()
+}
+
+/// Scan an HTML attribute name (letters, digits, hyphens, colons, underscores, dots).
+/// Returns `(name, end_index)`.
+fn scan_html_attr_name(src: &str, start: usize) -> (String, usize) {
+    let mut idx = start;
+    while idx < src.len() {
+        let c = src[idx..].chars().next().unwrap_or('\0');
+        if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.') {
+            idx += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    (src[start..idx].to_string(), idx)
+}
+
+/// Scan a quoted (`"..."` or `'...'`) or braced (`{...}`) HTML attribute value.
+/// Returns `(value_text, end_index)`.
+fn scan_html_attr_val(src: &str, start: usize) -> Option<(String, usize)> {
+    let first = src[start..].chars().next()?;
+    match first {
+        '"' | '\'' => {
+            let mut idx = start + 1;
+            while idx < src.len() {
+                let c = src[idx..].chars().next()?;
+                if c == first {
+                    let val = src[start + 1..idx].to_string();
+                    return Some((val, idx + 1));
+                }
+                idx += c.len_utf8();
+            }
+            None
+        }
+        '{' => {
+            let mut depth = 1usize;
+            let mut idx = start + 1;
+            while idx < src.len() {
+                let c = src[idx..].chars().next()?;
+                match c { '{' => depth += 1, '}' => { depth -= 1; if depth == 0 { return Some((src[start + 1..idx].to_string(), idx + 1)); } } _ => {} }
+                idx += c.len_utf8();
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Transpiles PascalCase component tags into Askama expressions.
@@ -633,6 +834,70 @@ pub struct Props {
         let input = r#"<Card s-key=".id" title=".title" />"#;
         let output = transpile_component_tags(input);
         assert_eq!(output, input);
+    }
+
+    // ── inject_form_method_attrs ──────────────────────────────
+
+    #[test]
+    fn inject_form_injects_method_and_action_for_s_post() {
+        let input = r##"<form s-post="?action=create" s-target="#f">"##;
+        let output = inject_form_method_attrs(input);
+        assert!(output.contains(r#"method="post""#), "should inject method: {output}");
+        assert!(output.contains(r#"action="?action=create""#), "should inject action: {output}");
+    }
+
+    #[test]
+    fn inject_form_does_not_overwrite_existing_method() {
+        let input = r#"<form s-post="?action=create" method="POST">"#;
+        let output = inject_form_method_attrs(input);
+        // Only one method= present
+        assert_eq!(output.matches("method=").count(), 1);
+    }
+
+    #[test]
+    fn inject_form_does_not_overwrite_existing_action() {
+        let input = r#"<form s-post="?action=create" action="/custom">"#;
+        let output = inject_form_method_attrs(input);
+        assert!(output.contains(r#"action="/custom""#));
+        assert!(!output.contains(r#"action="?action=create""#));
+    }
+
+    #[test]
+    fn inject_form_ignores_s_get() {
+        let input = r#"<form s-get="/search">"#;
+        let output = inject_form_method_attrs(input);
+        assert_eq!(input, output, "s-get should not be modified");
+    }
+
+    #[test]
+    fn inject_form_handles_s_delete() {
+        let input = r#"<form s-delete="/items/1">"#;
+        let output = inject_form_method_attrs(input);
+        assert!(output.contains(r#"method="post""#));
+        assert!(output.contains(r#"action="/items/1""#));
+    }
+
+    #[test]
+    fn inject_form_ignores_non_form_elements() {
+        let input = r#"<div s-post="?action=create"></div>"#;
+        let output = inject_form_method_attrs(input);
+        assert_eq!(input, output, "non-form elements should not be modified");
+    }
+
+    #[test]
+    fn inject_form_leaves_forms_without_verb_attrs_untouched() {
+        let input = r#"<form id="search" class="form">"#;
+        let output = inject_form_method_attrs(input);
+        assert_eq!(input, output);
+    }
+
+    #[test]
+    fn inject_form_handles_multiple_forms() {
+        let input = r#"<form s-post="?action=login"><form s-post="?action=signup">"#;
+        let output = inject_form_method_attrs(input);
+        assert_eq!(output.matches(r#"method="post""#).count(), 2);
+        assert!(output.contains(r#"action="?action=login""#));
+        assert!(output.contains(r#"action="?action=signup""#));
     }
 
     #[test]

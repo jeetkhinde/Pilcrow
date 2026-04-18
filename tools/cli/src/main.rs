@@ -21,6 +21,7 @@ fn main() {
         "new" => {
             if let Err(err) = scaffold::handle_new(&args) {
                 eprintln!("scaffold failed: {err}");
+                eprintln!("Usage: pilcrow-cli new <dir>");
                 std::process::exit(1);
             }
         }
@@ -33,6 +34,5 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  pilcrow-cli check-arch");
-    eprintln!("  pilcrow-cli new --convention web-backend <dir>");
+    eprintln!("  pilcrow-cli new <dir>");
 }
