@@ -1321,8 +1321,11 @@ function resolveVerb(el) {
         }
       }
       try {
+        // Resolve against current page URL so relative verbs like `?/create`
+        // or `./sub` attach to the current path. Absolute paths (e.g. `/about`)
+        // still discard the path component of the base, as per WHATWG URL rules.
         return {
-          url: new URL(raw, location.origin).href,
+          url: new URL(raw, location.href).href,
           method: VERB_ATTRS[i].slice(2).toUpperCase()
         };
       } catch (e) {
