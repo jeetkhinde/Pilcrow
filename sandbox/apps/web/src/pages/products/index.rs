@@ -39,7 +39,7 @@ pub struct Props {
 
 pub async fn load(req: Req) -> AppResult<Props> {
     // Category filter comes from ?category=<slug> — no separate API route needed.
-    let active_category = req.query.get("category").map(String::as_str).unwrap_or("").to_owned();
+    let active_category = req.query.get("category").unwrap_or("").to_owned();
 
     let products_url = if active_category.is_empty() {
         "https://dummyjson.com/products?limit=20".to_owned()

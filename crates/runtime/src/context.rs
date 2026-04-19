@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use axum::{
     async_trait,
-    extract::{Form, FromRequest, FromRequestParts, Path, Query, Request},
+    extract::{Form, FromRequest, FromRequestParts, Path, Request},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     http::request::Parts,
     response::{IntoResponse, Redirect, Response},
@@ -228,7 +228,9 @@ fn extract_action_from_query(raw_query: Option<&str>) -> Option<String> {
 
 // ── FormMap ───────────────────────────────────────────────────
 
-/// Parsed URL-encoded form body. Supports multi-value keys.
+/// Multi-value URL-encoded map. Used for both the form body (`req.form`) and
+/// the query string (`req.query`); both share the same repeated-key semantics
+/// (e.g. `?tag=a&tag=b` or `<input name="tag" …>` twice).
 #[derive(Debug, Default, Clone)]
 pub struct FormMap(pub HashMap<String, Vec<String>>);
 
@@ -238,15 +240,53 @@ impl FormMap {
         self.0.get(key)?.first().map(String::as_str)
     }
 
-    /// All values for a key (e.g. multiple checkboxes with the same name).
+    /// All values for a key (e.g. multiple checkboxes with the same name, or
+    /// repeated query params like `?tag=a&tag=b`).
     pub fn get_all(&self, key: &str) -> &[String] {
         self.0.get(key).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    /// `true` if the key appears at least once in the form body.
+    /// `true` if the key appears at least once.
     pub fn contains(&self, key: &str) -> bool {
         self.0.contains_key(key)
     }
+
+    /// Iterator over distinct keys.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+}
+
+/// Parse a raw query string into a multi-value [`FormMap`], stripping any
+/// `?/<name>` action markers (those are read via [`Req::action`]).
+///
+/// Handles standard URL-encoded form semantics: `+` is decoded as space and
+/// `%XX` sequences are percent-decoded. Empty pairs are ignored.
+fn parse_query_multi(raw_query: Option<&str>) -> FormMap {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    let Some(q) = raw_query else { return FormMap(out) };
+    for pair in q.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (raw_key, raw_val) = pair.split_once('=').unwrap_or((pair, ""));
+        // `?/<name>` keys are action markers; readable via req.action().
+        if raw_key.starts_with('/') {
+            continue;
+        }
+        out.entry(decode_form_component(raw_key))
+            .or_default()
+            .push(decode_form_component(raw_val));
+    }
+    FormMap(out)
+}
+
+fn decode_form_component(s: &str) -> String {
+    // `+` → space is form-urlencoded-specific (not covered by percent-decoding).
+    let with_spaces = s.replace('+', " ");
+    urlencoding::decode(&with_spaces)
+        .map(|c| c.into_owned())
+        .unwrap_or(with_spaces)
 }
 
 // ── Req ──────────────────────────────────────────────────────
@@ -275,11 +315,13 @@ impl FormMap {
 pub struct Req {
     /// Named path capture groups. `/posts/[id]` → `{"id": "42"}`.
     pub params: HashMap<String, String>,
-    /// Query string as a flat map. `?category=shoes` → `{"category": "shoes"}`.
+    /// Query string as a multi-value map (`?category=shoes&tag=a&tag=b` →
+    /// `{"category": ["shoes"], "tag": ["a", "b"]}`). Use `.get(key)` for the
+    /// first value, `.get_all(key)` for every value.
     ///
     /// The `?/name` action marker is stripped out of this map — read it via
     /// [`Req::action`] instead.
-    pub query: HashMap<String, String>,
+    pub query: FormMap,
     /// Parsed URL-encoded form body. Empty on GET requests.
     pub form: FormMap,
     /// Request cookies.
@@ -329,7 +371,7 @@ impl Req {
     ///   The page's `load()` reads the flash with [`Req::take_form_flash`].
     ///
     /// ```rust,ignore
-    /// pub async fn actions(req: Req) -> ActionResult {
+    /// pub async fn signup(req: Req) -> ActionResult {
     ///     let email = req.form.get("email").unwrap_or("");
     ///     if email.is_empty() {
     ///         return req.fail(form_errors()
@@ -404,11 +446,7 @@ impl Req {
 
         let action = extract_action_from_query(parts.uri.query());
 
-        let mut query = Query::<HashMap<String, String>>::from_request_parts(parts, state)
-            .await
-            .map(|q| q.0)
-            .unwrap_or_default();
-        query.retain(|k, _| !k.starts_with('/'));
+        let query = parse_query_multi(parts.uri.query());
 
         let cookies = CookieJar::from_request_parts(parts, state)
             .await
@@ -468,11 +506,7 @@ impl<S: Send + Sync> FromRequest<S> for Req {
 
         let action = extract_action_from_query(parts.uri.query());
 
-        let mut query = Query::<HashMap<String, String>>::from_request_parts(&mut parts, state)
-            .await
-            .map(|q| q.0)
-            .unwrap_or_default();
-        query.retain(|k, _| !k.starts_with('/'));
+        let query = parse_query_multi(parts.uri.query());
 
         let cookies = CookieJar::from_request_parts(&mut parts, state)
             .await

@@ -90,13 +90,13 @@ pub struct Props {}
 "#,
     )?;
 
-    // Page: show data from load() and a minimal form wired to actions().
+    // Page: show data from load() and a minimal form wired to a named action.
     fs::write(
         root.join("src/pages/index.html"),
         r#"<Fragment slot="title"><title>Home — My App</title></Fragment>
 <main>
     <h1>{{ greeting }}</h1>
-    <form s-post="/" s-target="main" id="main" method="post" action="/">
+    <form s-post="?/greet" s-target="main" id="main" method="post" action="?/greet">
         <label>
             Name
             <input type="text" name="name" />
@@ -107,7 +107,7 @@ pub struct Props {}
 "#,
     )?;
 
-    // Code-behind: demonstrates load() with Req and actions() dispatch.
+    // Code-behind: demonstrates load() with Req and a named action fn.
     fs::write(
         root.join("src/pages/index.rs"),
         r#"pub struct Props {
@@ -115,20 +115,16 @@ pub struct Props {}
 }
 
 pub async fn load(req: Req) -> AppResult<Props> {
-    let name = req.query.get("name").map(String::as_str).unwrap_or("world");
+    let name = req.query.get("name").unwrap_or("world");
     Ok(Props {
         greeting: format!("Hello, {name}!"),
     })
 }
 
-pub async fn actions(req: Req) -> ActionResult {
-    match req.action() {
-        "" => {
-            let name = req.form.get("name").unwrap_or("world").trim().to_owned();
-            redirect(&format!("/?name={name}"))
-        }
-        _ => redirect("/"),
-    }
+// Named action: POSTs to `?/greet` are dispatched to this function.
+pub async fn greet(req: Req) -> ActionResult {
+    let name = req.form.get("name").unwrap_or("world").trim().to_owned();
+    redirect(&format!("/?name={name}"))
 }
 "#,
     )?;

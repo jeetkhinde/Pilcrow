@@ -103,7 +103,7 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 
 **`Req`** (`FromRequest`, body-consuming) — unified request context for both `load()` and action fns:
 - `.params: HashMap<String, String>` — URL path params (`/posts/:id`)
-- `.query: HashMap<String, String>` — query string (`?category=shoes`)
+- `.query: FormMap` — query string as a multi-value map (`?tag=a&tag=b` → `.get_all("tag") == ["a","b"]`). The `?/<name>` action marker is stripped.
 - `.form: FormMap` — URL-encoded form body (empty on GET)
 - `.cookies: CookieJar`
 - `.headers: HeaderMap`
@@ -129,7 +129,7 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 - `.patch_target(selector, &data)`, `.invalidate_target(selector)`
 - `.client_navigate(path)`, `.sse(path)`, `.ws(path)`
 
-**`FormMap`** — `.get(key) -> Option<&str>`, `.get_all(key) -> &[String]`, `.contains(key)`
+**`FormMap`** — multi-value map used for both `req.form` and `req.query`. `.get(key) -> Option<&str>` (first value), `.get_all(key) -> &[String]`, `.contains(key)`, `.keys() -> impl Iterator<Item = &str>`.
 
 **`ActionResult`** — `Result<Response, AppError>` — return type for action fns
 

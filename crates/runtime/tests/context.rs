@@ -202,13 +202,54 @@ async fn req_action_ignores_form_body() {
 }
 
 #[tokio::test]
+async fn req_query_collects_repeated_keys() {
+    let app = Router::new().route(
+        "/",
+        get(|req: Req| async move {
+            let tags = req.query.get_all("tag").join(",");
+            let first = req.query.get("tag").unwrap_or("").to_owned();
+            format!("first={first} all={tags}")
+        }),
+    );
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/?tag=a&tag=b&tag=c")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_string(resp).await, "first=a all=a,b,c");
+}
+
+#[tokio::test]
+async fn req_query_decodes_plus_and_percent_escapes() {
+    let app = Router::new().route(
+        "/",
+        get(|req: Req| async move { req.query.get("q").unwrap_or("").to_owned() }),
+    );
+    // `hello+world%21` → "hello world!"
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/?q=hello+world%21")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(body_string(resp).await, "hello world!");
+}
+
+#[tokio::test]
 async fn req_action_slash_key_stripped_from_query_map() {
     // The `?/<name>` entry must not leak into req.query.
     let app = Router::new().route(
         "/",
         post(|req: Req| async move {
             let has_action_key = req.query.keys().any(|k| k.starts_with('/'));
-            let sibling = req.query.get("tag").cloned().unwrap_or_default();
+            let sibling = req.query.get("tag").unwrap_or("").to_owned();
             format!("stripped={} tag={}", !has_action_key, sibling)
         }),
     );
