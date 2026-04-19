@@ -47,6 +47,8 @@ pub use runtime::start;
 pub use axum;
 #[doc(hidden)]
 pub use pilcrow_client;
+#[doc(hidden)]
+pub use runtime::csrf_middleware as __csrf_middleware;
 
 /// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
 ///

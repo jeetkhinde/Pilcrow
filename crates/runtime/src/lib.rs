@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod context;
+pub mod csrf;
 pub mod generated_routes;
 pub mod middleware;
 pub mod response;
@@ -13,6 +14,7 @@ pub use start::start;
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
 pub use context::{FormMap, Locals, Req, Res};
+pub use csrf::csrf_middleware;
 pub use middleware::Next;
 pub use generated_routes::{
     GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,

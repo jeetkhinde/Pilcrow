@@ -1392,6 +1392,11 @@ pub fn render_generated_app_module(
         out.push_str("        .layer(::pilcrow_web::axum::middleware::from_fn(__pilcrow_middleware))\n");
     }
 
+    // CSRF protection is always-on and outermost: state-changing form submissions
+    // with a cross-origin `Origin` (or `Referer`) are rejected before user middleware
+    // or route handlers see them. Safe methods and non-form content types pass through.
+    out.push_str("        .layer(::pilcrow_web::axum::middleware::from_fn(::pilcrow_web::__csrf_middleware))\n");
+
     out.push_str("}\n");
 
     // Generated middleware shim: extracts Req from parts (body stays intact),
