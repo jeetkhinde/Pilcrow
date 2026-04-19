@@ -167,15 +167,32 @@ impl Res {
     }
 
     /// Patch a secondary DOM target via `silcrow-patch`.
+    /// Multiple calls accumulate — each `{target, data}` entry is carried in
+    /// a single JSON-array header and applied in call order on the client.
     pub fn patch_target(&self, selector: &str, data: &impl Serialize) -> &Self {
-        let payload = serde_json::json!({ "data": data, "target": selector });
-        self.0.lock().unwrap().headers.typed_insert(SilcrowPatch(payload.to_string()));
+        let mut base = self.0.lock().unwrap();
+        let mut list = base
+            .headers
+            .typed_get::<SilcrowPatch>()
+            .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(serde_json::json!({ "data": data, "target": selector }));
+        base.headers.typed_insert(SilcrowPatch(serde_json::Value::Array(list).to_string()));
         self
     }
 
     /// Invalidate a DOM target's binding cache via `silcrow-invalidate`.
+    /// Multiple calls accumulate — all selectors are carried in a single
+    /// JSON-array header and invalidated in call order on the client.
     pub fn invalidate_target(&self, selector: &str) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowInvalidate(selector.to_string()));
+        let mut base = self.0.lock().unwrap();
+        let mut list = base
+            .headers
+            .typed_get::<SilcrowInvalidate>()
+            .and_then(|h| serde_json::from_str::<Vec<String>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(selector.to_string());
+        base.headers.typed_insert(SilcrowInvalidate(serde_json::to_string(&list).unwrap_or_default()));
         self
     }
 

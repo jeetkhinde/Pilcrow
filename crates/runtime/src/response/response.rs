@@ -143,16 +143,27 @@ pub trait ResponseExt: Sized {
         self
     }
     fn patch_target(mut self, selector: &str, data: &impl serde::Serialize) -> Self {
-        let payload = serde_json::json!({ "data": data, "target": selector });
-        self.base_mut()
+        let base = self.base_mut();
+        let mut list = base
             .headers
-            .typed_insert(SilcrowPatch(payload.to_string()));
+            .typed_get::<SilcrowPatch>()
+            .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(serde_json::json!({ "data": data, "target": selector }));
+        base.headers
+            .typed_insert(SilcrowPatch(serde_json::Value::Array(list).to_string()));
         self
     }
     fn invalidate_target(mut self, selector: &str) -> Self {
-        self.base_mut()
+        let base = self.base_mut();
+        let mut list = base
             .headers
-            .typed_insert(SilcrowInvalidate(selector.to_string()));
+            .typed_get::<SilcrowInvalidate>()
+            .and_then(|h| serde_json::from_str::<Vec<String>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(selector.to_string());
+        base.headers
+            .typed_insert(SilcrowInvalidate(serde_json::to_string(&list).unwrap_or_default()));
         self
     }
     fn client_navigate(mut self, path: &str) -> Self {

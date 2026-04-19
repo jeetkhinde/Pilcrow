@@ -1413,18 +1413,24 @@ function bustCacheOnMutation() {
 function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (!sideEffects) return;
 
-  // Order: patch → invalidate → navigate → sse
+  // Order: patch → invalidate → navigate → sse.
+  // Multiple patch/invalidate calls on the server accumulate into a JSON
+  // array; apply each entry in call order.
   if (sideEffects.patch) {
     try {
-      const payload = JSON.parse(sideEffects.patch);
-      if (
-        payload &&
-        typeof payload === "object" &&
-        payload.target &&
-        Object.prototype.hasOwnProperty.call(payload, "data")
-      ) {
-        const el = document.querySelector(payload.target);
-        if (el) patch(payload.data, el);
+      const entries = JSON.parse(sideEffects.patch);
+      if (Array.isArray(entries)) {
+        for (const payload of entries) {
+          if (
+            payload &&
+            typeof payload === "object" &&
+            payload.target &&
+            Object.prototype.hasOwnProperty.call(payload, "data")
+          ) {
+            const el = document.querySelector(payload.target);
+            if (el) patch(payload.data, el);
+          }
+        }
       }
     } catch (e) {
       warn("Failed to process silcrow-patch header: " + e.message);
@@ -1432,11 +1438,20 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   }
 
   if (sideEffects.invalidate) {
-    const el = document.querySelector(sideEffects.invalidate);
-    if (el) invalidate(el);
-    // Evict all cached GET responses — the server has signalled staleness for this
-    // selector and any cached URL feeding it would serve stale content on the next request.
-    bustCacheOnMutation();
+    try {
+      const selectors = JSON.parse(sideEffects.invalidate);
+      if (Array.isArray(selectors)) {
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) invalidate(el);
+        }
+        // Evict all cached GET responses — the server has signalled staleness
+        // and any cached URL feeding a binding would serve stale content next.
+        bustCacheOnMutation();
+      }
+    } catch (e) {
+      warn("Failed to process silcrow-invalidate header: " + e.message);
+    }
   }
 
   if (sideEffects.navigate) {

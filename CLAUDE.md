@@ -125,9 +125,10 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 **`Res`** — response modifier accessed as `req.res`:
 - `.with_status(StatusCode)`, `.with_header(key, value)`, `.with_cookie(Cookie)`
 - `.no_cache()`, `.with_toast(msg, ToastLevel::*)`
-- `.trigger_event(name)`, `.retarget(selector)`, `.push_history(url)` — multiple `trigger_event` calls accumulate; all events are sent in one header
+- `.trigger_event(name)`, `.retarget(selector)`, `.push_history(url)`
 - `.patch_target(selector, &data)`, `.invalidate_target(selector)`
 - `.client_navigate(path)`, `.sse(path)`, `.ws(path)`
+- `.trigger_event`, `.patch_target`, and `.invalidate_target` accumulate across calls (entries are carried in a single JSON-array header, applied in call order). The others overwrite.
 
 **`FormMap`** — multi-value map used for both `req.form` and `req.query`. `.get(key) -> Option<&str>` (first value), `.get_all(key) -> &[String]`, `.contains(key)`, `.keys() -> impl Iterator<Item = &str>`.
 

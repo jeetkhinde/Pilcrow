@@ -190,7 +190,34 @@ fn response_ext_client_navigate_sets_silcrow_navigate_header() {
 #[test]
 fn response_ext_invalidate_target_sets_silcrow_invalidate_header() {
     let resp = navigate("/").invalidate_target("#list").into_response();
-    assert_eq!(header_str(&resp, "silcrow-invalidate"), Some("#list"));
+    // Single-call case: header is a JSON array with one selector.
+    assert_eq!(header_str(&resp, "silcrow-invalidate"), Some("[\"#list\"]"));
+}
+
+#[test]
+fn response_ext_invalidate_target_accumulates() {
+    let resp = navigate("/")
+        .invalidate_target("#list")
+        .invalidate_target("#count")
+        .into_response();
+    let hdr = header_str(&resp, "silcrow-invalidate").unwrap_or("");
+    let parsed: Vec<String> = serde_json::from_str(hdr).expect("parse invalidate header");
+    assert_eq!(parsed, vec!["#list".to_owned(), "#count".to_owned()]);
+}
+
+#[test]
+fn response_ext_patch_target_accumulates() {
+    let resp = navigate("/")
+        .patch_target("#cart", &serde_json::json!({"n": 1}))
+        .patch_target("#badge", &serde_json::json!({"label": "new"}))
+        .into_response();
+    let hdr = header_str(&resp, "silcrow-patch").unwrap_or("");
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(hdr).expect("parse patch header");
+    assert_eq!(parsed.len(), 2);
+    assert_eq!(parsed[0]["target"], "#cart");
+    assert_eq!(parsed[0]["data"]["n"], 1);
+    assert_eq!(parsed[1]["target"], "#badge");
+    assert_eq!(parsed[1]["data"]["label"], "new");
 }
 
 #[test]
