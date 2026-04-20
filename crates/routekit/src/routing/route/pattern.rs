@@ -155,6 +155,10 @@ pub fn classify_segment(segment: &str) -> PatternSegmentType {
 /// - Zero-copy for constraint parsing (delegates to ParameterConstraint::from_str)
 /// - Single allocation for parameter name
 pub fn parse_param_with_constraint(param: &str) -> (String, Option<ParameterConstraint>) {
+    // `=` introduces an external matcher: [id=integer] → External("integer")
+    if let Some((name, matcher)) = param.split_once('=') {
+        return (name.to_string(), Some(ParameterConstraint::External(matcher.to_string())));
+    }
     param
         .split_once(':')
         .map(|(name, constraint_str)| {
@@ -261,5 +265,21 @@ mod tests {
         let (name, constraint) = parse_param_with_constraint("user:uuid");
         assert_eq!(name, "user");
         assert_eq!(constraint, Some(ParameterConstraint::Uuid));
+    }
+
+    #[test]
+    fn test_parse_param_external_matcher() {
+        let (name, constraint) = parse_param_with_constraint("id=integer");
+        assert_eq!(name, "id");
+        assert_eq!(constraint, Some(ParameterConstraint::External("integer".to_string())));
+    }
+
+    #[test]
+    fn test_classify_required_with_external_matcher() {
+        let seg = classify_segment("[id=integer]");
+        assert_eq!(
+            seg,
+            PatternSegmentType::Required("id".to_string(), Some(ParameterConstraint::External("integer".to_string())))
+        );
     }
 }

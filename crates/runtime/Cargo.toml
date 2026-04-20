@@ -23,6 +23,7 @@ crc32fast = "1"
 tracing = "0.1"
 axum-extra = { version = "0.9.6", features = ["cookie", "typed-header"] }
 headers = "0.4"
+bytes = "1"
 tokio = { version = "1", features = ["sync", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 reqwest = { version = "0.12", default-features = false, features = [

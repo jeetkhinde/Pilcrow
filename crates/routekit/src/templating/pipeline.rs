@@ -200,6 +200,8 @@ pub fn compile_to_out_dir(
         not_found_module.as_deref(),
         &loading_module_for_page,
         &templates_output.action_map,
+        &templates_output.page_options,
+        &templates_output.deferred_fields_map,
         has_middleware,
         src_root,
         out_dir,
@@ -231,6 +233,7 @@ pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
         src_root.join("pages"),
         src_root.join("ui"),
         src_root.join("api"),
+        src_root.join("params"),
         src_root.join("middleware.rs"),
     ]
 }
@@ -558,7 +561,20 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
         }
         let symbol = symbol.trim_matches('_').to_string();
         if symbol.is_empty() {
-            format!("{prefix}_{fallback}")
+            // All segments were stripped (pure route-group dir like `(admin)`).
+            // Use the raw dir to build a unique suffix so two groups don't collide.
+            let raw_symbol: String = dir_part
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                .collect::<String>()
+                .trim_matches('_')
+                .to_string();
+            let raw_symbol = raw_symbol.trim_matches('_');
+            if raw_symbol.is_empty() {
+                format!("{prefix}_{fallback}")
+            } else {
+                format!("{prefix}_{raw_symbol}")
+            }
         } else {
             format!("{prefix}_{symbol}")
         }
@@ -2251,6 +2267,7 @@ pub struct Props {}
         assert_eq!(dirs[0], PathBuf::from("/tmp/project/src/pages"));
         assert_eq!(dirs[1], PathBuf::from("/tmp/project/src/ui"));
         assert_eq!(dirs[2], PathBuf::from("/tmp/project/src/api"));
+        assert_eq!(dirs[3], PathBuf::from("/tmp/project/src/params"));
     }
 
     #[test]

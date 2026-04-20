@@ -8,7 +8,9 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use syn::parse_quote;
 
+use crate::routing::constraint::ParameterConstraint;
 use crate::routing::discovery::{build_api_routes, build_page_routes};
+use crate::templating::page_options::{PageOptions, TrailingSlash};
 
 /// One generated page route entry for build-time manifests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +19,9 @@ pub struct GeneratedPageRoute {
     pub template_path: String,
     pub symbol: String,
     pub render_symbol: String,
+    /// Param names mapped to their external matcher module names.
+    /// e.g. `[id=integer]` → `{ "id" => "integer" }` (calls `crate::params::integer::match_param`).
+    pub param_matchers: HashMap<String, String>,
 }
 
 /// One generated API route entry for build-time manifests.
@@ -181,6 +186,10 @@ pub struct GeneratedTemplatesModule {
     pub layout_fields_map: HashMap<String, LayoutFieldsInfo>,
     /// Map from page module_name to its list of discovered named action handlers.
     pub action_map: HashMap<String, Vec<ActionFn>>,
+    /// Map from page module_name to its per-page options (`TRAILING_SLASH`, etc.).
+    pub page_options: HashMap<String, PageOptions>,
+    /// Map from page module_name to its `Deferred<T>` field names.
+    pub deferred_fields_map: HashMap<String, Vec<String>>,
 }
 
 /// Build a page-route manifest from `src/pages/**/*.html`.
@@ -197,11 +206,23 @@ pub fn build_generated_page_manifest(
         .map(|route| {
             let symbol = build_symbol_name(&route.template_path, &pages_dir_norm);
             let render_symbol = format!("render_{symbol}");
+            let param_matchers: HashMap<String, String> = route
+                .param_constraints
+                .iter()
+                .filter_map(|(name, constraint)| {
+                    if let ParameterConstraint::External(matcher) = constraint {
+                        Some((name.clone(), matcher.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             GeneratedPageRoute {
                 pattern: route.pattern,
                 template_path: route.template_path,
                 symbol,
                 render_symbol,
+                param_matchers,
             }
         })
         .collect::<Vec<_>>();
@@ -325,6 +346,8 @@ pub fn render_generated_templates_module(
     let mut metadata = Vec::with_capacity(ordered.len());
     let mut load_map = HashMap::new();
     let mut action_map: HashMap<String, Vec<ActionFn>> = HashMap::new();
+    let mut page_options_map: HashMap<String, PageOptions> = HashMap::new();
+    let mut deferred_fields_map: HashMap<String, Vec<String>> = HashMap::new();
 
     for entry in &ordered {
         let is_layout = entry.module_name.starts_with("layout_");
@@ -390,6 +413,14 @@ pub fn render_generated_templates_module(
             action_map.insert(entry.module_name.clone(), instrumented.actions.clone());
         }
 
+        if instrumented.page_options != PageOptions::default() {
+            page_options_map.insert(entry.module_name.clone(), instrumented.page_options.clone());
+        }
+
+        if !instrumented.deferred_fields.is_empty() {
+            deferred_fields_map.insert(entry.module_name.clone(), instrumented.deferred_fields.clone());
+        }
+
         let module_ident = syn::Ident::new(&entry.module_name, Span::call_site());
         let render_ident = syn::Ident::new(&entry.render_symbol, Span::call_site());
 
@@ -441,6 +472,8 @@ pub fn render_generated_templates_module(
         load_map,
         layout_fields_map,
         action_map,
+        page_options: page_options_map,
+        deferred_fields_map,
     })
 }
 
@@ -451,6 +484,8 @@ pub struct WrittenTemplatesOutput {
     /// Forwarded from `GeneratedTemplatesModule`; passed on to the app module writer.
     pub layout_fields_map: HashMap<String, LayoutFieldsInfo>,
     pub action_map: HashMap<String, Vec<ActionFn>>,
+    pub page_options: HashMap<String, PageOptions>,
+    pub deferred_fields_map: HashMap<String, Vec<String>>,
 }
 
 /// Generate and write the compiled templates module to `out_file`.
@@ -471,6 +506,8 @@ pub fn write_generated_templates_module(
         load_map: generated.load_map,
         layout_fields_map: generated.layout_fields_map,
         action_map: generated.action_map,
+        page_options: generated.page_options,
+        deferred_fields_map: generated.deferred_fields_map,
     })
 }
 
@@ -482,6 +519,10 @@ struct InstrumentedFrontmatter {
     own_syn_fields: Vec<syn::Field>,
     /// Named action handlers discovered in the frontmatter (pages only).
     actions: Vec<ActionFn>,
+    /// Per-page options parsed from `pub const` declarations and stripped from output.
+    page_options: PageOptions,
+    /// Names of `Deferred<T>` fields in `Props`, in declaration order.
+    deferred_fields: Vec<String>,
 }
 
 /// `extra_fields` contains the named fields from a layout's Props struct when the layout
@@ -500,6 +541,24 @@ fn instrument_frontmatter(
             format!("failed to parse rust frontmatter in {source_path}: {err}"),
         )
     })?;
+
+    // Parse and strip `pub const TRAILING_SLASH: &str = "value";` before other processing.
+    let mut page_options = PageOptions::default();
+    let mut const_remove_indices: Vec<usize> = Vec::new();
+    for (index, item) in file.items.iter().enumerate() {
+        if let syn::Item::Const(c) = item
+            && matches!(c.vis, syn::Visibility::Public(_))
+            && c.ident == "TRAILING_SLASH"
+        {
+            let value_str = c.expr.to_token_stream().to_string();
+            page_options.trailing_slash = TrailingSlash::from_str(value_str.trim_matches('"'));
+            const_remove_indices.push(index);
+        }
+    }
+    // Remove in reverse order to preserve indices.
+    for idx in const_remove_indices.into_iter().rev() {
+        file.items.remove(idx);
+    }
 
     let mut props_indices = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
@@ -697,6 +756,22 @@ fn instrument_frontmatter(
     // Extract the page's own named fields before any modification.
     let own_syn_fields = extract_named_fields(props_struct);
 
+    // Detect `Deferred<T>` fields so the codegen can stream their resolved values.
+    let deferred_fields: Vec<String> = own_syn_fields
+        .iter()
+        .filter_map(|f| {
+            if let Some(ident) = &f.ident {
+                if type_last_ident(&f.ty)
+                    .map(|id| id == "Deferred")
+                    .unwrap_or(false)
+                {
+                    return Some(ident.to_string());
+                }
+            }
+            None
+        })
+        .collect();
+
     if extra_fields.is_empty() {
         // Normal path: Props is used directly for template rendering.
         // Inject Default derive for static pages (no load function).
@@ -752,6 +827,8 @@ fn instrument_frontmatter(
         load_signature,
         own_syn_fields,
         actions,
+        page_options,
+        deferred_fields,
     })
 }
 
@@ -1002,6 +1079,36 @@ pub fn render_generated_api_mods(
         out.push_str("pub mod middleware;\n");
     }
 
+    // Expose src/params/ as `crate::params` when the directory exists.
+    let params_dir = src_root.join("params");
+    if params_dir.exists() {
+        if let Ok(read_dir) = fs::read_dir(&params_dir) {
+            let params_dir_str = params_dir.to_string_lossy().replace('\\', "/");
+            let mut param_mods: Vec<String> = read_dir
+                .flatten()
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            param_mods.sort();
+            if !param_mods.is_empty() {
+                let _ = writeln!(out, "#[path = \"{params_dir_str}\"]");
+                out.push_str("pub mod params {\n");
+                for mod_name in &param_mods {
+                    let _ = writeln!(out, "    pub mod {mod_name};");
+                }
+                out.push_str("}\n");
+            }
+        }
+    }
+
     if api_entries.is_empty() {
         return out;
     }
@@ -1104,6 +1211,8 @@ pub fn render_generated_app_module(
     not_found_module: Option<&str>,
     loading_module_for_page: &HashMap<String, String>,
     action_map: &HashMap<String, Vec<ActionFn>>,
+    page_options_map: &HashMap<String, PageOptions>,
+    deferred_fields_map: &HashMap<String, Vec<String>>,
     has_middleware: bool,
 ) -> String {
     let mut out = String::new();
@@ -1131,6 +1240,10 @@ pub fn render_generated_app_module(
         let pattern = rust_string(&entry.pattern);
         let mod_name = &entry.symbol;
         let render_fn = &entry.render_symbol;
+        let deferred_fields: &[String] = deferred_fields_map
+            .get(&entry.symbol)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
         // Collect the active chain: (var_index, layout_mod, field_names, sig) for each layout
         // in the chain that has a load() function.
@@ -1157,7 +1270,8 @@ pub fn render_generated_app_module(
 
         let any_layout_req = active_chain.iter().any(|(_, _, _, sig)| sig.wants_req);
         let page_wants_req = page_load.map_or(false, |s| s.wants_req);
-        let needs_req = any_layout_req || page_wants_req;
+        let has_param_matchers = !entry.param_matchers.is_empty();
+        let needs_req = any_layout_req || page_wants_req || has_param_matchers;
 
         // PilcrowClient is FromRequestParts and must come before Req (FromRequest).
         let closure_args = match (needs_req, needs_client) {
@@ -1173,6 +1287,20 @@ pub fn render_generated_app_module(
             out,
             "        .route({pattern}, ::pilcrow_web::axum::routing::get(|{closure_args}| async move {{"
         );
+
+        // ── Param matcher guards ────────────────────────────────────────────────
+        if has_param_matchers {
+            out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+            let mut sorted_matchers: Vec<(&String, &String)> = entry.param_matchers.iter().collect();
+            sorted_matchers.sort_by_key(|(k, _)| k.as_str());
+            for (param_name, matcher_mod) in &sorted_matchers {
+                let _ = writeln!(out,
+                    "            if !crate::params::{matcher_mod}::match_param(req.params.get(\"{param_name}\").map(|s| s.as_str()).unwrap_or(\"\")) {{"
+                );
+                out.push_str("                return (::pilcrow_web::StatusCode::NOT_FOUND, \"not found\").into_response();\n");
+                out.push_str("            }\n");
+            }
+        }
 
         if !any_layout_load && page_load.is_none() {
             // ── Case 1: static page ─────────────────────────────────────────────
@@ -1335,19 +1463,46 @@ pub fn render_generated_app_module(
                 let _ = writeln!(out, "            let props = page_data;");
             }
 
-            let _ = writeln!(
-                out,
-                "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
-            );
-            out.push_str(&emit_loading_append(loading_mod));
-            if needs_req {
-                out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
-                out.push_str("            __resp_handle.apply_to(&mut __response);\n");
-                out.push_str("            __response\n");
-            } else {
-                out.push_str(
-                    "            ::pilcrow_web::axum::response::Html(html).into_response()\n",
+            if !deferred_fields.is_empty() && !any_layout_load {
+                // ── Deferred streaming response ──────────────────────────────────
+                // Extract futures from page_data before rendering the shell.
+                for field in deferred_fields {
+                    let _ = writeln!(out, "            let __deferred_{field} = page_data.{field};");
+                }
+                // Replace deferred fields with empty-string placeholders for the shell.
+                let _ = writeln!(out, "            let __shell_props = __pilcrow_gen::{mod_name}::Props {{");
+                for field in deferred_fields {
+                    let _ = writeln!(out, "                {field}: ::pilcrow_web::Deferred::ready(Default::default()),");
+                }
+                out.push_str("                ..page_data\n");
+                out.push_str("            };\n");
+                let _ = writeln!(
+                    out,
+                    "            let __shell_html = __pilcrow_gen::{mod_name}::{render_fn}(__shell_props).expect(\"template render failed\");"
                 );
+                out.push_str(&emit_loading_append(loading_mod));
+                out.push_str("            let __patches = ::pilcrow_web::__deferred_patch_stream(vec![\n");
+                for field in deferred_fields {
+                    let field_lit = rust_string(field);
+                    let _ = writeln!(out, "                ({field_lit}, Box::pin(async move {{ ::pilcrow_web::__serialize_deferred(__deferred_{field}.resolve().await) }})),");
+                }
+                out.push_str("            ]);\n");
+                out.push_str("            return ::pilcrow_web::deferred_response(__shell_html, __patches);\n");
+            } else {
+                let _ = writeln!(
+                    out,
+                    "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
+                );
+                out.push_str(&emit_loading_append(loading_mod));
+                if needs_req {
+                    out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
+                    out.push_str("            __resp_handle.apply_to(&mut __response);\n");
+                    out.push_str("            __response\n");
+                } else {
+                    out.push_str(
+                        "            ::pilcrow_web::axum::response::Html(html).into_response()\n",
+                    );
+                }
             }
         }
 
@@ -1357,6 +1512,36 @@ pub fn render_generated_app_module(
         if let Some(actions) = page_actions {
             if !actions.is_empty() {
                 out.push_str(&emit_action_route(actions, &entry.pattern, mod_name, error_mod));
+            }
+        }
+
+        // ── Trailing slash redirect routes ───────────────────────────────────────
+        if let Some(opts) = page_options_map.get(&entry.symbol) {
+            let base = &entry.pattern;
+            match opts.trailing_slash {
+                TrailingSlash::Always if !base.ends_with('/') && base != "/" => {
+                    let slashed = rust_string(&format!("{base}/"));
+                    let bare = rust_string(base.as_str());
+                    let _ = writeln!(out,
+                        "        .route({bare}, ::pilcrow_web::axum::routing::get(|| async move {{"
+                    );
+                    let _ = writeln!(out,
+                        "            ::pilcrow_web::axum::response::Redirect::permanent({slashed})"
+                    );
+                    out.push_str("        }))\n");
+                }
+                TrailingSlash::Ignore if !base.ends_with('/') && base != "/" => {
+                    let slashed = rust_string(&format!("{base}/"));
+                    let bare = rust_string(base.as_str());
+                    let _ = writeln!(out,
+                        "        .route({slashed}, ::pilcrow_web::axum::routing::get(|| async move {{"
+                    );
+                    let _ = writeln!(out,
+                        "            ::pilcrow_web::axum::response::Redirect::permanent({bare})"
+                    );
+                    out.push_str("        }))\n");
+                }
+                _ => {}
             }
         }
     }
@@ -1568,6 +1753,8 @@ pub fn write_generated_app_module(
     not_found_module: Option<&str>,
     loading_module_for_page: &HashMap<String, String>,
     action_map: &HashMap<String, Vec<ActionFn>>,
+    page_options_map: &HashMap<String, PageOptions>,
+    deferred_fields_map: &HashMap<String, Vec<String>>,
     has_middleware: bool,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
@@ -1584,6 +1771,8 @@ pub fn write_generated_app_module(
         not_found_module,
         loading_module_for_page,
         action_map,
+        page_options_map,
+        deferred_fields_map,
         has_middleware,
     );
     fs::write(out_dir.join("generated_app.rs"), app_source)?;
@@ -1635,6 +1824,7 @@ mod tests {
             template_path: "/tmp/src/pages/about.html".to_string(),
             symbol: "page_about".to_string(),
             render_symbol: "render_page_about".to_string(),
+            param_matchers: HashMap::new(),
         }];
 
         let source = render_generated_routes_module(&entries);

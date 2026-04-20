@@ -1,6 +1,7 @@
 // ./src/lib.rs
 
 pub mod assets;
+pub mod deferred;
 pub mod context;
 pub mod csrf;
 pub mod generated_routes;
@@ -38,5 +39,6 @@ pub use axum;
 #[doc(hidden)]
 pub use response::response::html;
 
+pub use deferred::{Deferred, DeferredPatch, __deferred_patch_stream, __serialize_deferred, deferred_response};
 // ── Internal helpers (used by ws.rs, macros, generated code) ─
 pub(crate) use sse::serialize_or_null;

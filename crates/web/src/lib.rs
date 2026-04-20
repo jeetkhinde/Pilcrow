@@ -42,6 +42,9 @@ pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
 pub use runtime::start;
 
+// ── Deferred streaming ───────────────────────────────────────
+pub use runtime::{Deferred, DeferredPatch, deferred_response};
+
 // ── Doc-hidden re-exports for generated code ────────────────
 #[doc(hidden)]
 pub use axum;
@@ -49,6 +52,8 @@ pub use axum;
 pub use pilcrow_client;
 #[doc(hidden)]
 pub use runtime::csrf_middleware as __csrf_middleware;
+#[doc(hidden)]
+pub use runtime::{__deferred_patch_stream, __serialize_deferred};
 
 /// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
 ///

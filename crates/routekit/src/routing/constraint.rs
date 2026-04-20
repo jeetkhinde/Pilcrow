@@ -22,6 +22,9 @@ pub enum ParameterConstraint {
     Uuid,
     /// Custom regex pattern
     Regex(String),
+    /// User-defined external matcher: calls `src/params/<name>::match_param(value)` at runtime.
+    /// Validated in the generated handler, not during route matching.
+    External(String),
 }
 
 impl ParameterConstraint {
@@ -70,6 +73,8 @@ impl ParameterConstraint {
                 // For now, just check if pattern is in value
                 value.contains(pattern)
             }
+            // External matchers are validated in the generated handler, not here.
+            Self::External(_) => true,
         }
     }
 }

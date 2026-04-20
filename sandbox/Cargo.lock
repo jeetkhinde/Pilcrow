@@ -1118,6 +1118,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "bytes",
  "cookie",
  "crc32fast",
  "futures-core",
