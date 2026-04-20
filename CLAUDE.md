@@ -137,13 +137,18 @@ Declare in a code-behind file (or `---` frontmatter):
 
 ```rust
 pub const TRAILING_SLASH: &str = "always"; // "always" | "never" | "ignore"
+pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
 ```
 
+**`TRAILING_SLASH`:**
 - `"always"` — redirects `/path` → `/path/` (GET only)
 - `"ignore"` — redirects `/path/` → `/path` (normalise to no-slash)
 - `"never"` (default) — no extra routes
 
-The constant is stripped from the emitted module and never reaches the template.
+**`LAYOUT`:**
+- `"none"` — strip all auto-layout wrapping; the page renders directly with no `_layout.html` ancestors applied and no layout `load()` calls
+
+Both constants are stripped from the emitted module and never reach the template.
 
 ## Code-Behind Pattern
 

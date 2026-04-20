@@ -362,6 +362,8 @@ struct HtmlModuleSource {
     /// Ordered layout chain for this page: [outermost_auto_layout, ..., explicit_layout].
     /// Populated during `preprocess_discovered_sources` after all modules are loaded.
     layout_chain: Vec<String>,
+    /// When true (from `pub const LAYOUT: &str = "none"`), skip all auto-layout wrapping.
+    skip_layout: bool,
 }
 
 fn preprocess_discovered_sources(
@@ -435,6 +437,11 @@ fn preprocess_discovered_sources(
         .collect();
 
     for page_path in &page_paths {
+        // Skip layout wrapping entirely when the page opts out via `pub const LAYOUT: &str = "none"`.
+        if modules.get(page_path).map_or(false, |m| m.skip_layout) {
+            continue;
+        }
+
         let auto_chain = build_auto_layout_chain(page_path, &pages_dir, &modules);
         if auto_chain.is_empty() {
             continue;
@@ -590,6 +597,7 @@ fn load_source_group(
         // layout_chain starts empty; auto-layout entries are prepended in
         // `preprocess_discovered_sources` after all modules are loaded.
         let layout_chain: Vec<String> = vec![];
+        let skip_layout = kind == HtmlSourceKind::Page && scan_layout_none(&cleaned_frontmatter);
 
         modules.insert(
             source_path.clone(),
@@ -603,6 +611,7 @@ fn load_source_group(
                 render_symbol,
                 imports,
                 layout_chain,
+                skip_layout,
             },
         );
     }
@@ -675,6 +684,7 @@ fn load_fragment_source_group(
                 render_symbol,
                 imports,
                 layout_chain: vec![],
+                skip_layout: false,
             },
         );
     }
@@ -859,6 +869,25 @@ fn src_relative_display_path(path: &Path) -> String {
         return tail.to_string();
     }
     normalized
+}
+
+/// Quick string scan — returns true if the source contains `pub const LAYOUT` set to `"none"`.
+/// Used before full syn parsing so we can set `skip_layout` on the module source early.
+fn scan_layout_none(source: &str) -> bool {
+    source.contains("pub const LAYOUT") && {
+        // Find the value after the `=` on the same statement.
+        if let Some(pos) = source.find("pub const LAYOUT") {
+            let rest = &source[pos..];
+            if let Some(eq) = rest.find('=') {
+                let value_part = rest[eq + 1..].trim_start();
+                value_part.starts_with("\"none\"") || value_part.starts_with("'none'")
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 }
 
 fn template_compile_error(source_path: &Path, message: impl Into<String>) -> io::Error {
@@ -2759,6 +2788,74 @@ pub async fn load(_req: Req) -> AppResult<Props> {
 
         // _layout.html is not a route
         assert!(result.generated_routes.iter().all(|r| r.pattern != "/_layout"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_layout_none_skips_layout_wrapping() {
+        let root = mk_temp_root("layout_none");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {
+    pub site_name: String,
+}
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { site_name: "MySite".to_string() })
+}
+---
+<html><body><slot /></body></html>"#,
+        );
+        // Normal page — gets wrapped.
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        // Opt-out page — no layout wrapping.
+        write_file(
+            &src.join("pages/standalone.rs"),
+            r#"pub const LAYOUT: &str = "none";
+pub struct Props {}
+pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
+        );
+        write_file(&src.join("pages/standalone.html"), "<h1>Standalone</h1>");
+
+        let result = compile_to_out_dir(&src, &out).expect("should compile");
+
+        let templates_src =
+            fs::read_to_string(out.join("generated_templates.rs")).expect("read templates");
+
+        // Normal index page should get __MergedProps with layout's site_name.
+        let index_mod_start = templates_src.find("pub mod page_index").expect("page_index mod");
+        let index_mod_end = templates_src[index_mod_start..]
+            .find("\npub mod ")
+            .map(|p| index_mod_start + p)
+            .unwrap_or(templates_src.len());
+        let index_mod = &templates_src[index_mod_start..index_mod_end];
+        assert!(index_mod.contains("__MergedProps"), "index page should have __MergedProps");
+        assert!(index_mod.contains("site_name"), "index page __MergedProps should have site_name");
+
+        // Standalone page should NOT get __MergedProps (no layout chain).
+        let standalone_mod_start = templates_src.find("pub mod page_standalone").expect("page_standalone mod");
+        let standalone_mod_end = templates_src[standalone_mod_start..]
+            .find("\npub mod ")
+            .map(|p| standalone_mod_start + p)
+            .unwrap_or(templates_src.len());
+        let standalone_mod = &templates_src[standalone_mod_start..standalone_mod_end];
+        assert!(
+            !standalone_mod.contains("__MergedProps"),
+            "standalone page with LAYOUT=none should NOT have __MergedProps; got:\n{standalone_mod}"
+        );
+        assert!(
+            !standalone_mod.contains("site_name"),
+            "standalone page should not inherit layout fields"
+        );
+
+        // Both pages should be routable.
+        let patterns: Vec<_> = result.generated_routes.iter().map(|r| r.pattern.as_str()).collect();
+        assert!(patterns.contains(&"/"), "index route present");
+        assert!(patterns.contains(&"/standalone"), "standalone route present");
 
         cleanup(&root);
     }

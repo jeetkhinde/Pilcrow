@@ -10,7 +10,7 @@ use syn::parse_quote;
 
 use crate::routing::constraint::ParameterConstraint;
 use crate::routing::discovery::{build_api_routes, build_fragment_routes, build_page_routes};
-use crate::templating::page_options::{PageOptions, TrailingSlash};
+use crate::templating::page_options::{LayoutOpt, PageOptions, TrailingSlash};
 
 /// One generated page route entry for build-time manifests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -599,17 +599,27 @@ fn instrument_frontmatter(
         )
     })?;
 
-    // Parse and strip `pub const TRAILING_SLASH: &str = "value";` before other processing.
+    // Parse and strip framework-reserved `pub const` declarations before other processing.
+    // Currently: TRAILING_SLASH and LAYOUT.
     let mut page_options = PageOptions::default();
     let mut const_remove_indices: Vec<usize> = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
         if let syn::Item::Const(c) = item
             && matches!(c.vis, syn::Visibility::Public(_))
-            && c.ident == "TRAILING_SLASH"
         {
             let value_str = c.expr.to_token_stream().to_string();
-            page_options.trailing_slash = TrailingSlash::from_str(value_str.trim_matches('"'));
-            const_remove_indices.push(index);
+            let value = value_str.trim_matches('"').trim_matches('\'');
+            if c.ident == "TRAILING_SLASH" {
+                page_options.trailing_slash = TrailingSlash::from_str(value);
+                const_remove_indices.push(index);
+            } else if c.ident == "LAYOUT" {
+                page_options.layout = if value.trim_matches('"').trim_matches('\'') == "none" {
+                    LayoutOpt::None
+                } else {
+                    LayoutOpt::Inherit
+                };
+                const_remove_indices.push(index);
+            }
         }
     }
     // Remove in reverse order to preserve indices.
