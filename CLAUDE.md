@@ -55,10 +55,11 @@ Config is in `Pilcrow.toml` (walks up from cwd). Defaults: web on `127.0.0.1:300
 
 1. **Discovers** `src/pages/**/*.html`, `src/ui/**/*.html`, and their `.rs` code-behind files
 2. **Classifies** special files: `_layout.html`, `_error.html`, `_not_found.html`, `_loading.html`
-3. **Transpiles** Askama-dialect HTML → Askama templates in `$OUT_DIR/pilcrow_templates/`
-4. **Generates** `$OUT_DIR/generated_app.rs` — a `build_router()` fn wiring all routes
-5. **Generates** `$OUT_DIR/generated_routes.rs` and `$OUT_DIR/generated_api_mods.rs`
-6. **Detects** `src/middleware.rs` — if present, wraps the router in an axum middleware layer
+3. **Reads** `Pilcrow.toml` for fragment directory configuration (`[[fragments]]`)
+4. **Transpiles** Askama-dialect HTML → Askama templates in `$OUT_DIR/pilcrow_templates/`
+5. **Generates** `$OUT_DIR/generated_app.rs` — a `build_router()` fn wiring all routes
+6. **Generates** `$OUT_DIR/generated_routes.rs` and `$OUT_DIR/generated_api_mods.rs`
+7. **Detects** `src/middleware.rs` — if present, wraps the router in an axum middleware layer
 
 The `pilcrow_app!()` macro in `main.rs` includes these generated files.
 
@@ -84,6 +85,9 @@ src/
       dashboard.html    # Route: GET /dashboard  (group name stripped from URL)
   ui/
     Button.html         # Reusable components, imported with {% import %}
+  widgets/              # Example fragment dir (configured in Pilcrow.toml)
+    user-card.html      # Route: GET /widgets/user-card (no layout wrapping)
+    user-card.rs        # Optional code-behind: same as pages (load, actions, etc.)
   api/
     health.rs           # API route: handlers live here, separate from page routes
   params/
@@ -106,6 +110,26 @@ The generated handler calls this at request time and returns 404 if it returns `
 ### Route Groups
 
 `(group)/` directories are stripped from URLs and module names. They scope `_layout.html`, `_error.html`, and `_loading.html` to their children without affecting routes.
+
+### Fragment Directories
+
+Fragment directories contain URL-accessible HTML partials — like pages but without any layout wrapping. Configure them in `Pilcrow.toml`:
+
+```toml
+[[fragments]]
+dir = "widgets"          # relative to src/; URL prefix = "widgets" → /widgets/**
+
+[[fragments]]
+dir = "ui-blocks"
+url = "blocks"           # explicit URL prefix override → /blocks/**
+```
+
+- Each `.html` file in the directory becomes a GET route: `src/widgets/user-card.html` → `GET /widgets/user-card`
+- Code-behind `.rs` files work exactly like pages (`load()`, named actions, `_error.html`)
+- No layout is applied — the response is the raw fragment HTML
+- Fragments can import `ui/` components with `import … from "ui/…";`
+- Module names are `frag_{url_prefix}_{snake_path}` (e.g. `frag_widgets_user_card`)
+- `cargo:rerun-if-changed` is emitted for each fragment dir and for `Pilcrow.toml`
 
 ### Per-page Options
 
