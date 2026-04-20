@@ -2059,15 +2059,4 @@ if (document.readyState === "loading") {
 } else {
   init();
 }
-
-// __pilcrow_deferred — applies a streamed deferred-field patch to the current page.
-// Called by inline <script> chunks emitted by the server after the shell HTML.
-// Usage: window.__pilcrow_deferred("field_name", value)
-window.__pilcrow_deferred = function(field, value) {
-  // Find all elements with :text="<field>" or :value="<field>" in the live binding map
-  // and patch them via Silcrow.patch with a single-key object.
-  var data = {};
-  data[field] = value;
-  patch(data, document.body);
-};
 })();

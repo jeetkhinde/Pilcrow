@@ -9,7 +9,7 @@ use quote::ToTokens;
 use syn::parse_quote;
 
 use crate::routing::constraint::ParameterConstraint;
-use crate::routing::discovery::{build_api_routes, build_page_routes};
+use crate::routing::discovery::{build_api_routes, build_fragment_routes, build_page_routes};
 use crate::templating::page_options::{PageOptions, TrailingSlash};
 
 /// One generated page route entry for build-time manifests.
@@ -234,6 +234,63 @@ pub fn build_generated_page_manifest(
     });
 
     Ok(generated)
+}
+
+/// Build a fragment-route manifest for one configured fragment directory.
+///
+/// Routes are prefixed with `/{url_prefix}/`; module symbols are `frag_{url_prefix}_{path}`.
+pub fn build_generated_fragment_manifest(
+    fragment_dir: &Path,
+    url_prefix: &str,
+) -> io::Result<Vec<GeneratedPageRoute>> {
+    let routes = build_fragment_routes(fragment_dir, url_prefix)?;
+    let dir_norm = normalize_path_text(fragment_dir);
+    let generated = routes
+        .into_iter()
+        .map(|route| {
+            let symbol = build_fragment_symbol(&route.template_path, &dir_norm, url_prefix);
+            GeneratedPageRoute {
+                pattern: route.pattern,
+                template_path: route.template_path,
+                symbol: symbol.clone(),
+                render_symbol: format!("render_{symbol}"),
+                param_matchers: HashMap::new(),
+            }
+        })
+        .collect();
+    Ok(generated)
+}
+
+fn build_fragment_symbol(template_path: &str, dir_norm: &str, url_prefix: &str) -> String {
+    let path = normalize_path_text(Path::new(template_path));
+    let relative = path
+        .strip_prefix(dir_norm)
+        .unwrap_or(&path)
+        .trim_start_matches('/');
+    let without_ext = relative.strip_suffix(".html").unwrap_or(relative);
+    let prefixed = format!("{url_prefix}/{without_ext}");
+
+    let mut symbol = String::new();
+    let mut prev = false;
+    for ch in prefixed.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if !prev {
+                symbol.push('_');
+            }
+            prev = true;
+        } else {
+            symbol.push(mapped);
+            prev = false;
+        }
+    }
+    let s = symbol.trim_matches('_');
+    let s = if s.is_empty() { "index" } else { s };
+    format!("frag_{s}")
 }
 
 /// Render a Rust module source for discovered page routes.
@@ -1487,6 +1544,19 @@ pub fn render_generated_app_module(
                     let _ = writeln!(out, "                ({field_lit}, Box::pin(async move {{ ::pilcrow_web::__serialize_deferred(__deferred_{field}.resolve().await) }})),");
                 }
                 out.push_str("            ]);\n");
+                // Inject the deferred bootstrap shim into the shell HTML so that
+                // the streamed <script> patches can call Silcrow.patch without
+                // requiring any modification to silcrow.js itself.
+                out.push_str("            const __DEFERRED_SHIM: &str = \"<script>window.__pilcrow_deferred=function(f,v){var d={};d[f]=v;Silcrow.patch(d,document.body)}</script>\";\n");
+                out.push_str("            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n");
+                out.push_str("                let mut __s = String::with_capacity(__shell_html.len() + __DEFERRED_SHIM.len());\n");
+                out.push_str("                __s.push_str(&__shell_html[..__pos]);\n");
+                out.push_str("                __s.push_str(__DEFERRED_SHIM);\n");
+                out.push_str("                __s.push_str(&__shell_html[__pos..]);\n");
+                out.push_str("                __s\n");
+                out.push_str("            } else {\n");
+                out.push_str("                format!(\"{}{}\", __DEFERRED_SHIM, __shell_html)\n");
+                out.push_str("            };\n");
                 out.push_str("            return ::pilcrow_web::deferred_response(__shell_html, __patches);\n");
             } else {
                 let _ = writeln!(

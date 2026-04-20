@@ -150,6 +150,82 @@ pub fn build_page_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<Route>> {
     Ok(routes)
 }
 
+/// Collect HTML fragment files from a fragment directory.
+///
+/// Returns `(path, url_prefix)` pairs where `url_prefix` is the configured prefix
+/// (e.g. `"widgets"`). Special files (`_error.html`, `_layout.html`) are included
+/// in their own lists so the pipeline can handle them separately.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveredFragmentFiles {
+    /// Routable fragment HTML files.
+    pub fragments: Vec<PathBuf>,
+    /// `_error.html` files within this fragment group (for error rendering).
+    pub error_pages: Vec<PathBuf>,
+    /// `_layout.html` files within this fragment group (optional fragment wrapper).
+    pub auto_layouts: Vec<PathBuf>,
+}
+
+pub fn discover_fragment_files(fragment_dir: &Path) -> io::Result<DiscoveredFragmentFiles> {
+    let mut result = DiscoveredFragmentFiles::default();
+    if !fragment_dir.exists() {
+        return Ok(result);
+    }
+
+    let all = collect_html_files(fragment_dir)?;
+    for path in all {
+        if is_error_page_file(&path) {
+            result.error_pages.push(path);
+        } else if is_auto_layout_file(&path) {
+            result.auto_layouts.push(path);
+        } else {
+            result.fragments.push(path);
+        }
+    }
+
+    result.fragments.sort();
+    result.error_pages.sort();
+    result.auto_layouts.sort();
+    Ok(result)
+}
+
+/// Build `Route` entries from discovered fragment files.
+///
+/// Routes are prefixed with `/{url_prefix}/`.
+pub fn build_fragment_routes(
+    fragment_dir: impl AsRef<Path>,
+    url_prefix: &str,
+) -> io::Result<Vec<Route>> {
+    let fragment_dir = fragment_dir.as_ref();
+    let mut files = collect_html_files(fragment_dir)?;
+    files.retain(|p| !is_special_page_file(p));
+    files.sort();
+
+    let dir_text = path_to_unix_slashes(fragment_dir);
+    let mut routes = files
+        .into_iter()
+        .map(|path| {
+            let file_path = path_to_unix_slashes(&path);
+            let mut route = Route::from_path(&file_path, &dir_text);
+            // Prefix the pattern with the url_prefix.
+            let clean_prefix = url_prefix.trim_matches('/');
+            route.pattern = if route.pattern == "/" {
+                format!("/{clean_prefix}")
+            } else {
+                format!("/{clean_prefix}{}", route.pattern)
+            };
+            route
+        })
+        .collect::<Vec<_>>();
+
+    routes.sort_by(|a, b| {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| a.pattern.cmp(&b.pattern))
+    });
+
+    Ok(routes)
+}
+
 /// Discover `.rs` route files from `src/api/` (excludes `mod.rs`).
 ///
 /// `src_root` should point to the project `src` directory.
@@ -278,6 +354,10 @@ fn build_api_symbol(without_ext: &str) -> String {
     let trimmed = normalized.trim_matches('_');
     let base = if trimmed.is_empty() { "index" } else { trimmed };
     format!("api_{base}")
+}
+
+pub fn collect_html_files_pub(root: &Path) -> io::Result<Vec<PathBuf>> {
+    collect_html_files(root)
 }
 
 fn collect_html_files(root: &Path) -> io::Result<Vec<PathBuf>> {

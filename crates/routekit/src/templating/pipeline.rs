@@ -3,9 +3,11 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files};
+use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files, discover_fragment_files};
+use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
     GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
+    build_generated_fragment_manifest,
     write_generated_api_routes_module, write_generated_app_module, write_generated_routes_module,
     write_generated_templates_module,
 };
@@ -15,6 +17,9 @@ use crate::templating::compiler::{inject_form_method_attrs, split_html_module, t
 pub enum HtmlSourceKind {
     Page,
     Ui,
+    /// URL-accessible HTML fragment from a configured fragment directory.
+    /// Like a page but never receives layout auto-wrapping.
+    Fragment,
     /// `_layout.html` files discovered inside `src/pages/` subdirectories.
     /// They auto-wrap sibling and descendant pages; they are not routable themselves.
     AutoLayout,
@@ -59,15 +64,24 @@ pub struct CompilerOutput {
     pub generated_app_file: PathBuf,
 }
 
-/// Full compile pipeline for Pilcrow `.html` sources.
+/// Full compile pipeline — delegates to `compile_to_out_dir_with_config` with empty config.
+pub fn compile_to_out_dir(
+    src_root: impl AsRef<Path>,
+    out_dir: impl AsRef<Path>,
+) -> io::Result<CompilerOutput> {
+    compile_to_out_dir_with_config(src_root, out_dir, &PilcrowBuildConfig::default())
+}
+
+/// Full compile pipeline for Pilcrow `.html` sources with fragment directory support.
 ///
 /// Output layout in `out_dir`:
 /// - `generated_routes.rs` (route manifest + registration helpers)
 /// - `generated_templates.rs` (compile-time Askama render functions)
-/// - `pilcrow_templates/{pages,ui,layouts}/...` (transpiled Askama templates)
-pub fn compile_to_out_dir(
+/// - `pilcrow_templates/{pages,ui,layouts,fragments}/...` (transpiled Askama templates)
+pub fn compile_to_out_dir_with_config(
     src_root: impl AsRef<Path>,
     out_dir: impl AsRef<Path>,
+    build_config: &PilcrowBuildConfig,
 ) -> io::Result<CompilerOutput> {
     let src_root = src_root.as_ref();
     let out_dir = out_dir.as_ref();
@@ -75,6 +89,96 @@ pub fn compile_to_out_dir(
     let discovered = discover_html_files(src_root)?;
     let templates_root = out_dir.join("pilcrow_templates");
     let mut files = preprocess_discovered_sources(src_root, &templates_root, &discovered)?;
+
+    // ── Fragment groups ──────────────────────────────────────────────────────
+    let mut fragment_routes: Vec<crate::templating::codegen::GeneratedPageRoute> = Vec::new();
+    for entry in &build_config.fragments {
+        let fragment_dir = src_root.join(&entry.dir);
+        if !fragment_dir.exists() {
+            continue;
+        }
+        let url_prefix = entry.url_prefix();
+        let discovered_frags = discover_fragment_files(&fragment_dir)?;
+        let frag_templates_root = templates_root.join("fragments").join(&url_prefix);
+
+        // Load routable fragment HTML files into the module graph.
+        let mut frag_modules: HashMap<PathBuf, HtmlModuleSource> = HashMap::new();
+        load_fragment_source_group(
+            src_root,
+            &url_prefix,
+            &discovered_frags.fragments,
+            &fragment_dir,
+            &frag_templates_root,
+            &mut frag_modules,
+        )?;
+        // Error pages within the fragment group (not routable, use fragment naming too).
+        load_source_group(
+            src_root,
+            HtmlSourceKind::ErrorPage,
+            &discovered_frags.error_pages,
+            &fragment_dir,
+            &frag_templates_root.join("error_pages"),
+            &mut frag_modules,
+        )?;
+
+        // Include ui/ modules in the graph so fragments can import <Component />.
+        load_source_group(
+            src_root,
+            HtmlSourceKind::Ui,
+            &{
+                let mut ui_files = crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"))?;
+                ui_files.sort();
+                ui_files
+            },
+            &src_root.join("ui"),
+            &templates_root.join("ui"),
+            &mut frag_modules,
+        )?;
+
+        // Expand components and write template files for each fragment module.
+        let mut module_paths = frag_modules.keys().cloned().collect::<Vec<_>>();
+        module_paths.sort();
+        for module_path in module_paths {
+            let module = frag_modules.get(&module_path).expect("fragment module path exists");
+            // Skip ui/ modules — they were already written by the main pipeline.
+            if module.kind == HtmlSourceKind::Ui {
+                continue;
+            }
+            let mut stack = vec![module.source_path.clone()];
+            let all_modules: HashMap<PathBuf, HtmlModuleSource> = frag_modules.clone();
+            let expanded = expand_known_components(
+                &module.template_source,
+                &module.source_path,
+                &all_modules,
+                &mut stack,
+                0,
+            )?;
+            let after_components = transpile_component_tags(&expanded);
+            let final_template = inject_form_method_attrs(&after_components);
+
+            if let Some(parent) = module.template_output_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&module.template_output_path, final_template.as_bytes())?;
+
+            files.push(PreprocessedHtmlFile {
+                kind: module.kind,
+                source_path: module.source_path.clone(),
+                template_output_path: module.template_output_path.clone(),
+                rust_frontmatter: module.rust_frontmatter.clone(),
+                transpiled_template: final_template,
+                module_name: module.module_name.clone(),
+                render_symbol: module.render_symbol.clone(),
+                layout_chain: vec![],
+            });
+        }
+
+        // Build route manifest entries for this fragment group.
+        let frag_page_routes =
+            build_generated_fragment_manifest(&fragment_dir, &url_prefix)?;
+        fragment_routes.extend(frag_page_routes);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     let generated_routes_file = out_dir.join("generated_routes.rs");
     let generated_routes = write_generated_routes_module(src_root, &generated_routes_file)?;
@@ -190,9 +294,16 @@ pub fn compile_to_out_dir(
     // Detect optional src/middleware.rs — if present, a global axum layer is generated.
     let has_middleware = src_root.join("middleware.rs").exists();
 
+    // Merge page routes and fragment routes for the app module.
+    let all_page_routes: Vec<GeneratedPageRoute> = generated_routes
+        .iter()
+        .cloned()
+        .chain(fragment_routes.iter().cloned())
+        .collect();
+
     // Write the unified app module with auto-wired router.
     write_generated_app_module(
-        &generated_routes,
+        &all_page_routes,
         &generated_api_routes,
         &templates_output.load_map,
         &templates_output.layout_fields_map,
@@ -499,6 +610,77 @@ fn load_source_group(
     Ok(())
 }
 
+/// Load fragment HTML files into the module graph.
+///
+/// Fragments behave like pages but have no layout auto-wrapping (empty `layout_chain`).
+/// The module name is `frag_{url_prefix}_{snake_relative}`.
+fn load_fragment_source_group(
+    src_root: &Path,
+    url_prefix: &str,
+    source_files: &[PathBuf],
+    fragment_dir: &Path,
+    out_root: &Path,
+    modules: &mut HashMap<PathBuf, HtmlModuleSource>,
+) -> io::Result<()> {
+    for source_path in source_files {
+        let source = fs::read_to_string(source_path)?;
+        let parts = split_html_module(&source).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to parse {}: {err}", source_path.display()),
+            )
+        })?;
+
+        let codebehind_path = source_path.with_extension("rs");
+        let (cleaned_frontmatter, imports) = if codebehind_path.exists() {
+            let (leftover, imports) =
+                strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+            if !leftover.trim().is_empty() {
+                return Err(template_compile_error(
+                    source_path,
+                    "frontmatter may only contain `import` statements when a \
+                     code-behind `.rs` file is present — move Rust logic there",
+                ));
+            }
+            let rs_content = fs::read_to_string(&codebehind_path).map_err(|err| {
+                template_compile_error(
+                    source_path,
+                    format!(
+                        "failed to read code-behind `{}`: {err}",
+                        codebehind_path.display()
+                    ),
+                )
+            })?;
+            (rs_content, imports)
+        } else {
+            strip_frontmatter_imports(&parts.rust, src_root, source_path)?
+        };
+
+        let relative_in_dir = source_path.strip_prefix(fragment_dir).unwrap_or(source_path);
+        let template_output_path = out_root.join(relative_in_dir);
+        // Module name: `frag_{url_prefix}_{snake_relative}` — pass prefixed path to build_module_name.
+        let prefixed_relative = Path::new(url_prefix).join(relative_in_dir);
+        let module_name = build_module_name(HtmlSourceKind::Fragment, &prefixed_relative);
+        let render_symbol = format!("render_{module_name}");
+
+        modules.insert(
+            source_path.clone(),
+            HtmlModuleSource {
+                kind: HtmlSourceKind::Fragment,
+                source_path: source_path.clone(),
+                template_output_path,
+                rust_frontmatter: cleaned_frontmatter,
+                template_source: parts.template,
+                module_name,
+                render_symbol,
+                imports,
+                layout_chain: vec![],
+            },
+        );
+    }
+    Ok(())
+}
+
 /// Walk up from a page's directory (within `pages_dir`) and collect any
 /// `_layout.html` auto-layout files found along the way.
 ///
@@ -583,6 +765,26 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
     let prefix = match kind {
         HtmlSourceKind::Page => "page",
         HtmlSourceKind::Ui => "ui",
+        HtmlSourceKind::Fragment => {
+            // `relative` is already prefixed with the url_prefix, e.g. `widgets/user-card.html`.
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            let without_ext = relative.strip_suffix(".html").unwrap_or(&relative);
+            let mut symbol = String::new();
+            let mut prev_under = false;
+            for ch in without_ext.chars() {
+                let mapped = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' };
+                if mapped == '_' {
+                    if !prev_under { symbol.push('_'); }
+                    prev_under = true;
+                } else {
+                    symbol.push(mapped);
+                    prev_under = false;
+                }
+            }
+            let s = symbol.trim_matches('_');
+            let s = if s.is_empty() { "index" } else { s };
+            return format!("frag_{s}");
+        }
         HtmlSourceKind::AutoLayout => {
             // `products/_layout.html` → `layout_auto_products`
             // `_layout.html`         → `layout_auto_root`
@@ -2557,6 +2759,83 @@ pub async fn load(_req: Req) -> AppResult<Props> {
 
         // _layout.html is not a route
         assert!(result.generated_routes.iter().all(|r| r.pattern != "/_layout"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_with_config_processes_fragment_directories() {
+        use crate::templating::build_config::{FragmentEntry, PilcrowBuildConfig};
+
+        let root = mk_temp_root("fragments_basic");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("widgets/user-card.html"), "<div>{{ name }}</div>");
+        write_file(&src.join("widgets/user-card.rs"), "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }");
+        write_file(&src.join("partials/nav.html"), "<nav>Navigation</nav>");
+
+        let config = PilcrowBuildConfig {
+            fragments: vec![
+                FragmentEntry { dir: "widgets".to_string(), url: None },
+                FragmentEntry { dir: "partials".to_string(), url: None },
+            ],
+        };
+
+        let result = compile_to_out_dir_with_config(&src, &out, &config)
+            .expect("fragments should compile");
+
+        // Pages route still present
+        let patterns: Vec<_> = result.generated_routes.iter().map(|r| r.pattern.as_str()).collect();
+        assert!(patterns.contains(&"/"));
+
+        // Fragment templates were written
+        let widget_tpl = out.join("pilcrow_templates/fragments/widgets/user-card.html");
+        assert!(widget_tpl.exists(), "widget template written");
+        let widget_html = fs::read_to_string(&widget_tpl).expect("read widget template");
+        assert!(widget_html.contains("{{ name }}"), "template content preserved");
+
+        let nav_tpl = out.join("pilcrow_templates/fragments/partials/nav.html");
+        assert!(nav_tpl.exists(), "nav template written");
+
+        // Fragment modules appear in preprocessed_files
+        let frag_mods: Vec<_> = result.preprocessed_files.iter()
+            .filter(|f| f.module_name.starts_with("frag_"))
+            .collect();
+        assert_eq!(frag_mods.len(), 2, "two fragment modules: user-card and nav");
+
+        let widget_mod = frag_mods.iter().find(|f| f.module_name == "frag_widgets_user_card");
+        assert!(widget_mod.is_some(), "frag_widgets_user_card module present");
+
+        let nav_mod = frag_mods.iter().find(|f| f.module_name == "frag_partials_nav");
+        assert!(nav_mod.is_some(), "frag_partials_nav module present");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_fragment_url_prefix_override() {
+        use crate::templating::build_config::{FragmentEntry, PilcrowBuildConfig};
+
+        let root = mk_temp_root("fragment_url_override");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(&src.join("ui-blocks/card.html"), "<div>Card</div>");
+
+        let config = PilcrowBuildConfig {
+            fragments: vec![
+                FragmentEntry { dir: "ui-blocks".to_string(), url: Some("blocks".to_string()) },
+            ],
+        };
+
+        let result = compile_to_out_dir_with_config(&src, &out, &config)
+            .expect("url-override fragments should compile");
+
+        let block_mod = result.preprocessed_files.iter()
+            .find(|f| f.module_name.starts_with("frag_blocks"));
+        assert!(block_mod.is_some(), "frag_blocks_card module present with overridden prefix");
 
         cleanup(&root);
     }

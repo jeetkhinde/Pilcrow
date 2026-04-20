@@ -10,9 +10,10 @@ pub mod templating;
 
 pub use routing::constraint::ParameterConstraint;
 pub use routing::intercept::InterceptLevel;
+pub use templating::build_config::{FragmentEntry, PilcrowBuildConfig};
 pub use templating::codegen::{GeneratedApiRoute, GeneratedPageRoute};
 pub use templating::layout::LayoutOption;
-pub use templating::pipeline::{compile_to_out_dir, watched_source_directories};
+pub use templating::pipeline::{compile_to_out_dir, compile_to_out_dir_with_config, watched_source_directories};
 
 pub fn compile_current_crate_sources() -> io::Result<()> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|err| {
@@ -26,11 +27,20 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
         io::Error::new(io::ErrorKind::NotFound, format!("OUT_DIR must be set: {err}"))
     })?);
 
-    compile_to_out_dir(&src_root, &out_dir)?;
+    let build_config = PilcrowBuildConfig::load_from(&manifest_dir);
+
+    compile_to_out_dir_with_config(&src_root, &out_dir, &build_config)?;
 
     for dir in watched_source_directories(&src_root) {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
+    // Watch each configured fragment directory for changes.
+    for entry in &build_config.fragments {
+        let frag_dir = entry.abs_dir(&manifest_dir);
+        println!("cargo:rerun-if-changed={}", frag_dir.display());
+    }
+    // Watch the config file itself.
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("Pilcrow.toml").display());
 
     Ok(())
 }
