@@ -77,14 +77,49 @@ src/
     _loading.html       # Skeleton shown during navigation — injected as <template>
     [id]/
       index.html        # Route: GET /:id
+    [id=integer]/
+      index.html        # Route: GET /:id, but only when id passes src/params/integer::match_param
+    (admin)/
+      _layout.html      # Layout group — wraps children, NOT part of the URL
+      dashboard.html    # Route: GET /dashboard  (group name stripped from URL)
   ui/
     Button.html         # Reusable components, imported with {% import %}
   api/
     health.rs           # API route: handlers live here, separate from page routes
+  params/
+    integer.rs          # Param matcher: `pub fn match_param(value: &str) -> bool`
   middleware.rs         # Optional: global request middleware
 ```
 
 Route parameters use `:param` in axum style. Folder names in brackets (`[id]`) become URL params.
+
+### Param Matchers
+
+`[id=integer]` maps to `src/params/integer.rs`. The file must export:
+
+```rust
+pub fn match_param(value: &str) -> bool { ... }
+```
+
+The generated handler calls this at request time and returns 404 if it returns `false`. Built-in constraints (`[id:int]`, `[id:uuid]`, etc.) still work alongside external matchers.
+
+### Route Groups
+
+`(group)/` directories are stripped from URLs and module names. They scope `_layout.html`, `_error.html`, and `_loading.html` to their children without affecting routes.
+
+### Per-page Options
+
+Declare in a code-behind file (or `---` frontmatter):
+
+```rust
+pub const TRAILING_SLASH: &str = "always"; // "always" | "never" | "ignore"
+```
+
+- `"always"` — redirects `/path` → `/path/` (GET only)
+- `"ignore"` — redirects `/path/` → `/path` (normalise to no-slash)
+- `"never"` (default) — no extra routes
+
+The constant is stripped from the emitted module and never reaches the template.
 
 ## Code-Behind Pattern
 
@@ -133,6 +168,32 @@ The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`,
 **`FormMap`** — multi-value map used for both `req.form` and `req.query`. `.get(key) -> Option<&str>` (first value), `.get_all(key) -> &[String]`, `.contains(key)`, `.keys() -> impl Iterator<Item = &str>`.
 
 **`ActionResult`** — `Result<Response, AppError>` — return type for action fns
+
+**`Deferred<T>`** — wraps a future whose value is streamed to the client after the shell renders:
+
+```rust
+pub struct Props {
+    pub title: String,
+    pub count: Deferred<i32>,   // resolved after shell
+}
+
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props {
+        title: "Hello".to_string(),
+        count: Deferred::spawn(async {
+            // heavy work here
+            42
+        }),
+    })
+}
+```
+
+The framework:
+1. Renders the shell immediately (`Deferred` fields display as `""` via `Display`).
+2. Streams `<script>window.__pilcrow_deferred('count', 42)</script>` as each future resolves.
+3. silcrow.js applies the patch via its normal `:text`/`:value` binding system.
+
+`Deferred::ready(value)` creates an already-resolved value (no streaming overhead).
 
 ## Response Builders (from `pilcrow_web::*`)
 
