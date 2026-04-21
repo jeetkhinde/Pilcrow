@@ -7,6 +7,47 @@ pub struct PilcrowBuildConfig {
     /// URL-accessible fragment groups (Option A: flat array, dir name → URL prefix).
     #[serde(default)]
     pub fragments: Vec<FragmentEntry>,
+
+    /// Environment variable declarations — generates typed `env::Public` / `env::Private` structs.
+    #[serde(default)]
+    pub env: EnvConfig,
+}
+
+/// Typed environment variable declarations.
+///
+/// ```toml
+/// [env]
+/// public  = ["PUBLIC_API_URL", "PUBLIC_APP_NAME"]
+/// private = ["DATABASE_URL", "SECRET_KEY"]
+/// ```
+///
+/// The build pipeline generates `pub mod env` with `Public` and `Private` structs, each
+/// having typed `String` fields and a `load() -> Result<Self, std::env::VarError>` constructor.
+/// Public var field names strip the `PUBLIC_` prefix; private keep the full snake-cased name.
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct EnvConfig {
+    /// Vars intended for client-visible use.  `PUBLIC_API_URL` → field `api_url`.
+    #[serde(default)]
+    pub public: Vec<String>,
+    /// Server-only vars.  `DATABASE_URL` → field `database_url`.
+    #[serde(default)]
+    pub private: Vec<String>,
+}
+
+impl EnvConfig {
+    /// Convert an env var name to a Rust field name.
+    /// Public vars have their `PUBLIC_` prefix stripped before conversion.
+    pub fn field_name(var: &str, is_public: bool) -> String {
+        let raw = if is_public {
+            var.strip_prefix("PUBLIC_").unwrap_or(var)
+        } else {
+            var
+        };
+        raw.to_ascii_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect()
+    }
 }
 
 /// One fragment directory group.

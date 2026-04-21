@@ -43,17 +43,19 @@ pub use pilcrow_macros::handler;
 pub use runtime::start;
 
 // ── Deferred streaming ───────────────────────────────────────
-pub use runtime::{Deferred, DeferredPatch, deferred_response};
+pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
 
 // ── Doc-hidden re-exports for generated code ────────────────
 #[doc(hidden)]
 pub use axum;
 #[doc(hidden)]
+pub use tracing;
+#[doc(hidden)]
 pub use pilcrow_client;
 #[doc(hidden)]
 pub use runtime::csrf_middleware as __csrf_middleware;
 #[doc(hidden)]
-pub use runtime::{__deferred_patch_stream, __serialize_deferred};
+pub use runtime::{__deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred};
 
 /// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
 ///
@@ -78,6 +80,12 @@ macro_rules! pilcrow_app {
         mod __pilcrow_app {
             include!(concat!(env!("OUT_DIR"), "/generated_app.rs"));
         }
+
+        // Typed route helpers: `routes::products_id("42")` → `"/products/42"`
+        include!(concat!(env!("OUT_DIR"), "/generated_typed_routes.rs"));
+
+        // Typed env structs: `env::Private::load()?` → `env::Private { database_url: .. }`
+        include!(concat!(env!("OUT_DIR"), "/generated_env.rs"));
 
         fn pilcrow_router() -> ::pilcrow_web::axum::Router {
             __pilcrow_app::build_router()

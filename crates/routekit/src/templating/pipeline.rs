@@ -50,6 +50,8 @@ pub struct PreprocessedHtmlFile {
     /// Ordered layout chain for this page: [outermost_auto_layout, ..., explicit_layout].
     /// Only meaningful for `Page` kind; empty for `Ui`, `Layout`, and `AutoLayout`.
     pub layout_chain: Vec<String>,
+    /// URL prefix for fragment directory entries (e.g. `"widgets"`). `None` for non-fragments.
+    pub fragment_url_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +163,7 @@ pub fn compile_to_out_dir_with_config(
             }
             fs::write(&module.template_output_path, final_template.as_bytes())?;
 
+            let is_fragment = module.kind == HtmlSourceKind::Fragment;
             files.push(PreprocessedHtmlFile {
                 kind: module.kind,
                 source_path: module.source_path.clone(),
@@ -170,6 +173,7 @@ pub fn compile_to_out_dir_with_config(
                 module_name: module.module_name.clone(),
                 render_symbol: module.render_symbol.clone(),
                 layout_chain: vec![],
+                fragment_url_prefix: if is_fragment { Some(url_prefix.clone()) } else { None },
             });
         }
 
@@ -193,6 +197,7 @@ pub fn compile_to_out_dir_with_config(
             rust_frontmatter: file.rust_frontmatter.clone(),
             template_source: file.transpiled_template.clone(),
             layout_chain: file.layout_chain.clone(),
+            fragment_url_prefix: file.fragment_url_prefix.clone(),
         })
         .collect::<Vec<_>>();
     let templates_output =
@@ -313,11 +318,22 @@ pub fn compile_to_out_dir_with_config(
         &templates_output.action_map,
         &templates_output.page_options,
         &templates_output.deferred_fields_map,
+        &templates_output.deferred_html_fields_map,
         has_middleware,
         src_root,
         out_dir,
     )?;
     let generated_app_file = out_dir.join("generated_app.rs");
+
+    // Write typed route helpers: `pub mod routes { pub fn index() -> &'static str { "/" } ... }`
+    let typed_routes_src =
+        crate::templating::routes_codegen::render_generated_typed_routes_module(&all_page_routes);
+    fs::write(out_dir.join("generated_typed_routes.rs"), typed_routes_src.as_bytes())?;
+
+    // Write env struct helpers: `pub mod env { pub struct Public { ... } pub struct Private { ... } }`
+    let env_src =
+        crate::templating::env_codegen::render_generated_env_module(&build_config.env);
+    fs::write(out_dir.join("generated_env.rs"), env_src.as_bytes())?;
 
     files.sort_by(|a, b| {
         a.template_output_path
@@ -512,6 +528,7 @@ fn preprocess_discovered_sources(
             module_name: module.module_name.clone(),
             render_symbol: module.render_symbol.clone(),
             layout_chain: module.layout_chain.clone(),
+            fragment_url_prefix: None,
         });
     }
 
@@ -2878,6 +2895,7 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
                 FragmentEntry { dir: "widgets".to_string(), url: None },
                 FragmentEntry { dir: "partials".to_string(), url: None },
             ],
+            ..Default::default()
         };
 
         let result = compile_to_out_dir_with_config(&src, &out, &config)
@@ -2925,6 +2943,7 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
             fragments: vec![
                 FragmentEntry { dir: "ui-blocks".to_string(), url: Some("blocks".to_string()) },
             ],
+            ..Default::default()
         };
 
         let result = compile_to_out_dir_with_config(&src, &out, &config)

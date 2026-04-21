@@ -39,6 +39,10 @@ pub use axum;
 #[doc(hidden)]
 pub use response::response::html;
 
-pub use deferred::{Deferred, DeferredPatch, __deferred_patch_stream, __serialize_deferred, deferred_response};
+pub use deferred::{
+    Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch,
+    __deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred,
+    deferred_response, deferred_response_combined,
+};
 // ── Internal helpers (used by ws.rs, macros, generated code) ─
 pub(crate) use sse::serialize_or_null;

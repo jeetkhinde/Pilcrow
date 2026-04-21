@@ -125,6 +125,8 @@ pub struct TemplateCodegenInput {
     /// Ordered layout chain for this page: [outermost_auto_layout, ..., explicit_layout].
     /// Each entry is a layout module name.  Only meaningful for `page_*` modules.
     pub layout_chain: Vec<String>,
+    /// URL prefix for fragment directory entries (e.g. `"widgets"`). `None` for non-fragments.
+    pub fragment_url_prefix: Option<String>,
 }
 
 /// Metadata for one generated template module.
@@ -188,8 +190,10 @@ pub struct GeneratedTemplatesModule {
     pub action_map: HashMap<String, Vec<ActionFn>>,
     /// Map from page module_name to its per-page options (`TRAILING_SLASH`, etc.).
     pub page_options: HashMap<String, PageOptions>,
-    /// Map from page module_name to its `Deferred<T>` field names.
+    /// Map from page module_name to its `Deferred<T>` (JSON patch) field names.
     pub deferred_fields_map: HashMap<String, Vec<String>>,
+    /// Map from page module_name to its `DeferredHtml` (HTML slot) field names.
+    pub deferred_html_fields_map: HashMap<String, Vec<String>>,
 }
 
 /// Build a page-route manifest from `src/pages/**/*.html`.
@@ -405,6 +409,10 @@ pub fn render_generated_templates_module(
     let mut action_map: HashMap<String, Vec<ActionFn>> = HashMap::new();
     let mut page_options_map: HashMap<String, PageOptions> = HashMap::new();
     let mut deferred_fields_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut deferred_html_fields_map: HashMap<String, Vec<String>> = HashMap::new();
+    // fragment_url_prefix → [(leaf_name, module_name)] — built to emit `pub mod fragments`.
+    let mut fragment_groups: std::collections::BTreeMap<String, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
 
     for entry in &ordered {
         let is_layout = entry.module_name.starts_with("layout_");
@@ -478,6 +486,10 @@ pub fn render_generated_templates_module(
             deferred_fields_map.insert(entry.module_name.clone(), instrumented.deferred_fields.clone());
         }
 
+        if !instrumented.deferred_html_fields.is_empty() {
+            deferred_html_fields_map.insert(entry.module_name.clone(), instrumented.deferred_html_fields.clone());
+        }
+
         let module_ident = syn::Ident::new(&entry.module_name, Span::call_site());
         let render_ident = syn::Ident::new(&entry.render_symbol, Span::call_site());
 
@@ -497,6 +509,26 @@ pub fn render_generated_templates_module(
         );
         out.push_str("        askama::Template::render(&props)\n");
         out.push_str("    }\n");
+
+        // Fragment modules get a `pub fn render(props: Props)` alias so callers can write
+        // `fragment_mod::render(props)` instead of the full render_frag_*() name.
+        if entry.fragment_url_prefix.is_some() {
+            let _ = writeln!(
+                out,
+                "    pub fn render(props: {render_type}) -> Result<String, askama::Error> {{"
+            );
+            let _ = writeln!(out, "        {render_ident}(props)");
+            out.push_str("    }\n");
+
+            // Record for `pub mod fragments` generation below.
+            let prefix = entry.fragment_url_prefix.as_deref().unwrap_or("");
+            let leaf = fragment_leaf_name(&entry.module_name, prefix);
+            fragment_groups
+                .entry(prefix.to_string())
+                .or_default()
+                .push((leaf, entry.module_name.clone()));
+        }
+
         out.push_str("}\n\n");
 
         metadata.push(GeneratedTemplateEntry {
@@ -521,6 +553,22 @@ pub fn render_generated_templates_module(
     out.push_str("#[allow(dead_code)]\n");
     out.push_str("pub fn generated_templates() -> &'static [GeneratedTemplateEntry] {\n");
     out.push_str("    GENERATED_TEMPLATES\n");
+    out.push_str("}\n\n");
+
+    // ── pub mod fragments ────────────────────────────────────────────────────
+    // Always emit the module (even empty) so `use super::fragments;` always compiles.
+    out.push_str("#[allow(dead_code, unused_imports)]\n");
+    out.push_str("pub mod fragments {\n");
+    for (prefix, mut entries) in fragment_groups {
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let prefix_mod = sanitize_module_segment(&prefix);
+        let _ = writeln!(out, "    #[allow(unused_imports)]");
+        let _ = writeln!(out, "    pub mod {prefix_mod} {{");
+        for (leaf, module_name) in &entries {
+            let _ = writeln!(out, "        pub use super::super::{module_name} as {leaf};");
+        }
+        out.push_str("    }\n");
+    }
     out.push_str("}\n");
 
     Ok(GeneratedTemplatesModule {
@@ -531,6 +579,7 @@ pub fn render_generated_templates_module(
         action_map,
         page_options: page_options_map,
         deferred_fields_map,
+        deferred_html_fields_map,
     })
 }
 
@@ -543,6 +592,7 @@ pub struct WrittenTemplatesOutput {
     pub action_map: HashMap<String, Vec<ActionFn>>,
     pub page_options: HashMap<String, PageOptions>,
     pub deferred_fields_map: HashMap<String, Vec<String>>,
+    pub deferred_html_fields_map: HashMap<String, Vec<String>>,
 }
 
 /// Generate and write the compiled templates module to `out_file`.
@@ -565,6 +615,7 @@ pub fn write_generated_templates_module(
         action_map: generated.action_map,
         page_options: generated.page_options,
         deferred_fields_map: generated.deferred_fields_map,
+        deferred_html_fields_map: generated.deferred_html_fields_map,
     })
 }
 
@@ -578,8 +629,10 @@ struct InstrumentedFrontmatter {
     actions: Vec<ActionFn>,
     /// Per-page options parsed from `pub const` declarations and stripped from output.
     page_options: PageOptions,
-    /// Names of `Deferred<T>` fields in `Props`, in declaration order.
+    /// Names of `Deferred<T>` (JSON patch) fields in `Props`, in declaration order.
     deferred_fields: Vec<String>,
+    /// Names of `DeferredHtml` (HTML slot) fields in `Props`, in declaration order.
+    deferred_html_fields: Vec<String>,
 }
 
 /// `extra_fields` contains the named fields from a layout's Props struct when the layout
@@ -823,13 +876,28 @@ fn instrument_frontmatter(
     // Extract the page's own named fields before any modification.
     let own_syn_fields = extract_named_fields(props_struct);
 
-    // Detect `Deferred<T>` fields so the codegen can stream their resolved values.
+    // Detect `Deferred<T>` (JSON patch) and `DeferredHtml` (HTML slot) fields.
     let deferred_fields: Vec<String> = own_syn_fields
         .iter()
         .filter_map(|f| {
             if let Some(ident) = &f.ident {
                 if type_last_ident(&f.ty)
                     .map(|id| id == "Deferred")
+                    .unwrap_or(false)
+                {
+                    return Some(ident.to_string());
+                }
+            }
+            None
+        })
+        .collect();
+
+    let deferred_html_fields: Vec<String> = own_syn_fields
+        .iter()
+        .filter_map(|f| {
+            if let Some(ident) = &f.ident {
+                if type_last_ident(&f.ty)
+                    .map(|id| id == "DeferredHtml")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
@@ -885,6 +953,12 @@ fn instrument_frontmatter(
     out.push_str("use pilcrow_web::ActionResult;\n");
     out.push_str("#[allow(unused_imports)]\n");
     out.push_str("use pilcrow_web::redirect;\n");
+    // Make `fragments::prefix::name::render(props)` available without an explicit import.
+    // Not injected for ui/ components since they can't call fragments directly.
+    if !in_ui {
+        out.push_str("#[allow(unused_imports)]\n");
+        out.push_str("use super::fragments;\n");
+    }
     for item in file.items {
         out.push_str(&item.into_token_stream().to_string());
         out.push('\n');
@@ -896,6 +970,7 @@ fn instrument_frontmatter(
         actions,
         page_options,
         deferred_fields,
+        deferred_html_fields,
     })
 }
 
@@ -1124,6 +1199,35 @@ fn rust_string(value: &str) -> String {
     format!("{value:?}")
 }
 
+/// Sanitize an arbitrary string into a valid Rust module-name segment (lowercase alphanumeric + `_`).
+fn sanitize_module_segment(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_underscore = false;
+    for ch in s.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' };
+        if mapped == '_' {
+            if !prev_underscore { out.push('_'); }
+            prev_underscore = true;
+        } else {
+            out.push(mapped);
+            prev_underscore = false;
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+/// Extract the leaf name for a fragment module by stripping the `frag_{sanitized_prefix}_` prefix.
+///
+/// `frag_widgets_product_list` with prefix `widgets` → `product_list`
+fn fragment_leaf_name(module_name: &str, url_prefix: &str) -> String {
+    let sanitized = sanitize_module_segment(url_prefix);
+    let strip = format!("frag_{sanitized}_");
+    module_name
+        .strip_prefix(&strip)
+        .unwrap_or(module_name)
+        .to_string()
+}
+
 // ── App module codegen (auto-wired router) ──────────────────
 
 /// Render the API `mod` tree file (`generated_api_mods.rs`).
@@ -1280,6 +1384,7 @@ pub fn render_generated_app_module(
     action_map: &HashMap<String, Vec<ActionFn>>,
     page_options_map: &HashMap<String, PageOptions>,
     deferred_fields_map: &HashMap<String, Vec<String>>,
+    deferred_html_fields_map: &HashMap<String, Vec<String>>,
     has_middleware: bool,
 ) -> String {
     let mut out = String::new();
@@ -1308,6 +1413,10 @@ pub fn render_generated_app_module(
         let mod_name = &entry.symbol;
         let render_fn = &entry.render_symbol;
         let deferred_fields: &[String] = deferred_fields_map
+            .get(&entry.symbol)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let deferred_html_fields: &[String] = deferred_html_fields_map
             .get(&entry.symbol)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
@@ -1350,10 +1459,21 @@ pub fn render_generated_app_module(
             (false, false) => "",
         };
 
+        let pattern_str = entry.pattern.as_str();
         let _ = writeln!(
             out,
-            "        .route({pattern}, ::pilcrow_web::axum::routing::get(|{closure_args}| async move {{"
+            "        .route({pattern}, ::pilcrow_web::axum::routing::get(|{closure_args}| {{"
         );
+        let _ = writeln!(
+            out,
+            "            use ::pilcrow_web::tracing::Instrument as _;"
+        );
+        let _ = writeln!(
+            out,
+            "            let __req_span = ::pilcrow_web::tracing::info_span!(\"GET\", http.route = {});",
+            rust_string(pattern_str)
+        );
+        out.push_str("            async move {\n");
 
         // ── Param matcher guards ────────────────────────────────────────────────
         if has_param_matchers {
@@ -1530,34 +1650,70 @@ pub fn render_generated_app_module(
                 let _ = writeln!(out, "            let props = page_data;");
             }
 
-            if !deferred_fields.is_empty() && !any_layout_load {
-                // ── Deferred streaming response ──────────────────────────────────
-                // Extract futures from page_data before rendering the shell.
+            let has_any_deferred = !deferred_fields.is_empty() || !deferred_html_fields.is_empty();
+            if has_any_deferred && !any_layout_load {
+                // ── Deferred streaming response ───────────────────────────────────
+                // Step 1: extract futures and loading HTML from DeferredHtml fields.
+                for field in deferred_html_fields {
+                    let _ = writeln!(out, "            let (__deferred_html_{field}_fut, __deferred_html_{field}_loading) = page_data.{field}.__into_parts();");
+                }
+                // Step 2: extract Deferred<T> futures.
                 for field in deferred_fields {
                     let _ = writeln!(out, "            let __deferred_{field} = page_data.{field};");
                 }
-                // Replace deferred fields with empty-string placeholders for the shell.
+                // Step 3: build shell props — replace deferred fields with placeholders.
                 let _ = writeln!(out, "            let __shell_props = __pilcrow_gen::{mod_name}::Props {{");
                 for field in deferred_fields {
                     let _ = writeln!(out, "                {field}: ::pilcrow_web::Deferred::ready(Default::default()),");
                 }
+                for field in deferred_html_fields {
+                    let _ = writeln!(out, "                {field}: ::pilcrow_web::DeferredHtml::__slot({name}, __deferred_html_{field}_loading.clone()),", name = rust_string(field));
+                }
                 out.push_str("                ..page_data\n");
                 out.push_str("            };\n");
+                // Step 4: render shell.
                 let _ = writeln!(
                     out,
                     "            let __shell_html = __pilcrow_gen::{mod_name}::{render_fn}(__shell_props).expect(\"template render failed\");"
                 );
+                // Step 5: replace text markers from DeferredHtml Display with real slot spans.
+                for field in deferred_html_fields {
+                    let marker = rust_string(&format!("__pilcrow_html_slot_{field}__"));
+                    let _ = writeln!(out, "            let mut __slot_span_{field} = String::new();");
+                    let _ = writeln!(out, "            __slot_span_{field}.push_str(\"<span data-pilcrow-slot=\\\"{field}\\\">\");");
+                    let _ = writeln!(out, "            __slot_span_{field}.push_str(&__deferred_html_{field}_loading);");
+                    let _ = writeln!(out, "            __slot_span_{field}.push_str(\"</span>\");");
+                    let _ = writeln!(out, "            let __shell_html = __shell_html.replace({marker}, &__slot_span_{field});");
+                }
                 out.push_str(&emit_loading_append(loading_mod));
-                out.push_str("            let __patches = ::pilcrow_web::__deferred_patch_stream(vec![\n");
+                // Step 6: build patch streams.
+                out.push_str("            let __json_patches = ::pilcrow_web::__deferred_patch_stream(vec![\n");
                 for field in deferred_fields {
                     let field_lit = rust_string(field);
                     let _ = writeln!(out, "                ({field_lit}, Box::pin(async move {{ ::pilcrow_web::__serialize_deferred(__deferred_{field}.resolve().await) }})),");
                 }
                 out.push_str("            ]);\n");
-                // Inject the deferred bootstrap shim into the shell HTML so that
-                // the streamed <script> patches can call Silcrow.patch without
-                // requiring any modification to silcrow.js itself.
-                out.push_str("            const __DEFERRED_SHIM: &str = \"<script>window.__pilcrow_deferred=function(f,v){var d={};d[f]=v;Silcrow.patch(d,document.body)}</script>\";\n");
+                out.push_str("            let __html_patches = ::pilcrow_web::__deferred_html_patch_stream(vec![\n");
+                for field in deferred_html_fields {
+                    let field_lit = rust_string(field);
+                    let _ = writeln!(out, "                ({field_lit}, Box::pin(async move {{ __deferred_html_{field}_fut.await }})),");
+                }
+                out.push_str("            ]);\n");
+                // Step 7: inject shim(s) before </head>.
+                let json_shim = if !deferred_fields.is_empty() {
+                    "window.__pilcrow_deferred=function(f,v){var d={};d[f]=v;Silcrow.patch(d,document.body)}"
+                } else { "" };
+                let html_shim = if !deferred_html_fields.is_empty() {
+                    "window.__pd=function(s,h){var e=document.querySelector('[data-pilcrow-slot=\"'+s+'\"]');if(e){var t=document.createElement('template');t.innerHTML=h;e.replaceWith(t.content.cloneNode(true))}}"
+                } else { "" };
+                let shim_body = match (json_shim, html_shim) {
+                    ("", h) => h.to_string(),
+                    (j, "") => j.to_string(),
+                    (j, h) => format!("{j};{h}"),
+                };
+                let shim_tag = format!("<script>{shim_body}</script>");
+                let shim_lit = rust_string(&shim_tag);
+                let _ = writeln!(out, "            const __DEFERRED_SHIM: &str = {shim_lit};");
                 out.push_str("            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n");
                 out.push_str("                let mut __s = String::with_capacity(__shell_html.len() + __DEFERRED_SHIM.len());\n");
                 out.push_str("                __s.push_str(&__shell_html[..__pos]);\n");
@@ -1567,7 +1723,7 @@ pub fn render_generated_app_module(
                 out.push_str("            } else {\n");
                 out.push_str("                format!(\"{}{}\", __DEFERRED_SHIM, __shell_html)\n");
                 out.push_str("            };\n");
-                out.push_str("            return ::pilcrow_web::deferred_response(__shell_html, __patches);\n");
+                out.push_str("            return ::pilcrow_web::deferred_response_combined(__shell_html, __json_patches, __html_patches);\n");
             } else {
                 let _ = writeln!(
                     out,
@@ -1586,7 +1742,7 @@ pub fn render_generated_app_module(
             }
         }
 
-        out.push_str("        }))\n");
+        out.push_str("            }.instrument(__req_span)\n        }))\n");
 
         // ── Action POST route (same URL, dispatched by `?/<name>`) ──────────────
         if let Some(actions) = page_actions {
@@ -1835,6 +1991,7 @@ pub fn write_generated_app_module(
     action_map: &HashMap<String, Vec<ActionFn>>,
     page_options_map: &HashMap<String, PageOptions>,
     deferred_fields_map: &HashMap<String, Vec<String>>,
+    deferred_html_fields_map: &HashMap<String, Vec<String>>,
     has_middleware: bool,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
@@ -1853,6 +2010,7 @@ pub fn write_generated_app_module(
         action_map,
         page_options_map,
         deferred_fields_map,
+        deferred_html_fields_map,
         has_middleware,
     );
     fs::write(out_dir.join("generated_app.rs"), app_source)?;
@@ -1948,6 +2106,7 @@ mod tests {
             rust_frontmatter: "pub struct Props { pub title: String }".to_string(),
             template_source: "<h1>{{ title }}</h1>".to_string(),
             layout_chain: vec![],
+            fragment_url_prefix: None,
         }])
         .expect("template module should generate");
 
@@ -1969,6 +2128,7 @@ mod tests {
             rust_frontmatter: "pub fn helper() {}".to_string(),
             template_source: "<h1>Home</h1>".to_string(),
             layout_chain: vec![],
+            fragment_url_prefix: None,
         }])
         .expect("synthesized Props should compile");
 
@@ -1988,6 +2148,7 @@ mod tests {
             rust_frontmatter: "pub struct Props {} pub struct Props { pub id: i64 }".to_string(),
             template_source: "<h1>Home</h1>".to_string(),
             layout_chain: vec![],
+            fragment_url_prefix: None,
         }])
         .expect_err("duplicate props should fail");
 
