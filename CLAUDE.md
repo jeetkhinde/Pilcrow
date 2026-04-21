@@ -224,6 +224,37 @@ The framework:
 
 `Deferred::ready(value)` creates an already-resolved value (no streaming overhead).
 
+**`DeferredHtml`** — streams a complete HTML fragment into a named slot after the shell renders:
+
+```rust
+pub struct Props {
+    pub title: String,
+    pub product_list: DeferredHtml,   // HTML fragment, resolved after shell
+}
+
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props {
+        title: "Shop".to_string(),
+        product_list: DeferredHtml::spawn("product_list", "<p>Loading…</p>", async {
+            // expensive DB call — returns the full HTML string
+            fragments::widgets::product_list::render(
+                fragments::widgets::product_list::Props { items: db_fetch().await }
+            ).unwrap_or_default()
+        }),
+    })
+}
+```
+
+The framework:
+1. Renders the shell immediately. `DeferredHtml` fields display as `__pilcrow_html_slot_{name}__` which codegen replaces with `<span data-pilcrow-slot="{name}">{loading_html}</span>`.
+2. Injects a `window.__pd` shim in `<head>` once.
+3. Streams `<script>window.__pd('product_list', '<ul>…</ul>')</script>` chunks as futures resolve.
+4. The shim replaces the slot `<span>` with the parsed HTML fragment.
+
+`DeferredHtml` and `Deferred<T>` patches are streamed concurrently — faster-resolving fields arrive first regardless of type.
+
+Fragment modules are auto-available via `fragments::{url_prefix}::{leaf_name}` with no import required in code-behind files.
+
 ## Response Builders (from `pilcrow_web::*`)
 
 | Builder | Use |
