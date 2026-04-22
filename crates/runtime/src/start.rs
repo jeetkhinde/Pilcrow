@@ -13,8 +13,8 @@ pub async fn start(app: Router) {
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .expect("bind");
+        .unwrap_or_else(|e| panic!("Failed to bind to {bind_addr}: {e}"));
 
-    println!("listening on http://{bind_addr}");
+    tracing::info!("listening on http://{bind_addr}");
     axum::serve(listener, app).await.expect("serve");
 }

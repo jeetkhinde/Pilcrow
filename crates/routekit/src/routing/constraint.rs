@@ -20,8 +20,6 @@ pub enum ParameterConstraint {
     Slug,
     /// UUID format: 550e8400-e29b-41d4-a716-446655440000
     Uuid,
-    /// Custom regex pattern
-    Regex(String),
     /// User-defined external matcher: calls `src/params/<name>::match_param(value)` at runtime.
     /// Validated in the generated handler, not during route matching.
     External(String),
@@ -67,12 +65,7 @@ impl ParameterConstraint {
                         .iter()
                         .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
             }
-            Self::Regex(pattern) => {
-                // For zero-dependency, use simple pattern matching
-                // In real use, would use regex crate
-                // For now, just check if pattern is in value
-                value.contains(pattern)
-            }
+
             // External matchers are validated in the generated handler, not here.
             Self::External(_) => true,
         }
@@ -99,7 +92,7 @@ impl FromStr for ParameterConstraint {
     /// assert_eq!(ParameterConstraint::from_str("uuid").unwrap(), ParameterConstraint::Uuid);
     /// ```
     ///
-    /// Supported values: "int", "uint", "alpha", "alphanum", "slug", "uuid", "regex:pattern"
+    /// Supported values: "int", "uint", "alpha", "alphanum", "slug", "uuid"
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "int" | "integer" => Self::Int,
@@ -108,9 +101,7 @@ impl FromStr for ParameterConstraint {
             "alphanum" | "alphanumeric" => Self::AlphaNum,
             "slug" => Self::Slug,
             "uuid" => Self::Uuid,
-            _ if s.starts_with("regex:") => {
-                Self::Regex(s.strip_prefix("regex:").unwrap_or("").to_string())
-            }
+
             _ => Self::Any,
         })
     }

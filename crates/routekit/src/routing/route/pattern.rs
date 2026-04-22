@@ -157,7 +157,10 @@ pub fn classify_segment(segment: &str) -> PatternSegmentType {
 pub fn parse_param_with_constraint(param: &str) -> (String, Option<ParameterConstraint>) {
     // `=` introduces an external matcher: [id=integer] → External("integer")
     if let Some((name, matcher)) = param.split_once('=') {
-        return (name.to_string(), Some(ParameterConstraint::External(matcher.to_string())));
+        return (
+            name.to_string(),
+            Some(ParameterConstraint::External(matcher.to_string())),
+        );
     }
     param
         .split_once(':')
@@ -271,7 +274,10 @@ mod tests {
     fn test_parse_param_external_matcher() {
         let (name, constraint) = parse_param_with_constraint("id=integer");
         assert_eq!(name, "id");
-        assert_eq!(constraint, Some(ParameterConstraint::External("integer".to_string())));
+        assert_eq!(
+            constraint,
+            Some(ParameterConstraint::External("integer".to_string()))
+        );
     }
 
     #[test]
@@ -279,7 +285,10 @@ mod tests {
         let seg = classify_segment("[id=integer]");
         assert_eq!(
             seg,
-            PatternSegmentType::Required("id".to_string(), Some(ParameterConstraint::External("integer".to_string())))
+            PatternSegmentType::Required(
+                "id".to_string(),
+                Some(ParameterConstraint::External("integer".to_string()))
+            )
         );
     }
 }

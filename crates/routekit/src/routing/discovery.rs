@@ -425,16 +425,23 @@ mod tests {
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("pages/_layout.html"), "<slot />");
         write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
-        write_file(&src.join("pages/products/_layout.html"), "<div><slot /></div>");
+        write_file(
+            &src.join("pages/products/_layout.html"),
+            "<div><slot /></div>",
+        );
 
         let discovered = discover_html_files(&src).expect("expected discovery to succeed");
 
         // _layout.html files are auto_layouts, not pages
         assert_eq!(discovered.pages.len(), 2, "only non-layout pages");
         assert_eq!(discovered.auto_layouts.len(), 2, "two auto-layouts found");
-        assert!(discovered.pages.iter().all(|p| {
-            p.file_name().and_then(|n| n.to_str()) != Some("_layout.html")
-        }), "_layout.html must not appear in pages");
+        assert!(
+            discovered
+                .pages
+                .iter()
+                .all(|p| { p.file_name().and_then(|n| n.to_str()) != Some("_layout.html") }),
+            "_layout.html must not appear in pages"
+        );
 
         cleanup(&root);
     }
@@ -448,13 +455,20 @@ mod tests {
         write_file(&src.join("pages/_error.html"), "<h1>Error</h1>");
         write_file(&src.join("pages/_not_found.html"), "<h1>404</h1>");
         write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
-        write_file(&src.join("pages/products/_error.html"), "<h1>Products Error</h1>");
+        write_file(
+            &src.join("pages/products/_error.html"),
+            "<h1>Products Error</h1>",
+        );
 
         let discovered = discover_html_files(&src).expect("discovery should succeed");
 
         assert_eq!(discovered.pages.len(), 2, "only routable pages");
         assert_eq!(discovered.error_pages.len(), 2, "two _error.html files");
-        assert_eq!(discovered.not_found_pages.len(), 1, "one _not_found.html file");
+        assert_eq!(
+            discovered.not_found_pages.len(),
+            1,
+            "one _not_found.html file"
+        );
         assert!(
             discovered.pages.iter().all(|p| {
                 let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -474,7 +488,10 @@ mod tests {
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("pages/_layout.html"), "<slot />");
         write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
-        write_file(&src.join("pages/products/_layout.html"), "<div><slot /></div>");
+        write_file(
+            &src.join("pages/products/_layout.html"),
+            "<div><slot /></div>",
+        );
 
         let routes = build_page_routes(&src).expect("routes should build");
         let patterns: Vec<_> = routes.iter().map(|r| r.pattern.as_str()).collect();

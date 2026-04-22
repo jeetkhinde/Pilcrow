@@ -29,10 +29,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pilcrow-web = "*"
+pilcrow-web = { git = "https://github.com/jeetkhinde/Pilcrow" }
 
 [build-dependencies]
-pilcrow-routekit = "*"
+pilcrow-routekit = { git = "https://github.com/jeetkhinde/Pilcrow" }
 "#,
     )?;
 
@@ -84,7 +84,7 @@ pub struct Props {}
 </head>
 <body>
     <slot />
-    <script src="/silcrow.js" defer></script>
+    <script src="{{ pilcrow_web::assets::assets::silcrow_js_path() }}" defer></script>
 </body>
 </html>
 "#,

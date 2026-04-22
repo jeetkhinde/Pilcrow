@@ -19,7 +19,10 @@ pub fn render_generated_env_module(config: &EnvConfig) -> String {
     out.push_str("            Ok(Self {\n");
     for var in &config.public {
         let field = EnvConfig::field_name(var, true);
-        out.push_str(&format!("                {field}: ::std::env::var({})?,\n", rust_str(var)));
+        out.push_str(&format!(
+            "                {field}: ::std::env::var({})?,\n",
+            rust_str(var)
+        ));
     }
     out.push_str("            })\n");
     out.push_str("        }\n");
@@ -37,7 +40,10 @@ pub fn render_generated_env_module(config: &EnvConfig) -> String {
     out.push_str("            Ok(Self {\n");
     for var in &config.private {
         let field = EnvConfig::field_name(var, false);
-        out.push_str(&format!("                {field}: ::std::env::var({})?,\n", rust_str(var)));
+        out.push_str(&format!(
+            "                {field}: ::std::env::var({})?,\n",
+            rust_str(var)
+        ));
     }
     out.push_str("            })\n");
     out.push_str("        }\n");

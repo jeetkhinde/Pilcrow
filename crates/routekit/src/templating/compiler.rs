@@ -94,9 +94,9 @@ pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleP
 /// Maps silcrow verb attributes to their native HTTP method strings.
 /// HTML forms only support GET/POST natively; all mutation verbs map to POST.
 const VERB_ATTRS: &[(&str, &str)] = &[
-    ("s-post",   "post"),
-    ("s-put",    "post"),
-    ("s-patch",  "post"),
+    ("s-post", "post"),
+    ("s-put", "post"),
+    ("s-patch", "post"),
     ("s-delete", "post"),
 ];
 
@@ -157,14 +157,24 @@ fn try_inject_form_tag(input: &str) -> Option<(String, usize)> {
 
         if let Some(q) = quote {
             raw_attrs.push(c);
-            if c == q { quote = None; }
+            if c == q {
+                quote = None;
+            }
             idx += c_len;
             continue;
         }
 
         match c {
-            '"' | '\'' => { quote = Some(c); raw_attrs.push(c); idx += c_len; }
-            '{' => { brace_depth += 1; raw_attrs.push(c); idx += c_len; }
+            '"' | '\'' => {
+                quote = Some(c);
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '{' => {
+                brace_depth += 1;
+                raw_attrs.push(c);
+                idx += c_len;
+            }
             '}' => {
                 brace_depth = brace_depth.saturating_sub(1);
                 raw_attrs.push(c);
@@ -200,7 +210,10 @@ fn try_inject_form_tag(input: &str) -> Option<(String, usize)> {
                 let transformed = format!("<form{raw_attrs}{inject}>");
                 return Some((transformed, tag_end));
             }
-            _ => { raw_attrs.push(c); idx += c_len; }
+            _ => {
+                raw_attrs.push(c);
+                idx += c_len;
+            }
         }
     }
 
@@ -213,7 +226,9 @@ fn html_attr_value(attrs: &str, name: &str) -> Option<String> {
     let mut i = 0;
     while i < attrs.len() {
         i = skip_ws(attrs, i);
-        if i >= attrs.len() { break; }
+        if i >= attrs.len() {
+            break;
+        }
 
         let (attr_name, next) = scan_html_attr_name(attrs, i);
         i = skip_ws(attrs, next);
@@ -231,7 +246,9 @@ fn html_attr_value(attrs: &str, name: &str) -> Option<String> {
             }
         } else {
             // Bare attribute (no value)
-            if attr_name == name { return Some(String::new()); }
+            if attr_name == name {
+                return Some(String::new());
+            }
         }
     }
     None
@@ -279,7 +296,16 @@ fn scan_html_attr_val(src: &str, start: usize) -> Option<(String, usize)> {
             let mut idx = start + 1;
             while idx < src.len() {
                 let c = src[idx..].chars().next()?;
-                match c { '{' => depth += 1, '}' => { depth -= 1; if depth == 0 { return Some((src[start + 1..idx].to_string(), idx + 1)); } } _ => {} }
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some((src[start + 1..idx].to_string(), idx + 1));
+                        }
+                    }
+                    _ => {}
+                }
                 idx += c.len_utf8();
             }
             None
@@ -309,12 +335,12 @@ pub fn transpile_component_tags(template: &str) -> String {
             break;
         };
 
-        if ch == '<'
-            && let Some((replacement, consumed)) = parse_component_tag(&template[i..])
-        {
-            output.push_str(&replacement);
-            i += consumed;
-            continue;
+        if ch == '<' {
+            if let Some((replacement, consumed)) = parse_component_tag(&template[i..]) {
+                output.push_str(&replacement);
+                i += consumed;
+                continue;
+            }
         }
 
         output.push(ch);
@@ -842,8 +868,14 @@ pub struct Props {
     fn inject_form_injects_method_and_action_for_s_post() {
         let input = r##"<form s-post="?action=create" s-target="#f">"##;
         let output = inject_form_method_attrs(input);
-        assert!(output.contains(r#"method="post""#), "should inject method: {output}");
-        assert!(output.contains(r#"action="?action=create""#), "should inject action: {output}");
+        assert!(
+            output.contains(r#"method="post""#),
+            "should inject method: {output}"
+        );
+        assert!(
+            output.contains(r#"action="?action=create""#),
+            "should inject action: {output}"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 [package]
 name = "pilcrow-routekit"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["Pilcrow Contributors"]
 license = "MIT"
 description = "File-based routing for Rust web frameworks with support for dynamic segments, catch-all routes, and optional parameters."

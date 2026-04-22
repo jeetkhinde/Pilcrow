@@ -17,7 +17,7 @@ use pilcrow_core::AppError;
 use serde::Serialize;
 
 use crate::response::headers::*;
-use crate::response::response::{ActionResult, BaseResponse, FormErrors, Toast, ToastLevel};
+use crate::response::response::{ActionResult, BaseResponse, FormErrors, ToastLevel};
 
 // ── Locals ────────────────────────────────────────────────────
 
@@ -54,14 +54,14 @@ impl std::fmt::Debug for Locals {
 impl Locals {
     /// Store a value of type `T`. Overwrites any previous value of the same type.
     pub fn set<T: Send + Sync + 'static>(&self, value: T) {
-        self.0.write().unwrap().insert(TypeId::of::<T>(), Box::new(value));
+        self.0.write().unwrap_or_else(|e| e.into_inner()).insert(TypeId::of::<T>(), Box::new(value));
     }
 
     /// Retrieve a clone of the stored value of type `T`, or `None` if not set.
     pub fn get<T: Clone + Send + Sync + 'static>(&self) -> Option<T> {
         self.0
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&TypeId::of::<T>())
             .and_then(|v| v.downcast_ref::<T>())
             .cloned()
@@ -78,7 +78,7 @@ impl Locals {
 
     /// `true` if a value of type `T` has been set.
     pub fn has<T: 'static>(&self) -> bool {
-        self.0.read().unwrap().contains_key(&TypeId::of::<T>())
+        self.0.read().unwrap_or_else(|e| e.into_inner()).contains_key(&TypeId::of::<T>())
     }
 }
 
@@ -109,60 +109,50 @@ impl std::fmt::Debug for Res {
 impl Res {
     /// Set an explicit HTTP status code on the rendered page response.
     pub fn with_status(&self, status: StatusCode) -> &Self {
-        self.0.lock().unwrap().status = Some(status);
+        self.0.lock().unwrap().set_status(status);
         self
     }
 
     /// Append a raw response header.
     pub fn with_header(&self, key: &'static str, value: impl Into<String>) -> &Self {
-        if let Ok(val) = HeaderValue::from_str(&value.into()) {
-            self.0.lock().unwrap().headers.insert(key, val);
-        }
+        self.0.lock().unwrap().set_header(key, value);
         self
     }
 
     /// Add `silcrow-cache: no-cache` so silcrow.js skips the response cache.
     pub fn no_cache(&self) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowCache("no-cache".to_string()));
+        self.0.lock().unwrap().set_no_cache();
         self
     }
 
     /// Add a `Set-Cookie` header to the response.
     pub fn with_cookie(&self, cookie: Cookie<'static>) -> &Self {
-        let mut base = self.0.lock().unwrap();
-        base.cookies = std::mem::take(&mut base.cookies).add(cookie);
+        self.0.lock().unwrap().add_cookie(cookie);
         self
     }
 
     /// Queue a toast notification. The client reads this from the `silcrow_toasts` cookie.
     pub fn with_toast(&self, message: impl Into<String>, level: ToastLevel) -> &Self {
-        self.0.lock().unwrap().toasts.push(Toast { message: message.into(), level });
+        self.0.lock().unwrap().add_toast(message, level);
         self
     }
 
     /// Fire a custom DOM event on the client via `silcrow-trigger`.
     /// Multiple calls accumulate — all named events are sent in a single header.
     pub fn trigger_event(&self, event_name: &str) -> &Self {
-        let mut base = self.0.lock().unwrap();
-        let mut map = base
-            .headers
-            .typed_get::<SilcrowTrigger>()
-            .and_then(|h| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&h.0).ok())
-            .unwrap_or_default();
-        map.insert(event_name.to_string(), serde_json::json!({}));
-        base.headers.typed_insert(SilcrowTrigger(serde_json::Value::Object(map).to_string()));
+        self.0.lock().unwrap().add_trigger_event(event_name);
         self
     }
 
     /// Override the swap target selector via `silcrow-retarget`.
     pub fn retarget(&self, selector: &str) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowRetarget(selector.to_string()));
+        self.0.lock().unwrap().set_retarget(selector);
         self
     }
 
     /// Push a URL to the browser history via `silcrow-push`.
     pub fn push_history(&self, url: &str) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowPush(url.to_string()));
+        self.0.lock().unwrap().set_push_history(url);
         self
     }
 
@@ -170,14 +160,7 @@ impl Res {
     /// Multiple calls accumulate — each `{target, data}` entry is carried in
     /// a single JSON-array header and applied in call order on the client.
     pub fn patch_target(&self, selector: &str, data: &impl Serialize) -> &Self {
-        let mut base = self.0.lock().unwrap();
-        let mut list = base
-            .headers
-            .typed_get::<SilcrowPatch>()
-            .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
-            .unwrap_or_default();
-        list.push(serde_json::json!({ "data": data, "target": selector }));
-        base.headers.typed_insert(SilcrowPatch(serde_json::Value::Array(list).to_string()));
+        self.0.lock().unwrap().add_patch_target(selector, data);
         self
     }
 
@@ -185,32 +168,25 @@ impl Res {
     /// Multiple calls accumulate — all selectors are carried in a single
     /// JSON-array header and invalidated in call order on the client.
     pub fn invalidate_target(&self, selector: &str) -> &Self {
-        let mut base = self.0.lock().unwrap();
-        let mut list = base
-            .headers
-            .typed_get::<SilcrowInvalidate>()
-            .and_then(|h| serde_json::from_str::<Vec<String>>(&h.0).ok())
-            .unwrap_or_default();
-        list.push(selector.to_string());
-        base.headers.typed_insert(SilcrowInvalidate(serde_json::to_string(&list).unwrap_or_default()));
+        self.0.lock().unwrap().add_invalidate_target(selector);
         self
     }
 
     /// Trigger a client-side navigation via `silcrow-navigate`.
     pub fn client_navigate(&self, path: &str) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowNavigate(path.to_string()));
+        self.0.lock().unwrap().set_client_navigate(path);
         self
     }
 
     /// Open an SSE connection on the client via `silcrow-sse`.
     pub fn sse(&self, path: impl AsRef<str>) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowSse(path.as_ref().to_string()));
+        self.0.lock().unwrap().set_sse(path.as_ref());
         self
     }
 
     /// Open a WebSocket connection on the client via `silcrow-ws`.
     pub fn ws(&self, path: impl AsRef<str>) -> &Self {
-        self.0.lock().unwrap().headers.typed_insert(SilcrowWs(path.as_ref().to_string()));
+        self.0.lock().unwrap().set_ws(path.as_ref());
         self
     }
 
@@ -456,57 +432,80 @@ impl Req {
     /// This is `#[doc(hidden)]` — it is not part of the public API.
     #[doc(hidden)]
     pub async fn __from_middleware_parts<S: Send + Sync>(parts: &mut Parts, state: &S) -> Self {
-        let params = Path::<HashMap<String, String>>::from_request_parts(parts, state)
-            .await
-            .map(|p| p.0)
-            .unwrap_or_default();
-
-        let action = extract_action_from_query(parts.uri.query());
-
-        let query = parse_query_multi(parts.uri.query());
-
-        let cookies = CookieJar::from_request_parts(parts, state)
-            .await
-            .unwrap_or_default();
-
-        let headers = parts.headers.clone();
-        let path = parts.uri.path().to_owned();
-        let is_enhanced = parts.headers.typed_get::<SilcrowTarget>().is_some();
-
-        // Insert Locals and Res into extensions so downstream handlers see the same instances.
-        let locals = parts
-            .extensions
-            .get::<Locals>()
-            .cloned()
-            .unwrap_or_else(|| {
-                let l = Locals::default();
-                parts.extensions.insert(l.clone());
-                l
-            });
-
-        let res = parts
-            .extensions
-            .get::<Res>()
-            .cloned()
-            .unwrap_or_else(|| {
-                let r = Res::default();
-                parts.extensions.insert(r.clone());
-                r
-            });
-
+        let common = extract_common_parts(parts, state).await;
         Req {
-            params,
-            query,
+            params: common.params,
+            query: common.query,
             form: FormMap::default(),
-            cookies,
-            headers,
-            path,
-            is_enhanced,
-            locals,
-            res,
-            action,
+            cookies: common.cookies,
+            headers: common.headers,
+            path: common.path,
+            is_enhanced: common.is_enhanced,
+            locals: common.locals,
+            res: common.res,
+            action: common.action,
         }
     }
+}
+
+/// Fields shared between full `FromRequest` extraction and the parts-only
+/// middleware extraction. Avoids duplicating ~30 lines across both paths.
+struct CommonParts {
+    params: HashMap<String, String>,
+    query: FormMap,
+    cookies: CookieJar,
+    headers: HeaderMap,
+    path: String,
+    is_enhanced: bool,
+    locals: Locals,
+    res: Res,
+    action: Option<String>,
+}
+
+async fn extract_common_parts<S: Send + Sync>(
+    parts: &mut Parts,
+    state: &S,
+) -> CommonParts {
+    let params = Path::<HashMap<String, String>>::from_request_parts(parts, state)
+        .await
+        .map(|p| p.0)
+        .unwrap_or_default();
+
+    let action = extract_action_from_query(parts.uri.query());
+    let query = parse_query_multi(parts.uri.query());
+
+    let cookies = CookieJar::from_request_parts(parts, state)
+        .await
+        .unwrap_or_default();
+
+    let headers = parts.headers.clone();
+    let path = parts.uri.path().to_owned();
+    let is_enhanced = parts.headers.typed_get::<SilcrowTarget>().is_some();
+
+    // Shared per-request Locals: first extraction creates and inserts;
+    // subsequent ones share the same Arc.
+    let locals = parts
+        .extensions
+        .get::<Locals>()
+        .cloned()
+        .unwrap_or_else(|| {
+            let l = Locals::default();
+            parts.extensions.insert(l.clone());
+            l
+        });
+
+    // Shared per-request Res: same pattern.
+    let res = parts
+        .extensions
+        .get::<Res>()
+        .cloned()
+        .unwrap_or_else(|| {
+            let r = Res::default();
+            parts.extensions.insert(r.clone());
+            r
+        });
+
+    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, action }
 }
 
 #[async_trait]
@@ -516,44 +515,7 @@ impl<S: Send + Sync> FromRequest<S> for Req {
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let (mut parts, body) = req.into_parts();
 
-        let params = Path::<HashMap<String, String>>::from_request_parts(&mut parts, state)
-            .await
-            .map(|p| p.0)
-            .unwrap_or_default();
-
-        let action = extract_action_from_query(parts.uri.query());
-
-        let query = parse_query_multi(parts.uri.query());
-
-        let cookies = CookieJar::from_request_parts(&mut parts, state)
-            .await
-            .unwrap_or_default();
-
-        let headers = parts.headers.clone();
-        let path = parts.uri.path().to_owned();
-        let is_enhanced = parts.headers.typed_get::<SilcrowTarget>().is_some();
-
-        // Shared per-request Locals: first extraction creates and inserts; subsequent ones share.
-        let locals = parts
-            .extensions
-            .get::<Locals>()
-            .cloned()
-            .unwrap_or_else(|| {
-                let l = Locals::default();
-                parts.extensions.insert(l.clone());
-                l
-            });
-
-        // Shared per-request Res: same pattern.
-        let res = parts
-            .extensions
-            .get::<Res>()
-            .cloned()
-            .unwrap_or_else(|| {
-                let r = Res::default();
-                parts.extensions.insert(r.clone());
-                r
-            });
+        let common = extract_common_parts(&mut parts, state).await;
 
         // Reconstruct the request so Form can consume the body.
         let req = Request::from_parts(parts, body);
@@ -569,6 +531,17 @@ impl<S: Send + Sync> FromRequest<S> for Req {
         }
         let form = FormMap(raw_map);
 
-        Ok(Req { params, query, form, cookies, headers, path, is_enhanced, locals, res, action })
+        Ok(Req {
+            params: common.params,
+            query: common.query,
+            form,
+            cookies: common.cookies,
+            headers: common.headers,
+            path: common.path,
+            is_enhanced: common.is_enhanced,
+            locals: common.locals,
+            res: common.res,
+            action: common.action,
+        })
     }
 }

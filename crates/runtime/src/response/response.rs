@@ -55,6 +55,117 @@ pub struct BaseResponse {
 }
 
 impl BaseResponse {
+    // ── Shared header-manipulation helpers ────────────────────────
+    // These are the single source of truth for response modifications.
+    // Both `Res` (interior-mutable wrapper) and `ResponseExt` (owned-builder
+    // trait) delegate here so there is exactly one implementation.
+
+    /// Set an explicit HTTP status code.
+    pub fn set_status(&mut self, status: StatusCode) {
+        self.status = Some(status);
+    }
+
+    /// Append a raw response header.
+    pub fn set_header(&mut self, key: &'static str, value: impl Into<String>) {
+        if let Ok(val) = HeaderValue::from_str(&value.into()) {
+            self.headers.insert(key, val);
+        }
+    }
+
+    /// Add `silcrow-cache: no-cache` so silcrow.js skips the response cache.
+    pub fn set_no_cache(&mut self) {
+        self.headers
+            .typed_insert(SilcrowCache("no-cache".to_string()));
+    }
+
+    /// Add a `Set-Cookie` header to the response.
+    pub fn add_cookie(&mut self, cookie: Cookie<'static>) {
+        self.cookies = std::mem::take(&mut self.cookies).add(cookie);
+    }
+
+    /// Queue a toast notification.
+    pub fn add_toast(&mut self, message: impl Into<String>, level: ToastLevel) {
+        self.toasts.push(Toast {
+            message: message.into(),
+            level,
+        });
+    }
+
+    /// Fire a custom DOM event on the client via `silcrow-trigger`.
+    /// Multiple calls accumulate.
+    pub fn add_trigger_event(&mut self, event_name: &str) {
+        let mut map = self
+            .headers
+            .typed_get::<SilcrowTrigger>()
+            .and_then(|h| {
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&h.0).ok()
+            })
+            .unwrap_or_default();
+        map.insert(event_name.to_string(), serde_json::json!({}));
+        self.headers.typed_insert(SilcrowTrigger(
+            serde_json::Value::Object(map).to_string(),
+        ));
+    }
+
+    /// Override the swap target selector via `silcrow-retarget`.
+    pub fn set_retarget(&mut self, selector: &str) {
+        self.headers
+            .typed_insert(SilcrowRetarget(selector.to_string()));
+    }
+
+    /// Push a URL to the browser history via `silcrow-push`.
+    pub fn set_push_history(&mut self, url: &str) {
+        self.headers.typed_insert(SilcrowPush(url.to_string()));
+    }
+
+    /// Patch a secondary DOM target via `silcrow-patch`.
+    /// Multiple calls accumulate.
+    pub fn add_patch_target(&mut self, selector: &str, data: &impl Serialize) {
+        let mut list = self
+            .headers
+            .typed_get::<SilcrowPatch>()
+            .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(serde_json::json!({ "data": data, "target": selector }));
+        self.headers.typed_insert(SilcrowPatch(
+            serde_json::Value::Array(list).to_string(),
+        ));
+    }
+
+    /// Invalidate a DOM target's binding cache via `silcrow-invalidate`.
+    /// Multiple calls accumulate.
+    pub fn add_invalidate_target(&mut self, selector: &str) {
+        let mut list = self
+            .headers
+            .typed_get::<SilcrowInvalidate>()
+            .and_then(|h| serde_json::from_str::<Vec<String>>(&h.0).ok())
+            .unwrap_or_default();
+        list.push(selector.to_string());
+        self.headers.typed_insert(SilcrowInvalidate(
+            serde_json::to_string(&list).unwrap_or_default(),
+        ));
+    }
+
+    /// Trigger a client-side navigation via `silcrow-navigate`.
+    pub fn set_client_navigate(&mut self, path: &str) {
+        self.headers
+            .typed_insert(SilcrowNavigate(path.to_string()));
+    }
+
+    /// Open an SSE connection on the client via `silcrow-sse`.
+    pub fn set_sse(&mut self, path: &str) {
+        self.headers
+            .typed_insert(SilcrowSse(path.to_string()));
+    }
+
+    /// Open a WebSocket connection on the client via `silcrow-ws`.
+    pub fn set_ws(&mut self, path: &str) {
+        self.headers
+            .typed_insert(SilcrowWs(path.to_string()));
+    }
+
+    // ── Apply accumulated modifications ──────────────────────────
+
     pub fn apply_to_response(&self, response: &mut Response) {
         self.headers.iter().for_each(|(name, value)| {
             response.headers_mut().insert(name.clone(), value.clone());
@@ -96,95 +207,54 @@ pub trait ResponseExt: Sized {
     fn base_mut(&mut self) -> &mut BaseResponse;
 
     fn with_header(mut self, key: &'static str, value: impl Into<String>) -> Self {
-        if let Ok(val) = HeaderValue::from_str(&value.into()) {
-            self.base_mut().headers.insert(key, val);
-        }
+        self.base_mut().set_header(key, value);
         self
     }
     fn with_status(mut self, status: StatusCode) -> Self {
-        self.base_mut().status = Some(status);
+        self.base_mut().set_status(status);
         self
     }
     fn no_cache(mut self) -> Self {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowCache("no-cache".to_string()));
+        self.base_mut().set_no_cache();
         self
     }
-
     fn with_toast(mut self, message: impl Into<String>, level: ToastLevel) -> Self {
-        self.base_mut().toasts.push(Toast {
-            message: message.into(),
-            level,
-        });
+        self.base_mut().add_toast(message, level);
         self
     }
     fn trigger_event(mut self, event_name: &str) -> Self {
-        let base = self.base_mut();
-        let mut map = base
-            .headers
-            .typed_get::<SilcrowTrigger>()
-            .and_then(|h| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&h.0).ok())
-            .unwrap_or_default();
-        map.insert(event_name.to_string(), serde_json::json!({}));
-        base.headers.typed_insert(SilcrowTrigger(serde_json::Value::Object(map).to_string()));
+        self.base_mut().add_trigger_event(event_name);
         self
     }
     fn retarget(mut self, selector: &str) -> Self {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowRetarget(selector.to_string()));
+        self.base_mut().set_retarget(selector);
         self
     }
     fn push_history(mut self, url: &str) -> Self {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowPush(url.to_string()));
+        self.base_mut().set_push_history(url);
         self
     }
     fn patch_target(mut self, selector: &str, data: &impl serde::Serialize) -> Self {
-        let base = self.base_mut();
-        let mut list = base
-            .headers
-            .typed_get::<SilcrowPatch>()
-            .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
-            .unwrap_or_default();
-        list.push(serde_json::json!({ "data": data, "target": selector }));
-        base.headers
-            .typed_insert(SilcrowPatch(serde_json::Value::Array(list).to_string()));
+        self.base_mut().add_patch_target(selector, data);
         self
     }
     fn invalidate_target(mut self, selector: &str) -> Self {
-        let base = self.base_mut();
-        let mut list = base
-            .headers
-            .typed_get::<SilcrowInvalidate>()
-            .and_then(|h| serde_json::from_str::<Vec<String>>(&h.0).ok())
-            .unwrap_or_default();
-        list.push(selector.to_string());
-        base.headers
-            .typed_insert(SilcrowInvalidate(serde_json::to_string(&list).unwrap_or_default()));
+        self.base_mut().add_invalidate_target(selector);
         self
     }
     fn client_navigate(mut self, path: &str) -> Self {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowNavigate(path.to_string()));
+        self.base_mut().set_client_navigate(path);
         self
     }
     fn sse(mut self, path: impl AsRef<str>) -> Self {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowSse(path.as_ref().to_string()));
+        self.base_mut().set_sse(path.as_ref());
         self
     }
     fn ws(mut self, path: impl AsRef<str>) -> Self
     where
         Self: Sized,
     {
-        self.base_mut()
-            .headers
-            .typed_insert(SilcrowWs(path.as_ref().to_string()));
+        self.base_mut().set_ws(path.as_ref());
         self
     }
 }

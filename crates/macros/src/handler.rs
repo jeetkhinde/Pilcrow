@@ -19,10 +19,9 @@ pub fn expand(item: TokenStream) -> TokenStream {
     let mut rewritten: Vec<proc_macro2::TokenStream> = vec![];
 
     for param in &func.sig.inputs {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = param
-            && let Pat::Ident(ident) = pat.as_ref()
-        {
-            let name = ident.ident.to_string();
+        if let FnArg::Typed(PatType { pat, ty, .. }) = param {
+            if let Pat::Ident(ident) = pat.as_ref() {
+                let name = ident.ident.to_string();
             match name.as_str() {
                 "form" => {
                     rewritten.push(quote! {
@@ -43,6 +42,7 @@ pub fn expand(item: TokenStream) -> TokenStream {
                     continue;
                 }
                 _ => {}
+            }
             }
         }
         rewritten.push(quote! { #param });
@@ -97,4 +97,30 @@ fn body_uses_client(func: &ItemFn) -> bool {
     let mut visitor = ClientVisitor { found: false };
     visitor.visit_block(&func.block);
     visitor.found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_body_uses_client_true() {
+        let func: ItemFn = parse_quote! {
+            fn my_route() {
+                client.get("/api/users").await;
+            }
+        };
+        assert!(body_uses_client(&func));
+    }
+
+    #[test]
+    fn test_body_uses_client_false() {
+        let func: ItemFn = parse_quote! {
+            fn my_route() {
+                let x = 1 + 1;
+            }
+        };
+        assert!(!body_uses_client(&func));
+    }
 }

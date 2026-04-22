@@ -13,7 +13,9 @@ pub use routing::intercept::InterceptLevel;
 pub use templating::build_config::{FragmentEntry, PilcrowBuildConfig};
 pub use templating::codegen::{GeneratedApiRoute, GeneratedPageRoute};
 pub use templating::layout::LayoutOption;
-pub use templating::pipeline::{compile_to_out_dir, compile_to_out_dir_with_config, watched_source_directories};
+pub use templating::pipeline::{
+    compile_to_out_dir, compile_to_out_dir_with_config, watched_source_directories,
+};
 
 pub fn compile_current_crate_sources() -> io::Result<()> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|err| {
@@ -24,7 +26,10 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
     })?);
     let src_root = manifest_dir.join("src");
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|err| {
-        io::Error::new(io::ErrorKind::NotFound, format!("OUT_DIR must be set: {err}"))
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("OUT_DIR must be set: {err}"),
+        )
     })?);
 
     let build_config = PilcrowBuildConfig::load_from(&manifest_dir);
@@ -40,7 +45,10 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
         println!("cargo:rerun-if-changed={}", frag_dir.display());
     }
     // Watch the config file itself.
-    println!("cargo:rerun-if-changed={}", manifest_dir.join("Pilcrow.toml").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("Pilcrow.toml").display()
+    );
 
     Ok(())
 }
@@ -633,10 +641,10 @@ impl Router {
             self.routes.remove(pos);
         }
 
-        if let Some(layout) = self.layouts.remove(pattern)
-            && let Some(name) = &layout.layout_name
-        {
-            self.named_layouts.remove(name);
+        if let Some(layout) = self.layouts.remove(pattern) {
+            if let Some(name) = &layout.layout_name {
+                self.named_layouts.remove(name);
+            }
         }
 
         self.error_pages.remove(pattern);

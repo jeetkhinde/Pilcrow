@@ -3,15 +3,18 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::routing::discovery::{DiscoveredHtmlFiles, discover_html_files, discover_fragment_files};
+use crate::routing::discovery::{
+    DiscoveredHtmlFiles, discover_fragment_files, discover_html_files,
+};
 use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
     GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
-    build_generated_fragment_manifest,
-    write_generated_api_routes_module, write_generated_app_module, write_generated_routes_module,
-    write_generated_templates_module,
+    build_generated_fragment_manifest, write_generated_api_routes_module,
+    write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
 };
-use crate::templating::compiler::{inject_form_method_attrs, split_html_module, transpile_component_tags};
+use crate::templating::compiler::{
+    inject_form_method_attrs, split_html_module, transpile_component_tags,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
@@ -128,7 +131,8 @@ pub fn compile_to_out_dir_with_config(
             src_root,
             HtmlSourceKind::Ui,
             &{
-                let mut ui_files = crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"))?;
+                let mut ui_files =
+                    crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"))?;
                 ui_files.sort();
                 ui_files
             },
@@ -141,7 +145,9 @@ pub fn compile_to_out_dir_with_config(
         let mut module_paths = frag_modules.keys().cloned().collect::<Vec<_>>();
         module_paths.sort();
         for module_path in module_paths {
-            let module = frag_modules.get(&module_path).expect("fragment module path exists");
+            let module = frag_modules
+                .get(&module_path)
+                .expect("fragment module path exists");
             // Skip ui/ modules — they were already written by the main pipeline.
             if module.kind == HtmlSourceKind::Ui {
                 continue;
@@ -173,13 +179,16 @@ pub fn compile_to_out_dir_with_config(
                 module_name: module.module_name.clone(),
                 render_symbol: module.render_symbol.clone(),
                 layout_chain: vec![],
-                fragment_url_prefix: if is_fragment { Some(url_prefix.clone()) } else { None },
+                fragment_url_prefix: if is_fragment {
+                    Some(url_prefix.clone())
+                } else {
+                    None
+                },
             });
         }
 
         // Build route manifest entries for this fragment group.
-        let frag_page_routes =
-            build_generated_fragment_manifest(&fragment_dir, &url_prefix)?;
+        let frag_page_routes = build_generated_fragment_manifest(&fragment_dir, &url_prefix)?;
         fragment_routes.extend(frag_page_routes);
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -258,7 +267,11 @@ pub fn compile_to_out_dir_with_config(
                     .map(|rel| normalize_path_text(rel) == root_key)
                     .unwrap_or(false)
             })
-            .or_else(|| files.iter().find(|f| f.kind == HtmlSourceKind::NotFoundPage))
+            .or_else(|| {
+                files
+                    .iter()
+                    .find(|f| f.kind == HtmlSourceKind::NotFoundPage)
+            })
             .map(|f| f.module_name.clone())
     };
 
@@ -328,11 +341,13 @@ pub fn compile_to_out_dir_with_config(
     // Write typed route helpers: `pub mod routes { pub fn index() -> &'static str { "/" } ... }`
     let typed_routes_src =
         crate::templating::routes_codegen::render_generated_typed_routes_module(&all_page_routes);
-    fs::write(out_dir.join("generated_typed_routes.rs"), typed_routes_src.as_bytes())?;
+    fs::write(
+        out_dir.join("generated_typed_routes.rs"),
+        typed_routes_src.as_bytes(),
+    )?;
 
     // Write env struct helpers: `pub mod env { pub struct Public { ... } pub struct Private { ... } }`
-    let env_src =
-        crate::templating::env_codegen::render_generated_env_module(&build_config.env);
+    let env_src = crate::templating::env_codegen::render_generated_env_module(&build_config.env);
     fs::write(out_dir.join("generated_env.rs"), env_src.as_bytes())?;
 
     files.sort_by(|a, b| {
@@ -447,7 +462,9 @@ fn preprocess_discovered_sources(
     let page_paths: Vec<PathBuf> = modules
         .keys()
         .filter(|p| {
-            modules.get(*p).map_or(false, |m| m.kind == HtmlSourceKind::Page)
+            modules
+                .get(*p)
+                .map_or(false, |m| m.kind == HtmlSourceKind::Page)
         })
         .cloned()
         .collect();
@@ -682,7 +699,9 @@ fn load_fragment_source_group(
             strip_frontmatter_imports(&parts.rust, src_root, source_path)?
         };
 
-        let relative_in_dir = source_path.strip_prefix(fragment_dir).unwrap_or(source_path);
+        let relative_in_dir = source_path
+            .strip_prefix(fragment_dir)
+            .unwrap_or(source_path);
         let template_output_path = out_root.join(relative_in_dir);
         // Module name: `frag_{url_prefix}_{snake_relative}` — pass prefixed path to build_module_name.
         let prefixed_relative = Path::new(url_prefix).join(relative_in_dir);
@@ -759,9 +778,15 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
         let mut symbol = String::new();
         let mut prev_under = false;
         for ch in stripped.chars() {
-            let mapped = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' };
+            let mapped = if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            };
             if mapped == '_' {
-                if !prev_under { symbol.push('_'); }
+                if !prev_under {
+                    symbol.push('_');
+                }
                 prev_under = true;
             } else {
                 symbol.push(mapped);
@@ -774,7 +799,13 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
             // Use the raw dir to build a unique suffix so two groups don't collide.
             let raw_symbol: String = dir_part
                 .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
                 .collect::<String>()
                 .trim_matches('_')
                 .to_string();
@@ -799,9 +830,15 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
             let mut symbol = String::new();
             let mut prev_under = false;
             for ch in without_ext.chars() {
-                let mapped = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' };
+                let mapped = if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '_'
+                };
                 if mapped == '_' {
-                    if !prev_under { symbol.push('_'); }
+                    if !prev_under {
+                        symbol.push('_');
+                    }
                     prev_under = true;
                 } else {
                     symbol.push(mapped);
@@ -1126,10 +1163,9 @@ fn expand_known_components(
             break;
         };
 
-        if ch == '<'
-            && let Some(invocation) = parse_component_invocation(&template[i..])
-        {
-            let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
+        if ch == '<' {
+            if let Some(invocation) = parse_component_invocation(&template[i..]) {
+                let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
                 let (line, col) = line_col_at(template, i);
                 let mut msg = format!(
                     "missing explicit import for component `<{}>` at template line {line}, column {col}.",
@@ -1208,6 +1244,7 @@ fn expand_known_components(
             out.push_str(&component_body);
             i += invocation.consumed;
             continue;
+            }
         }
 
         out.push(ch);
@@ -2457,10 +2494,7 @@ pub struct Props {
         let out = root.join("out");
 
         // .html has no frontmatter (auto-layout wraps it); .rs has Props + load()
-        write_file(
-            &src.join("pages/index.html"),
-            "<h1>{{ title }}</h1>",
-        );
+        write_file(&src.join("pages/index.html"), "<h1>{{ title }}</h1>");
         write_file(
             &src.join("pages/index.rs"),
             r#"pub struct Props {
@@ -2499,8 +2533,7 @@ pub struct Props {}
         );
         write_file(&src.join("pages/index.rs"), r#"pub struct Props {}"#);
 
-        let err =
-            compile_to_out_dir(&src, &out).expect_err("mixed frontmatter should fail");
+        let err = compile_to_out_dir(&src, &out).expect_err("mixed frontmatter should fail");
         let msg = err.to_string();
         assert!(msg.contains("frontmatter may only contain"));
         assert!(msg.contains("code-behind"));
@@ -2543,22 +2576,37 @@ pub struct Props {}
 ---
 <div class="app"><slot /></div>"#,
         );
-        write_file(&src.join("pages/(app)/dashboard.html"), "<h1>Dashboard</h1>");
+        write_file(
+            &src.join("pages/(app)/dashboard.html"),
+            "<h1>Dashboard</h1>",
+        );
 
         let result = compile_to_out_dir(&src, &out).expect("layout groups should compile");
 
         // URLs should not contain the group name
-        let patterns: Vec<_> = result.generated_routes.iter()
-            .map(|r| r.pattern.as_str()).collect();
+        let patterns: Vec<_> = result
+            .generated_routes
+            .iter()
+            .map(|r| r.pattern.as_str())
+            .collect();
         assert!(patterns.contains(&"/"), "index → /");
         assert!(patterns.contains(&"/about"), "about → /about");
         assert!(patterns.contains(&"/dashboard"), "dashboard → /dashboard");
-        assert!(patterns.iter().all(|p| !p.contains("public")), "no group in URL");
-        assert!(patterns.iter().all(|p| !p.contains("app")), "no group in URL");
+        assert!(
+            patterns.iter().all(|p| !p.contains("public")),
+            "no group in URL"
+        );
+        assert!(
+            patterns.iter().all(|p| !p.contains("app")),
+            "no group in URL"
+        );
 
         // Module symbols should also strip the group
-        let symbols: Vec<_> = result.generated_routes.iter()
-            .map(|r| r.symbol.as_str()).collect();
+        let symbols: Vec<_> = result
+            .generated_routes
+            .iter()
+            .map(|r| r.symbol.as_str())
+            .collect();
         assert!(symbols.contains(&"page_index"));
         assert!(symbols.contains(&"page_about"));
         assert!(symbols.contains(&"page_dashboard"));
@@ -2566,12 +2614,18 @@ pub struct Props {}
         // Each page should be wrapped by its group's _layout.html
         let index_tpl = out.join("pilcrow_templates/pages/(public)/index.html");
         let index_rendered = fs::read_to_string(index_tpl).expect("read index");
-        assert!(index_rendered.contains(r#"class="public""#), "public layout applied to index");
+        assert!(
+            index_rendered.contains(r#"class="public""#),
+            "public layout applied to index"
+        );
         assert!(!index_rendered.contains(r#"class="app""#));
 
         let dashboard_tpl = out.join("pilcrow_templates/pages/(app)/dashboard.html");
         let dashboard_rendered = fs::read_to_string(dashboard_tpl).expect("read dashboard");
-        assert!(dashboard_rendered.contains(r#"class="app""#), "app layout applied to dashboard");
+        assert!(
+            dashboard_rendered.contains(r#"class="app""#),
+            "app layout applied to dashboard"
+        );
         assert!(!dashboard_rendered.contains(r#"class="public""#));
 
         cleanup(&root);
@@ -2583,10 +2637,7 @@ pub struct Props {}
         let src = root.join("src");
         let out = root.join("out");
 
-        write_file(
-            &src.join("pages/index.html"),
-            "<h1>{{ title }}</h1>",
-        );
+        write_file(&src.join("pages/index.html"), "<h1>{{ title }}</h1>");
         write_file(
             &src.join("pages/index.rs"),
             r#"pub struct Props { pub title: String }
@@ -2685,26 +2736,28 @@ pub struct Props {}
 ---
 <div class="root-layout"><slot /></div>"#,
         );
-        write_file(
-            &src.join("pages/index.html"),
-            "<h1>Home</h1>",
-        );
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
 
         let result = compile_to_out_dir(&src, &out).expect("auto-layout pipeline should compile");
 
         // index.html should be wrapped by the auto-layout
-        let page_template =
-            out.join("pilcrow_templates/pages/index.html");
+        let page_template = out.join("pilcrow_templates/pages/index.html");
         let rendered = fs::read_to_string(page_template).expect("read page template");
         assert!(
             rendered.contains("<div class=\"root-layout\">"),
             "page should be wrapped by auto-layout"
         );
-        assert!(rendered.contains("<h1>Home</h1>"), "original content preserved");
+        assert!(
+            rendered.contains("<h1>Home</h1>"),
+            "original content preserved"
+        );
 
         // _layout.html should NOT appear in route list
         assert!(
-            result.generated_routes.iter().all(|r| r.pattern != "/_layout"),
+            result
+                .generated_routes
+                .iter()
+                .all(|r| r.pattern != "/_layout"),
             "_layout.html should not be a route"
         );
 
@@ -2733,35 +2786,42 @@ pub struct Props {}
 ---
 <section class="products"><slot /></section>"#,
         );
-        write_file(
-            &src.join("pages/products/index.html"),
-            "<h1>Products</h1>",
-        );
+        write_file(&src.join("pages/products/index.html"), "<h1>Products</h1>");
         // A page NOT under products/ should only get the root layout
         write_file(&src.join("pages/about.html"), "<h1>About</h1>");
 
         let result = compile_to_out_dir(&src, &out).expect("nested auto-layout should compile");
 
-        let products_template =
-            out.join("pilcrow_templates/pages/products/index.html");
+        let products_template = out.join("pilcrow_templates/pages/products/index.html");
         let products_rendered = fs::read_to_string(products_template).expect("read products");
         assert!(products_rendered.contains("<html>"), "outer layout applied");
         assert!(
             products_rendered.contains("<section class=\"products\">"),
             "inner layout applied"
         );
-        assert!(products_rendered.contains("<h1>Products</h1>"), "content preserved");
+        assert!(
+            products_rendered.contains("<h1>Products</h1>"),
+            "content preserved"
+        );
 
         let about_template = out.join("pilcrow_templates/pages/about.html");
         let about_rendered = fs::read_to_string(about_template).expect("read about");
-        assert!(about_rendered.contains("<html>"), "root layout applied to about");
+        assert!(
+            about_rendered.contains("<html>"),
+            "root layout applied to about"
+        );
         assert!(
             !about_rendered.contains("<section class=\"products\">"),
             "products layout NOT applied to about"
         );
 
         // Neither _layout.html should be a route
-        assert!(result.generated_routes.iter().all(|r| !r.pattern.contains("_layout")));
+        assert!(
+            result
+                .generated_routes
+                .iter()
+                .all(|r| !r.pattern.contains("_layout"))
+        );
 
         cleanup(&root);
     }
@@ -2784,10 +2844,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
 ---
 <html><body><slot /></body></html>"#,
         );
-        write_file(
-            &src.join("pages/index.html"),
-            "<h1>Home</h1>",
-        );
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
 
         let result = compile_to_out_dir(&src, &out).expect("chain info should compile");
 
@@ -2804,7 +2861,12 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         );
 
         // _layout.html is not a route
-        assert!(result.generated_routes.iter().all(|r| r.pattern != "/_layout"));
+        assert!(
+            result
+                .generated_routes
+                .iter()
+                .all(|r| r.pattern != "/_layout")
+        );
 
         cleanup(&root);
     }
@@ -2844,17 +2906,27 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
             fs::read_to_string(out.join("generated_templates.rs")).expect("read templates");
 
         // Normal index page should get __MergedProps with layout's site_name.
-        let index_mod_start = templates_src.find("pub mod page_index").expect("page_index mod");
+        let index_mod_start = templates_src
+            .find("pub mod page_index")
+            .expect("page_index mod");
         let index_mod_end = templates_src[index_mod_start..]
             .find("\npub mod ")
             .map(|p| index_mod_start + p)
             .unwrap_or(templates_src.len());
         let index_mod = &templates_src[index_mod_start..index_mod_end];
-        assert!(index_mod.contains("__MergedProps"), "index page should have __MergedProps");
-        assert!(index_mod.contains("site_name"), "index page __MergedProps should have site_name");
+        assert!(
+            index_mod.contains("__MergedProps"),
+            "index page should have __MergedProps"
+        );
+        assert!(
+            index_mod.contains("site_name"),
+            "index page __MergedProps should have site_name"
+        );
 
         // Standalone page should NOT get __MergedProps (no layout chain).
-        let standalone_mod_start = templates_src.find("pub mod page_standalone").expect("page_standalone mod");
+        let standalone_mod_start = templates_src
+            .find("pub mod page_standalone")
+            .expect("page_standalone mod");
         let standalone_mod_end = templates_src[standalone_mod_start..]
             .find("\npub mod ")
             .map(|p| standalone_mod_start + p)
@@ -2870,9 +2942,16 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
         );
 
         // Both pages should be routable.
-        let patterns: Vec<_> = result.generated_routes.iter().map(|r| r.pattern.as_str()).collect();
+        let patterns: Vec<_> = result
+            .generated_routes
+            .iter()
+            .map(|r| r.pattern.as_str())
+            .collect();
         assert!(patterns.contains(&"/"), "index route present");
-        assert!(patterns.contains(&"/standalone"), "standalone route present");
+        assert!(
+            patterns.contains(&"/standalone"),
+            "standalone route present"
+        );
 
         cleanup(&root);
     }
@@ -2887,43 +2966,72 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
 
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("widgets/user-card.html"), "<div>{{ name }}</div>");
-        write_file(&src.join("widgets/user-card.rs"), "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }");
+        write_file(
+            &src.join("widgets/user-card.rs"),
+            "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }",
+        );
         write_file(&src.join("partials/nav.html"), "<nav>Navigation</nav>");
 
         let config = PilcrowBuildConfig {
             fragments: vec![
-                FragmentEntry { dir: "widgets".to_string(), url: None },
-                FragmentEntry { dir: "partials".to_string(), url: None },
+                FragmentEntry {
+                    dir: "widgets".to_string(),
+                    url: None,
+                },
+                FragmentEntry {
+                    dir: "partials".to_string(),
+                    url: None,
+                },
             ],
             ..Default::default()
         };
 
-        let result = compile_to_out_dir_with_config(&src, &out, &config)
-            .expect("fragments should compile");
+        let result =
+            compile_to_out_dir_with_config(&src, &out, &config).expect("fragments should compile");
 
         // Pages route still present
-        let patterns: Vec<_> = result.generated_routes.iter().map(|r| r.pattern.as_str()).collect();
+        let patterns: Vec<_> = result
+            .generated_routes
+            .iter()
+            .map(|r| r.pattern.as_str())
+            .collect();
         assert!(patterns.contains(&"/"));
 
         // Fragment templates were written
         let widget_tpl = out.join("pilcrow_templates/fragments/widgets/user-card.html");
         assert!(widget_tpl.exists(), "widget template written");
         let widget_html = fs::read_to_string(&widget_tpl).expect("read widget template");
-        assert!(widget_html.contains("{{ name }}"), "template content preserved");
+        assert!(
+            widget_html.contains("{{ name }}"),
+            "template content preserved"
+        );
 
         let nav_tpl = out.join("pilcrow_templates/fragments/partials/nav.html");
         assert!(nav_tpl.exists(), "nav template written");
 
         // Fragment modules appear in preprocessed_files
-        let frag_mods: Vec<_> = result.preprocessed_files.iter()
+        let frag_mods: Vec<_> = result
+            .preprocessed_files
+            .iter()
             .filter(|f| f.module_name.starts_with("frag_"))
             .collect();
-        assert_eq!(frag_mods.len(), 2, "two fragment modules: user-card and nav");
+        assert_eq!(
+            frag_mods.len(),
+            2,
+            "two fragment modules: user-card and nav"
+        );
 
-        let widget_mod = frag_mods.iter().find(|f| f.module_name == "frag_widgets_user_card");
-        assert!(widget_mod.is_some(), "frag_widgets_user_card module present");
+        let widget_mod = frag_mods
+            .iter()
+            .find(|f| f.module_name == "frag_widgets_user_card");
+        assert!(
+            widget_mod.is_some(),
+            "frag_widgets_user_card module present"
+        );
 
-        let nav_mod = frag_mods.iter().find(|f| f.module_name == "frag_partials_nav");
+        let nav_mod = frag_mods
+            .iter()
+            .find(|f| f.module_name == "frag_partials_nav");
         assert!(nav_mod.is_some(), "frag_partials_nav module present");
 
         cleanup(&root);
@@ -2940,18 +3048,24 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
         write_file(&src.join("ui-blocks/card.html"), "<div>Card</div>");
 
         let config = PilcrowBuildConfig {
-            fragments: vec![
-                FragmentEntry { dir: "ui-blocks".to_string(), url: Some("blocks".to_string()) },
-            ],
+            fragments: vec![FragmentEntry {
+                dir: "ui-blocks".to_string(),
+                url: Some("blocks".to_string()),
+            }],
             ..Default::default()
         };
 
         let result = compile_to_out_dir_with_config(&src, &out, &config)
             .expect("url-override fragments should compile");
 
-        let block_mod = result.preprocessed_files.iter()
+        let block_mod = result
+            .preprocessed_files
+            .iter()
             .find(|f| f.module_name.starts_with("frag_blocks"));
-        assert!(block_mod.is_some(), "frag_blocks_card module present with overridden prefix");
+        assert!(
+            block_mod.is_some(),
+            "frag_blocks_card module present with overridden prefix"
+        );
 
         cleanup(&root);
     }

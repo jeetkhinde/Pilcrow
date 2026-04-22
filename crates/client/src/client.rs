@@ -51,3 +51,17 @@ impl PilcrowClient {
         Ok(res.json::<T>().await.map_err(ClientError::Http)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_formatting() {
+        let client = PilcrowClient::new("http://localhost:3000/".into(), reqwest::Client::new());
+        assert_eq!(client.url("/api/users"), "http://localhost:3000/api/users");
+
+        let client2 = PilcrowClient::new("http://localhost:3000".into(), reqwest::Client::new());
+        assert_eq!(client2.url("/api/users"), "http://localhost:3000/api/users");
+    }
+}

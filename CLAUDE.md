@@ -461,3 +461,61 @@ This is the most complex file. Key structs:
 - `make_merged_props_struct` — builds `__MergedProps` (layout fields + page fields) when a layout has `load()`. Detects field name collisions between layout and page `Props` at build time and fails with a clear message (e.g. `Props field 'title' is defined in both the layout and the page`).
 
 When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeline tests exercise the full compile path including codegen.
+
+## Audit Findings (April 2026)
+
+### Known Bugs
+
+| # | Location | Severity | Description |
+|---|----------|----------|-------------|
+| 1 | `routekit/constraint.rs` | ✅ Fixed | The broken `Regex` variant was completely removed rather than pulling in the heavy `regex` crate. |
+| 2 | `tools/cli/scaffold.rs` | ✅ Fixed | Dynamic path injection using `pilcrow_web::assets::assets::silcrow_js_path()` is now implemented. |
+| 3 | `tools/cli/scaffold.rs` | ✅ Fixed | Replaced `*` versions with git dependencies pointing to the Pilcrow repo. |
+| 4 | `tools/cli/check.rs` | ✅ Fixed | The misleading `check-arch` command and file were completely removed. |
+| 5 | `runtime/context.rs` | ✅ Fixed | Replaced `.unwrap()` with `.unwrap_or_else(|e| e.into_inner())` on lock guards to gracefully recover from thread panics. |
+| 6 | `runtime/start.rs` | ✅ Fixed | Replaced `expect("bind")` with a custom panic message showing the requested port, and added `tracing::info!` for logging. |
+
+### Code Quality Improvements
+
+| # | Location | Status | Description |
+|---|----------|--------|-------------|
+| 1 | `routekit/codegen.rs` | ✅ Fixed | **95KB single file** — split into focused modules within the `codegen/` directory (`types.rs`, `api_routes.rs`, `page_routes.rs`, `templates.rs`, `instrument.rs`, `app_module.rs`, `emit.rs`, `util.rs`). |
+| 2 | `runtime/start.rs` L19 | ✅ Fixed | Replaced `println!` with `tracing::info!` for consistency with the rest of the framework. |
+| 3 | `runtime/context.rs` + `response/response.rs` | ✅ Fixed | Duplicate logic — `Res` methods and `ResponseExt` trait now delegate to shared methods inside `BaseResponse`. |
+| 4 | All crates | ✅ Fixed | Added unit tests to `pilcrow-client` and `pilcrow-macros`. |
+| 5 | `runtime/Cargo.toml` | ✅ Fixed | Downgraded all crates to `edition = "2021"` and refactored Rust 2024 `let_chains` into nested `if let` conditions. |
+
+### Missing Features vs SvelteKit / Astro
+
+**Critical (core architectural vision):**
+
+| Feature | SvelteKit | Astro | Pilcrow Status |
+|---------|-----------|-------|----------------|
+| SSG (Static Site Generation) | ✅ `prerender = true` | ✅ Default mode | ❌ Not implemented |
+| Incremental SSR (ISR) | ✅ `isr` | ✅ Hybrid | ❌ Not implemented |
+| Island Architecture | ❌ (not core) | ✅ Core feature | ❌ Not implemented |
+| Adapter System (deploy targets) | ✅ Vercel/Cloudflare/Node | ✅ Multiple | ❌ Hardcoded tokio TcpListener |
+| Dev Server / HMR | ✅ Vite-powered | ✅ Vite-powered | ❌ Only cargo-watch restarts |
+
+**Important (DX parity):**
+
+| Feature | Status |
+|---------|--------|
+| Server hooks (`handle`, `handleError`, `handleFetch`) | ❌ Only `src/middleware.rs` |
+| `$env` modules (static/private, static/public, dynamic) | 🟡 `env_codegen.rs` exists but early |
+| Head/meta management (`svelte:head`, `<head>` injection) | ❌ Manual only |
+| Snapshot/state preservation across navigations | ❌ Not implemented |
+| i18n routing | ❌ Not implemented |
+| Image optimization pipeline | ❌ Not implemented |
+| Content collections / MDX | ❌ Not implemented |
+| Client-side JS bundling beyond silcrow.js | ❌ Not implemented |
+| View Transitions API | ❌ Not implemented |
+
+### Priority Roadmap (Suggested)
+
+1. **Fix scaffold bugs** — users can't create working projects (`silcrow.js` path + crate references)
+2. **Split codegen.rs** — 95KB single file is the #1 regression risk
+3. **Add SSG support** — `pub const PRERENDER: bool = true` in code-behind
+4. **Add adapter system** — trait-based output target (tokio standalone, Vercel serverless, Cloudflare Workers)
+5. **Island Architecture** — `client:load`, `client:idle`, `client:visible` directives paired with Silcrow hydration
+6. **Dev server with live-reload** — filesystem watcher + WebSocket push to browser

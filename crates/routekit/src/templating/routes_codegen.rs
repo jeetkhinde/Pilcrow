@@ -14,10 +14,7 @@ pub fn render_generated_typed_routes_module(entries: &[GeneratedPageRoute]) -> S
     sorted.sort_by(|a, b| a.pattern.cmp(&b.pattern));
 
     for entry in &sorted {
-        let fn_name = entry
-            .symbol
-            .strip_prefix("page_")
-            .unwrap_or(&entry.symbol);
+        let fn_name = entry.symbol.strip_prefix("page_").unwrap_or(&entry.symbol);
         let params = extract_params(&entry.pattern);
 
         if params.is_empty() {
