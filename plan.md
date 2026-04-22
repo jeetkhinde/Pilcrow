@@ -1,65 +1,221 @@
-# Pilcrow AI-Native MCP Server v1
+# Pilcrow Expert MCP Roadmap
 
-## Summary
+## Goal
 
-- Add a standalone Rust MCP binary at `tools/mcp/pilcrow-mcp`, using the official Rust MCP SDK `rmcp` over stdio.
-- Add a root-level `registry.toml` as Pilcrow's dynamic feature source of truth; the server reads it at runtime and status-gates planned features.
-- Update `.mcp.json` to register the new Rust server while keeping the current JS codegen inspector temporarily available.
-- Report both MCP server version and Pilcrow framework crate versions, with `pilcrow-web` as the primary framework version.
+Make `tools/mcp/pilcrow-mcp` the authoritative Pilcrow-side expert MCP server.
+It should answer Pilcrow framework questions with repo-grounded evidence, inspect
+projects deeply, validate implementations semantically, diagnose build/codegen
+issues, and scaffold production-grade Pilcrow patterns.
 
-References used: official MCP SDK list and Rust SDK docs: https://modelcontextprotocol.io/docs/sdk, https://github.com/modelcontextprotocol/rust-sdk
+`silcrow-mcp` already owns `silcrow.js` expertise. Pilcrow MCP must not duplicate
+that surface. It should understand Pilcrow's server-side integration points with
+Silcrow, then defer detailed client-runtime behavior to `silcrow-mcp`.
 
-## Architecture Decision
+## Ownership Boundary
 
-- Build the source-of-truth MCP server in Rust.
-- Keep the MCP protocol layer thin so `rmcp` SDK churn is isolated from Pilcrow-specific logic.
-- Implement registry loading, project scanning, validation, scaffolding, and codegen inspection as regular Rust modules.
-- Keep any existing JS MCP/codegen inspector only as a temporary compatibility or reference surface.
-- Add a TypeScript wrapper later only if host compatibility or SDK maturity becomes a practical blocker.
+- Pilcrow MCP owns:
+  - SSR pages and code-behind conventions.
+  - routekit routing, route discovery, route groups, typed params, generated code.
+  - Layouts, loading/error/not-found pages, fragments, UI templates, slots.
+  - API routes, actions, middleware, env config, page options.
+  - Deferred streams and Pilcrow runtime/web facade APIs.
+  - Pilcrow project scanning, validation, diagnostics, scaffolding, and generated artifact inspection.
 
-Rationale: TypeScript currently has the more mature Tier 1 MCP SDK, but Pilcrow's MCP server needs to understand Rust crates, `Cargo.toml`, `Pilcrow.toml`, generated route artifacts, templates, and framework conventions. Keeping the domain logic in Rust avoids duplicating Pilcrow semantics in JavaScript.
+- `silcrow-mcp` owns:
+  - `silcrow.js` directives and exact client-side semantics.
+  - DOM patching, enhanced navigation/form runtime behavior, cache behavior, live/SSE/WS client semantics.
 
-## Key Changes
+- Pilcrow MCP bridge behavior:
+  - Validate that Silcrow-facing Pilcrow code has the right server-side shape.
+  - Clearly report when a question needs `silcrow-mcp` for client-runtime details.
+  - Avoid claiming detailed Silcrow behavior from memory or duplicated docs.
 
-- Registry schema:
-  - `registry_schema_version`, `framework_version`, and `[[features]]`.
-  - Each feature has `id`, `name`, `domain = "pilcrow" | "silcrow"`, `status = "stable" | "experimental" | "planned" | "deprecated"`, `summary`, `spec`, `validation_rules`, and `scaffold_templates`.
-  - Seed implemented features from current repo behavior: SSR pages, file routing, layouts, route groups, fragments, API routes, actions, Silcrow enhanced navigation/forms, deferred streams, middleware, env config, loading skeletons, page options.
-  - Include Islands, SSG, and Incremental SSR as `planned`, so agents can discuss them but validation/scaffolding rejects unsupported syntax.
+## Milestone 1: Knowledge Base And Resources
 
-- MCP capabilities:
-  - `list_features({ status?, domain? })` returns JSON from `registry.toml`.
-  - `get_feature_spec({ id })` returns one full feature spec and its usage constraints.
-  - `scan_project_context({ project_root?, manifest_path? })` returns routes, layouts, UI components, fragments, APIs, params, middleware, `Pilcrow.toml`, crate versions, and generated OUT_DIR status.
-  - Resource `pilcrow://current-project` returns the same project map as structured JSON.
-  - `validate_implementation({ code, path?, kind?, project_root? })` returns a code-review report with severities, rule ids, messages, and suggested fixes.
-  - `suggest_optimizations({ project_root?, focus? })` analyzes the project map and recommends Pilcrow/Silcrow architecture improvements.
-  - `orchestrate_feature({ kind, name, route_path?, target_dir?, options?, dry_run? })` writes routes, components, fragments, or Silcrow integrations with path containment checks, collision detection, FP-first templates, and a dry-run preview.
-  - Add Rust equivalents or aliases for current inspector workflows: `codegen_build`, `codegen_list`, and `codegen_read`.
+- Index authoritative local sources:
+  - `CLAUDE.md`
+  - `crates/routekit/README.md`
+  - crate-level docs and public API comments
+  - routekit/runtime/web tests
+  - sandbox examples
+  - generated-code patterns from `OUT_DIR`
 
-- Validation behavior:
-  - Parse Rust snippets with `syn`; inspect templates with lightweight HTML/directive scanning.
-  - Enforce current code-behind conventions: async `load(req: Req) -> AppResult<Props>`, named actions returning `ActionResult`, no manual route registration, no unsupported planned feature syntax.
-  - Flag Pilcrow/Silcrow boundary mistakes, such as Silcrow client directives in Rust code or planned Island directives in stable SSR pages.
-  - Flag "hydration/static mismatch" when a static page pattern attempts stateful/client-only behavior without an implemented dynamic feature path.
+- Expand `registry.toml` from summary feature entries into detailed specs:
+  - canonical usage
+  - constraints
+  - invalid examples
+  - source/test references
+  - scaffold support status
+  - Silcrow boundary notes where relevant
 
-- Scaffolding behavior:
-  - Route scaffold creates paired `.html` and optional `.rs` code-behind using existing Pilcrow conventions.
-  - Component scaffold creates `src/ui/*.html` templates with import-friendly names.
-  - Fragment scaffold respects `Pilcrow.toml` `[[fragments]]`; if no fragment dir exists, use `src/widgets` and update config during write mode.
-  - Silcrow integration scaffold emits server-backed enhanced forms/navigation patterns, not standalone client-state islands.
+- Add resources:
+  - `pilcrow://docs`
+  - `pilcrow://api/runtime`
+  - `pilcrow://api/web`
+  - `pilcrow://routekit/features`
+  - `pilcrow://examples`
+  - `pilcrow://tests/feature-matrix`
+  - Keep `pilcrow://current-project`.
 
-## Test Plan
+## Milestone 2: Deep Project Model
 
-- `cargo test --manifest-path tools/mcp/pilcrow-mcp/Cargo.toml`
-- Unit tests for registry parsing, status filtering, feature lookup, version reporting, path safety, validation rules, and scaffold collision handling.
-- Temp-project integration tests for project scanning, `pilcrow://current-project`, and scaffold write/dry-run output.
-- Compatibility checks: `cargo test -p pilcrow-routekit` and `cargo build --manifest-path sandbox/apps/web/Cargo.toml`.
-- Smoke-test the MCP server through stdio by listing tools/resources and calling one tool from each capability group.
+- Upgrade `scan_project_context` from file lists to a semantic project graph:
+  - route graph with URL patterns, route groups, dynamic params, catch-all routes, intercepting/parallel metadata if supported
+  - layout chain per route
+  - loading/error/not-found coverage
+  - template imports, component usage, slots, fragments
+  - code-behind metadata: `Props`, `load`, named actions, deferred fields, imports, page options
+  - API route files and exported router symbols
+  - middleware/env config detection
+  - generated `OUT_DIR` status cross-checked against source routes
 
-## Assumptions
+- Add targeted scan tools:
+  - `inspect_route({ route })`
+  - `inspect_template({ path })`
+  - `inspect_code_behind({ path })`
+  - `inspect_generated_route({ route })`
 
-- The new server lives under `tools/mcp/pilcrow-mcp` and is not added to the root workspace.
-- `.mcp.json` runs it via `cargo run --quiet --manifest-path tools/mcp/pilcrow-mcp/Cargo.toml --`.
-- Scaffolding tools may mutate files, but must default to safe writes: no overwrite unless explicitly requested, all paths confined to the detected project root.
-- Implementation finishes with a developer-level test run and a descriptive commit, e.g. `feat(mcp): add Pilcrow AI-native server`.
+## Milestone 3: Semantic Validation
+
+- Replace lightweight validation with compiler-aware checks:
+  - Use `syn` for Rust AST validation.
+  - Reuse routekit parser/compiler modules where practical.
+  - Validate HTML/template syntax with routekit's compiler logic where practical.
+
+- Validate:
+  - `load(req: Req) -> AppResult<Props>` shape
+  - named actions returning `ActionResult`
+  - `Props` fields against template usage
+  - deferred fields and streaming support
+  - page option constants
+  - middleware signatures
+  - API route `router()` exports
+  - fragment config/path consistency
+  - component imports and slot usage
+  - planned-feature gates for Islands, SSG, Incremental SSR
+  - Pilcrow/Silcrow boundary mistakes
+
+- Findings should include:
+  - severity
+  - stable rule ID
+  - file/path
+  - location when available
+  - source/test reference when available
+  - concrete suggested fix
+
+## Milestone 4: Expert Q&A Tools
+
+- Add tools intended for agent answers:
+  - `answer_pilcrow_question({ question, project_root? })`
+  - `explain_feature({ id, depth?, include_examples? })`
+  - `find_examples({ feature, pattern? })`
+  - `compare_patterns({ goal, options? })`
+  - `why_build_failed({ manifest?, error_log? })`
+
+- Answers should be grounded in indexed docs/tests/examples.
+- Answers should distinguish implemented, experimental, planned, and unsupported behavior.
+- Questions about exact `silcrow.js` runtime behavior should return a delegation note to use `silcrow-mcp`.
+
+## Milestone 5: Production-Grade Scaffolding
+
+- Expand `orchestrate_feature` scaffolds:
+  - static SSR page
+  - loaded SSR page
+  - action-backed page
+  - deferred page
+  - nested layout
+  - loading/error/not-found page
+  - API route
+  - middleware
+  - env config
+  - fragment
+  - UI component
+  - typed param
+
+- Scaffolds must:
+  - default to dry-run
+  - prevent path escape
+  - detect collisions
+  - preserve existing files unless overwrite is explicit
+  - match current Pilcrow conventions
+  - include validation after generation
+
+- For Silcrow-enhanced flows:
+  - Generate Pilcrow server-side actions/templates only.
+  - Mark exact client runtime behavior as owned by `silcrow-mcp`.
+
+## Milestone 6: Diagnostics And Repair
+
+- Add diagnostic tools:
+  - `diagnose_project({ project_root?, manifest_path? })`
+  - `diagnose_route({ route })`
+  - `diagnose_codegen({ manifest? })`
+  - `propose_fix({ finding_id })`
+  - `apply_safe_fix({ finding_id, dry_run? })`
+
+- Diagnostics should connect:
+  - source files
+  - routekit discovery/compiler behavior
+  - generated `OUT_DIR` files
+  - Cargo build errors
+  - validation findings
+
+- Repair tools must remain conservative:
+  - dry-run by default
+  - no unrelated rewrites
+  - no destructive edits
+  - explicit collision reporting
+
+## Milestone 7: Evaluations
+
+- Add fixture apps and golden tests for:
+  - route graph extraction
+  - layout chains
+  - invalid `load` functions
+  - invalid named actions
+  - bad template imports
+  - fragment config edge cases
+  - deferred fields
+  - middleware
+  - API routes
+  - generated-code inspection
+  - Silcrow boundary/delegation behavior
+
+- Add MCP stdio smoke tests for:
+  - listing tools/resources
+  - reading every resource
+  - calling one tool from every capability group
+  - dry-run and write-mode scaffolding
+  - error responses for unsupported/planned features
+
+- Add expert benchmark questions:
+  - "How do I add nested layouts?"
+  - "Why is my action not discovered?"
+  - "Why does this route not render?"
+  - "How do I add a fragment directory?"
+  - "What generated file should I inspect for this route?"
+  - "Is this Silcrow behavior or Pilcrow behavior?"
+
+## Milestone 8: Integration Polish
+
+- Add MCP prompts:
+  - Pilcrow code review
+  - Pilcrow scaffold
+  - Pilcrow build diagnosis
+  - Pilcrow feature explanation
+
+- Keep MCP protocol code thin:
+  - `src/server.rs` handles transport/tool/resource registration.
+  - domain logic stays in normal modules.
+  - `rmcp` churn should not leak into validators/scanners/scaffolders.
+
+- Retire `tools/mcp/codegen-inspector` only after Rust MCP reaches complete parity.
+
+## Definition Of Done
+
+- Pilcrow MCP can answer common and advanced Pilcrow questions from local evidence.
+- It can distinguish Pilcrow, Silcrow, implemented, planned, and unsupported concerns.
+- It can diagnose route/codegen/build issues without guessing.
+- It can validate and scaffold all currently implemented Pilcrow patterns.
+- It has fixture-backed tests and MCP smoke tests for every tool/resource.
+- It delegates exact `silcrow.js` runtime questions to `silcrow-mcp`.
