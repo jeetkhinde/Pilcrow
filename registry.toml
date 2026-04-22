@@ -1,0 +1,210 @@
+registry_schema_version = 1
+framework_version = "0.1.0"
+
+[[features]]
+id = "ssr-pages"
+name = "SSR Pages"
+domain = "pilcrow"
+status = "stable"
+summary = "Server-rendered pages are discovered from src/pages/**/*.html with optional Rust code-behind."
+spec = "A page is an HTML template under src/pages. A sibling .rs file may declare Props and an async load(req: Req) -> AppResult<Props> function. Pages are registered by generated code through pilcrow_web::include_generated_app!()."
+validation_rules = [
+  "Pages should not manually register Axum routes.",
+  "Code-behind load functions should be async and return AppResult<Props>.",
+]
+scaffold_templates = ["route"]
+
+[[features]]
+id = "file-routing"
+name = "File Routing"
+domain = "pilcrow"
+status = "stable"
+summary = "Route paths are derived from files and directories under src/pages and src/api."
+spec = "index.html maps to its containing directory, dynamic segments use bracket syntax, route groups use parenthesized directories, and generated route helpers live in OUT_DIR."
+validation_rules = [
+  "Do not hand-wire page routes in main.rs.",
+  "Keep routes under src/pages or src/api.",
+]
+scaffold_templates = ["route"]
+
+[[features]]
+id = "layouts"
+name = "Layouts"
+domain = "pilcrow"
+status = "stable"
+summary = "Layouts are HTML templates named _layout.html and compose around nested pages."
+spec = "A _layout.html file applies to pages in its directory subtree. A route group may provide its own _layout.html without adding a URL segment."
+validation_rules = [
+  "Use _layout.html for shared shells instead of duplicating page chrome.",
+]
+scaffold_templates = ["route"]
+
+[[features]]
+id = "route-groups"
+name = "Route Groups"
+domain = "pilcrow"
+status = "stable"
+summary = "Parenthesized page directories organize routes without contributing URL segments."
+spec = "Directories like src/pages/(admin) may contain pages and layouts. The group name is for organization and layout scoping only."
+validation_rules = [
+  "Route group directories must stay inside src/pages.",
+]
+scaffold_templates = ["route"]
+
+[[features]]
+id = "fragments"
+name = "Fragments"
+domain = "pilcrow"
+status = "stable"
+summary = "Configured fragment directories expose HTML fragments as addressable server-rendered endpoints."
+spec = "Pilcrow.toml [[fragments]] entries point to directories relative to src. Fragment HTML files are scanned and generated as URL-accessible fragment routes."
+validation_rules = [
+  "Fragment scaffolds must respect Pilcrow.toml [[fragments]].",
+]
+scaffold_templates = ["fragment"]
+
+[[features]]
+id = "api-routes"
+name = "API Routes"
+domain = "pilcrow"
+status = "stable"
+summary = "Rust API routes are discovered from src/api/**/*.rs."
+spec = "API route files export a router() function returning axum::Router. Routekit discovers these files and mounts them into the generated application router."
+validation_rules = [
+  "API files should expose router() rather than registering from main.rs.",
+]
+scaffold_templates = ["api"]
+
+[[features]]
+id = "actions"
+name = "Named Actions"
+domain = "pilcrow"
+status = "stable"
+summary = "Page code-behind files can declare named action handlers for enhanced and plain form posts."
+spec = "Named actions are public functions other than load that return ActionResult, commonly pub async fn create(req: Req) -> ActionResult. The client invokes them with ?/name."
+validation_rules = [
+  "Named action handlers should return ActionResult.",
+  "Actions should live next to the page template they serve.",
+]
+scaffold_templates = ["route", "silcrow-form"]
+
+[[features]]
+id = "silcrow-navigation"
+name = "Silcrow Enhanced Navigation"
+domain = "silcrow"
+status = "stable"
+summary = "s-boost and s-target provide server-backed SPA-style navigation."
+spec = "Use s-boost on anchors and s-target to choose the DOM target. Responses remain server-rendered HTML and should work as normal links without JavaScript."
+validation_rules = [
+  "Silcrow directives belong in HTML templates, not Rust code.",
+]
+scaffold_templates = ["silcrow-nav"]
+
+[[features]]
+id = "silcrow-forms"
+name = "Silcrow Enhanced Forms"
+domain = "silcrow"
+status = "stable"
+summary = "Enhanced forms post to server actions and patch the DOM from server responses."
+spec = "Use standard HTML forms with Silcrow attributes and Pilcrow named actions. Server handlers return ActionResult and may set response headers through Req response helpers."
+validation_rules = [
+  "Enhanced forms must have a server action path.",
+  "Do not model Silcrow forms as standalone client-state islands.",
+]
+scaffold_templates = ["silcrow-form"]
+
+[[features]]
+id = "deferred-streams"
+name = "Deferred Streams"
+domain = "pilcrow"
+status = "stable"
+summary = "Deferred<T> and DeferredHtml stream late data or HTML patches after the shell response."
+spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve."
+validation_rules = [
+  "Deferred fields must be declared in Props.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "middleware"
+name = "Middleware"
+domain = "pilcrow"
+status = "stable"
+summary = "src/middleware.rs can provide request middleware for generated routes."
+spec = "Middleware receives Req and Next, then returns a Response. It should call next.run().await when continuing to the route handler."
+validation_rules = [
+  "Middleware should live in src/middleware.rs.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "env-config"
+name = "Typed Env Config"
+domain = "pilcrow"
+status = "stable"
+summary = "Pilcrow.toml [env] declarations generate typed Public and Private env structs."
+spec = "Declare public and private env var names in Pilcrow.toml. The build pipeline generates env::Public and env::Private load() helpers in OUT_DIR."
+validation_rules = [
+  "Public env names should use PUBLIC_ when intended for client-visible use.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "loading-skeletons"
+name = "Loading Skeletons"
+domain = "pilcrow"
+status = "stable"
+summary = "_loading.html templates provide scoped loading skeletons."
+spec = "A _loading.html template in a pages subtree is appended to rendered HTML for matching routes so Silcrow can show scoped pending UI."
+validation_rules = [
+  "Use _loading.html for route loading states.",
+]
+scaffold_templates = ["route"]
+
+[[features]]
+id = "page-options"
+name = "Page Options"
+domain = "pilcrow"
+status = "stable"
+summary = "Page code-behind constants configure route-specific generation behavior."
+spec = "Routekit parses supported page option constants from code-behind and strips them from generated modules."
+validation_rules = [
+  "Unsupported page option constants should be rejected during validation.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "islands"
+name = "Islands"
+domain = "pilcrow"
+status = "planned"
+summary = "Client islands are planned and not supported by the current stable SSR pipeline."
+spec = "Planned feature. Agents may discuss architecture but must not scaffold Island directives or client-only stateful components."
+validation_rules = [
+  "Reject Island directives in stable pages.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "ssg"
+name = "Static Site Generation"
+domain = "pilcrow"
+status = "planned"
+summary = "Build-time static output generation is planned."
+spec = "Planned feature. Current builds produce server-rendered routes rather than static output files."
+validation_rules = [
+  "Reject SSG-only syntax and configuration until implemented.",
+]
+scaffold_templates = []
+
+[[features]]
+id = "incremental-ssr"
+name = "Incremental SSR"
+domain = "pilcrow"
+status = "planned"
+summary = "Incremental regeneration of SSR output is planned."
+spec = "Planned feature. Current SSR pages render on request without incremental cache semantics."
+validation_rules = [
+  "Reject incremental SSR directives until implemented.",
+]
+scaffold_templates = []

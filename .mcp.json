@@ -1,5 +1,17 @@
 {
   "mcpServers": {
+    "pilcrow": {
+      "type": "stdio",
+      "command": "cargo",
+      "args": [
+        "run",
+        "--quiet",
+        "--manifest-path",
+        "tools/mcp/pilcrow-mcp/Cargo.toml",
+        "--"
+      ],
+      "env": {}
+    },
     "codegen-inspector": {
       "type": "stdio",
       "command": "node",

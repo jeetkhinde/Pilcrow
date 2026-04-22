@@ -1,0 +1,107 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeatureDomain {
+    Pilcrow,
+    Silcrow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FeatureStatus {
+    Stable,
+    Experimental,
+    Planned,
+    Deprecated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Feature {
+    pub id: String,
+    pub name: String,
+    pub domain: FeatureDomain,
+    pub status: FeatureStatus,
+    pub summary: String,
+    pub spec: String,
+    #[serde(default)]
+    pub validation_rules: Vec<String>,
+    #[serde(default)]
+    pub scaffold_templates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Registry {
+    pub registry_schema_version: u32,
+    pub framework_version: String,
+    #[serde(default)]
+    pub features: Vec<Feature>,
+}
+
+impl Registry {
+    pub fn load(path: &Path) -> Result<Self> {
+        let source = fs::read_to_string(path)
+            .with_context(|| format!("failed to read registry at {}", path.display()))?;
+        toml::from_str(&source).with_context(|| format!("failed to parse {}", path.display()))
+    }
+
+    pub fn load_from_project(project_root: &Path) -> Result<Self> {
+        Self::load(&project_root.join("registry.toml"))
+    }
+
+    pub fn feature(&self, id: &str) -> Option<&Feature> {
+        self.features.iter().find(|feature| feature.id == id)
+    }
+
+    pub fn filtered(
+        &self,
+        status: Option<FeatureStatus>,
+        domain: Option<FeatureDomain>,
+    ) -> Vec<&Feature> {
+        self.features
+            .iter()
+            .filter(|feature| status.map_or(true, |status| feature.status == status))
+            .filter(|feature| domain.map_or(true, |domain| feature.domain == domain))
+            .collect()
+    }
+}
+
+pub fn find_project_root(start: impl AsRef<Path>) -> Option<PathBuf> {
+    let mut dir = start.as_ref().to_path_buf();
+    loop {
+        if dir.join("Cargo.toml").exists() && dir.join("crates").is_dir() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_registry_and_filters_status() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let registry = Registry::load_from_project(&root).unwrap();
+        assert!(registry.feature("ssr-pages").is_some());
+        assert!(registry
+            .filtered(Some(FeatureStatus::Planned), None)
+            .iter()
+            .any(|feature| feature.id == "islands"));
+    }
+}
