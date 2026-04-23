@@ -1,5 +1,6 @@
 use crate::{
     codegen,
+    docs::{self, KnowledgeBase},
     registry::{FeatureDomain, FeatureStatus, Registry},
     scaffold::{orchestrate_feature, ScaffoldRequest},
     validation::validate_implementation,
@@ -23,6 +24,7 @@ const CURRENT_PROJECT_URI: &str = "pilcrow://current-project";
 pub struct PilcrowServer {
     project_root: PathBuf,
     registry: Registry,
+    knowledge: KnowledgeBase,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
@@ -38,6 +40,31 @@ pub struct ListFeaturesArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FeatureSpecArgs {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExplainFeatureArgs {
+    pub id: String,
+    #[serde(default)]
+    pub depth: Option<String>,
+    #[serde(default)]
+    pub include_examples: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FindExamplesArgs {
+    pub feature: String,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnswerQuestionArgs {
+    pub question: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -132,9 +159,11 @@ impl PilcrowServer {
         let cwd = std::env::current_dir().context("failed to read current directory")?;
         let project_root = crate::registry::find_project_root(&cwd).unwrap_or(cwd);
         let registry = Registry::load_from_project(&project_root)?;
+        let knowledge = KnowledgeBase::load(&project_root)?;
         Ok(Self {
             project_root,
             registry,
+            knowledge,
             tool_router: Self::tool_router(),
         })
     }
@@ -168,6 +197,65 @@ impl PilcrowServer {
             Some(feature) => Ok(structured(feature)),
             None => Ok(tool_error(format!("unknown feature id: {}", args.id))),
         }
+    }
+
+    #[tool(
+        description = "Explain a Pilcrow feature using registry status plus local docs/tests/examples evidence."
+    )]
+    async fn explain_feature(
+        &self,
+        Parameters(args): Parameters<ExplainFeatureArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut explanation = match self.knowledge.explain_feature(&self.registry, &args.id) {
+            Some(explanation) => explanation,
+            None => return Ok(tool_error(format!("unknown feature id: {}", args.id))),
+        };
+        if args.include_examples == Some(false) {
+            explanation
+                .evidence
+                .retain(|item| !item.path.starts_with("sandbox/"));
+        }
+        if matches!(args.depth.as_deref(), Some("brief")) {
+            explanation.evidence.truncate(3);
+        }
+        Ok(structured(explanation))
+    }
+
+    #[tool(
+        description = "Find sandbox examples and tests for a Pilcrow feature or implementation pattern."
+    )]
+    async fn find_examples(
+        &self,
+        Parameters(args): Parameters<FindExamplesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = args.limit.unwrap_or(8).clamp(1, 20);
+        Ok(structured(self.knowledge.find_examples(
+            &args.feature,
+            args.pattern.as_deref(),
+            limit,
+        )))
+    }
+
+    #[tool(
+        description = "Answer a Pilcrow framework question from local registry/docs/tests/examples and delegate exact silcrow.js runtime questions to silcrow-mcp."
+    )]
+    async fn answer_pilcrow_question(
+        &self,
+        Parameters(args): Parameters<AnswerQuestionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        if args
+            .project_root
+            .as_deref()
+            .is_some_and(|root| self.project_root.to_string_lossy().as_ref().ne(root))
+        {
+            return Ok(tool_error(
+                "project_root-specific answer indexing is not implemented yet; this server currently answers from its loaded project root.",
+            ));
+        }
+        Ok(structured(
+            self.knowledge
+                .answer_question(&self.registry, &args.question),
+        ))
     }
 
     #[tool(
@@ -325,14 +413,27 @@ impl ServerHandler for PilcrowServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Ok(ListResourcesResult {
-            resources: vec![RawResource::new(CURRENT_PROJECT_URI, "current-project")
+        let mut resources = docs::resources()
+            .into_iter()
+            .map(|resource| {
+                RawResource::new(resource.uri, resource.title)
+                    .with_title(resource.title)
+                    .with_description(resource.description)
+                    .with_mime_type("application/json")
+                    .no_annotation()
+            })
+            .collect::<Vec<_>>();
+        resources.push(
+            RawResource::new(CURRENT_PROJECT_URI, "current-project")
                 .with_title("Pilcrow current project")
                 .with_description(
                     "Structured scan of the current Pilcrow app and generated artifact status.",
                 )
                 .with_mime_type("application/json")
-                .no_annotation()],
+                .no_annotation(),
+        );
+        Ok(ListResourcesResult {
+            resources,
             next_cursor: None,
             meta: None,
         })
@@ -343,19 +444,25 @@ impl ServerHandler for PilcrowServer {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
-        if request.uri != CURRENT_PROJECT_URI {
+        let text = if request.uri == CURRENT_PROJECT_URI {
+            let context = scan_project(&self.project_root, None, None)
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+            serde_json::to_string_pretty(&context)
+        } else if let Some(payload) = self
+            .knowledge
+            .resource_payload(&request.uri, &self.registry)
+        {
+            serde_json::to_string_pretty(&payload)
+        } else {
             return Err(McpError::resource_not_found(
                 "resource_not_found",
                 Some(json!({ "uri": request.uri })),
             ));
         }
-        let context = scan_project(&self.project_root, None, None)
-            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-        let text = serde_json::to_string_pretty(&context)
-            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(ReadResourceResult::new(vec![ResourceContents::text(
             text,
-            CURRENT_PROJECT_URI,
+            request.uri,
         )
         .with_mime_type("application/json")]))
     }
