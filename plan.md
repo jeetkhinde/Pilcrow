@@ -166,35 +166,35 @@ Silcrow, then defer detailed client-runtime behavior to `silcrow-mcp`.
   - no destructive edits ✅
   - explicit collision reporting ✅
 
-## Milestone 7: Evaluations ⬜
+## Milestone 7: Evaluations ✅
 
-- Add fixture apps and golden tests for:
-  - route graph extraction
-  - layout chains
-  - invalid `load` functions
-  - invalid named actions
-  - bad template imports
-  - fragment config edge cases
-  - deferred fields
-  - middleware
-  - API routes
-  - generated-code inspection
-  - Silcrow boundary/delegation behavior
+- Add fixture apps and golden tests for: ✅
+  - route graph extraction ✅
+  - layout chains ✅
+  - invalid `load` functions ✅
+  - invalid named actions ✅
+  - bad template imports ✅
+  - fragment config edge cases ✅
+  - deferred fields ✅
+  - middleware ✅
+  - API routes ✅
+  - generated-code inspection ✅
+  - Silcrow boundary/delegation behavior ✅
 
-- Add MCP stdio smoke tests for:
-  - listing tools/resources
-  - reading every resource
-  - calling one tool from every capability group
-  - dry-run and write-mode scaffolding
-  - error responses for unsupported/planned features
+- Add MCP stdio smoke tests for: ✅
+  - listing tools/resources ✅
+  - reading every resource ✅
+  - calling one tool from every capability group ✅
+  - dry-run and write-mode scaffolding ✅
+  - error responses for unsupported/planned features ✅
 
-- Add expert benchmark questions:
-  - "How do I add nested layouts?"
-  - "Why is my action not discovered?"
-  - "Why does this route not render?"
-  - "How do I add a fragment directory?"
-  - "What generated file should I inspect for this route?"
-  - "Is this Silcrow behavior or Pilcrow behavior?"
+- Add expert benchmark questions: ✅
+  - "How do I add nested layouts?" ✅
+  - "Why is my action not discovered?" ✅
+  - "Why does this route not render?" ✅
+  - "How do I add a fragment directory?" ✅
+  - "What generated file should I inspect for this route?" ✅
+  - "Is this Silcrow behavior or Pilcrow behavior?" ✅
 
 ## Milestone 8: Integration Polish 🔶
 
@@ -209,7 +209,7 @@ Silcrow, then defer detailed client-runtime behavior to `silcrow-mcp`.
   - domain logic stays in normal modules. ✅
   - `rmcp` churn should not leak into validators/scanners/scaffolders. ✅
 
-- Retire `tools/mcp/codegen-inspector` only after Rust MCP reaches complete parity. ⬜ (blocked on Milestone 7)
+- Retire `tools/mcp/codegen-inspector` only after Rust MCP reaches complete parity. ⬜ (optional — Rust MCP is now complete; retirement is a separate cleanup)
 
 ## Definition Of Done
 
@@ -217,5 +217,5 @@ Silcrow, then defer detailed client-runtime behavior to `silcrow-mcp`.
 - It can distinguish Pilcrow, Silcrow, implemented, planned, and unsupported concerns. ✅
 - It can diagnose route/codegen/build issues without guessing. ✅
 - It can validate and scaffold all currently implemented Pilcrow patterns. ✅
-- It has fixture-backed tests and MCP smoke tests for every tool/resource. ⬜ (Milestone 7)
+- It has fixture-backed tests and MCP smoke tests for every tool/resource. ✅
 - It delegates exact `silcrow.js` runtime questions to `silcrow-mcp`. ✅
