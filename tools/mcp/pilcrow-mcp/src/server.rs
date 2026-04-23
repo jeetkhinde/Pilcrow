@@ -1,6 +1,8 @@
 use crate::{
     codegen,
+    diagnostics,
     docs::{self, KnowledgeBase},
+    inspect,
     registry::{FeatureDomain, FeatureStatus, Registry},
     scaffold::{orchestrate_feature, ScaffoldRequest},
     validation::validate_implementation,
@@ -28,6 +30,8 @@ pub struct PilcrowServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
+
+// ── Existing tool arg structs ──────────────────────────────────────────────
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ListFeaturesArgs {
@@ -139,6 +143,100 @@ pub struct CodegenReadArgs {
     pub tail: Option<usize>,
 }
 
+// ── New tool arg structs ───────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InspectRouteArgs {
+    pub route: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InspectTemplateArgs {
+    pub path: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InspectCodeBehindArgs {
+    pub path: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InspectGeneratedRouteArgs {
+    pub route: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ComparePatternArgs {
+    pub goal: String,
+    #[serde(default)]
+    pub options: Option<Value>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct WhyBuildFailedArgs {
+    #[serde(default)]
+    pub manifest: Option<String>,
+    #[serde(default)]
+    pub error_log: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct DiagnoseProjectArgs {
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiagnoseRouteArgs {
+    pub route: String,
+    #[serde(default)]
+    pub project_root: Option<String>,
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct DiagnoseCodegenArgs {
+    #[serde(default)]
+    pub manifest: Option<String>,
+    #[serde(default)]
+    pub project_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ProposeFixArgs {
+    pub finding_id: String,
+    pub findings_json: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplySafeFixArgs {
+    pub finding_id: String,
+    pub findings_json: String,
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
+// ── Supporting output types ────────────────────────────────────────────────
+
 #[derive(Debug, Serialize)]
 struct Optimizations {
     focus: Option<String>,
@@ -152,6 +250,24 @@ struct Optimization {
     message: String,
     suggested_fix: String,
 }
+
+#[derive(Debug, Serialize)]
+struct PatternComparison {
+    goal: String,
+    patterns: Vec<Pattern>,
+    recommendation: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Pattern {
+    name: String,
+    description: String,
+    tradeoffs: Vec<String>,
+    scaffold_kind: Option<String>,
+    status: String,
+}
+
+// ── Tool implementations ───────────────────────────────────────────────────
 
 #[tool_router]
 impl PilcrowServer {
@@ -187,7 +303,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Return one full Pilcrow/Silcrow feature spec and its validation/scaffolding constraints."
+        description = "Return one full Pilcrow/Silcrow feature spec with validation/scaffolding constraints, canonical usage, invalid examples, and source/test references."
     )]
     async fn get_feature_spec(
         &self,
@@ -259,7 +375,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Scan a Pilcrow project for routes, layouts, components, fragments, APIs, params, middleware, config, crate versions, and generated OUT_DIR status."
+        description = "Scan a Pilcrow project for routes, layouts, components, fragments, APIs, params, middleware, config, crate versions, OUT_DIR status, and semantic route graph with URL patterns and code-behind metadata."
     )]
     async fn scan_project_context(
         &self,
@@ -278,7 +394,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Validate Rust or HTML snippets against current Pilcrow/Silcrow conventions and planned-feature gates."
+        description = "Validate Rust or HTML snippets against current Pilcrow/Silcrow conventions and planned-feature gates. Returns findings with severity, rule_id, line numbers, source references, and suggested fixes."
     )]
     async fn validate_implementation(
         &self,
@@ -308,7 +424,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Scaffold a route, component, fragment, or server-backed Silcrow pattern with path containment, collision detection, and dry-run support."
+        description = "Scaffold a Pilcrow route, component, fragment, layout, middleware, API route, param matcher, or env config. Supported kinds: route, static-page, loaded-page, action-page, deferred-page, component, fragment, silcrow-form, nested-layout, loading-page, error-page, not-found-page, api-route, middleware, env-config, typed-param. Defaults to dry-run."
     )]
     async fn orchestrate_feature(
         &self,
@@ -390,7 +506,229 @@ impl PilcrowServer {
             },
         )
     }
+
+    #[tool(
+        description = "Inspect a single Pilcrow route deeply: HTML template, code-behind metadata (Props, load, actions, deferred fields), layout chain, loading/error coverage, and a hint to the generated handler."
+    )]
+    async fn inspect_route(
+        &self,
+        Parameters(args): Parameters<InspectRouteArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match inspect::inspect_route(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+                &args.route,
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Parse a Pilcrow HTML template for component imports, slot usages, Silcrow directives, and fragment slots."
+    )]
+    async fn inspect_template(
+        &self,
+        Parameters(args): Parameters<InspectTemplateArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match inspect::inspect_template(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+                &args.path,
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Parse a Pilcrow code-behind .rs file with syn: extract Props fields, load() signature, named action names, Deferred fields, and page option constants."
+    )]
+    async fn inspect_code_behind(
+        &self,
+        Parameters(args): Parameters<InspectCodeBehindArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match inspect::inspect_code_behind(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+                &args.path,
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Find and show the generated OUT_DIR code for a Pilcrow route: excerpts from generated_app.rs and generated_routes.rs that reference the route."
+    )]
+    async fn inspect_generated_route(
+        &self,
+        Parameters(args): Parameters<InspectGeneratedRouteArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match inspect::inspect_generated_route(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+                &args.route,
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Compare Pilcrow implementation patterns for a given goal and recommend the best approach. For example: compare patterns for 'server-side form handling' or 'streaming data to the client'."
+    )]
+    async fn compare_patterns(
+        &self,
+        Parameters(args): Parameters<ComparePatternArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(structured(compare_patterns_for(&args.goal, args.options.as_ref())))
+    }
+
+    #[tool(
+        description = "Diagnose why a Pilcrow build failed. Pass a cargo error_log or let the tool run a fresh build. Returns categorized error analysis with suggested fixes."
+    )]
+    async fn why_build_failed(
+        &self,
+        Parameters(args): Parameters<WhyBuildFailedArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(error_log) = &args.error_log {
+            Ok(structured(analyse_build_error(error_log)))
+        } else {
+            // Run a fresh build and capture errors
+            match codegen::codegen_build(&self.project_root, args.manifest.as_deref()) {
+                Ok(result) if !result.success => {
+                    let combined = format!("{}\n{}", result.stdout, result.stderr);
+                    Ok(structured(analyse_build_error(&combined)))
+                }
+                Ok(result) => Ok(structured(json!({
+                    "status": "build_succeeded",
+                    "out_dir": result.out_dir,
+                    "generated_files": result.generated_files,
+                }))),
+                Err(e) => Ok(tool_error(e.to_string())),
+            }
+        }
+    }
+
+    #[tool(
+        description = "Run a comprehensive diagnostic scan of a Pilcrow project: checks routes, code-behind signatures, codegen status, missing special pages, and validation findings."
+    )]
+    async fn diagnose_project(
+        &self,
+        Parameters(args): Parameters<DiagnoseProjectArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match diagnostics::diagnose_project(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Diagnose a specific Pilcrow route: checks HTML template, code-behind signatures, Deferred fields, action definitions, and validation findings."
+    )]
+    async fn diagnose_route(
+        &self,
+        Parameters(args): Parameters<DiagnoseRouteArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match diagnostics::diagnose_route(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest_path.as_deref(),
+                &args.route,
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Diagnose the Pilcrow codegen pipeline: checks OUT_DIR, required generated files, and cross-checks source routes against generated_app.rs."
+    )]
+    async fn diagnose_codegen(
+        &self,
+        Parameters(args): Parameters<DiagnoseCodegenArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(
+            match diagnostics::diagnose_codegen(
+                &self.project_root,
+                args.project_root.as_deref(),
+                args.manifest.as_deref(),
+            ) {
+                Ok(result) => structured(result),
+                Err(error) => tool_error(error.to_string()),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Propose a detailed fix for a specific diagnostic finding. Pass the finding_id and the full findings JSON from diagnose_project or diagnose_route."
+    )]
+    async fn propose_fix(
+        &self,
+        Parameters(args): Parameters<ProposeFixArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let findings: Vec<diagnostics::DiagnosticFinding> =
+            match serde_json::from_str(&args.findings_json) {
+                Ok(f) => f,
+                Err(e) => return Ok(tool_error(format!("failed to parse findings_json: {e}"))),
+            };
+        match diagnostics::propose_fix(&findings, &args.finding_id) {
+            Some(proposal) => Ok(structured(proposal)),
+            None => Ok(tool_error(format!(
+                "finding_id '{}' not found in provided findings",
+                args.finding_id
+            ))),
+        }
+    }
+
+    #[tool(
+        description = "Apply a safe, conservative automatic fix for a diagnostic finding. Dry-run by default. Only applies to findings with safe_to_auto_apply=true (e.g. adding async to load())."
+    )]
+    async fn apply_safe_fix(
+        &self,
+        Parameters(args): Parameters<ApplySafeFixArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let findings: Vec<diagnostics::DiagnosticFinding> =
+            match serde_json::from_str(&args.findings_json) {
+                Ok(f) => f,
+                Err(e) => return Ok(tool_error(format!("failed to parse findings_json: {e}"))),
+            };
+        let finding = match findings.iter().find(|f| f.finding_id == args.finding_id) {
+            Some(f) => f,
+            None => {
+                return Ok(tool_error(format!(
+                    "finding_id '{}' not found in provided findings",
+                    args.finding_id
+                )))
+            }
+        };
+        let dry_run = args.dry_run.unwrap_or(true);
+        Ok(structured(diagnostics::apply_safe_fix(finding, dry_run)))
+    }
 }
+
+// ── MCP protocol handler ───────────────────────────────────────────────────
 
 #[tool_handler]
 impl ServerHandler for PilcrowServer {
@@ -400,10 +738,11 @@ impl ServerHandler for PilcrowServer {
         info.capabilities = ServerCapabilities::builder()
             .enable_tools()
             .enable_resources()
+            .enable_prompts()
             .build();
         info.server_info = Implementation::from_build_env();
         info.instructions = Some(
-            "Pilcrow AI-native MCP server. Use registry tools for feature status, scan_project_context before editing, validate_implementation before scaffolding planned syntax, and orchestrate_feature for safe writes.".to_string(),
+            "Pilcrow AI-native MCP server. Use registry tools for feature status, scan_project_context before editing, validate_implementation before scaffolding planned syntax, and orchestrate_feature for safe writes. Use diagnose_project or diagnose_route when there is a build or runtime problem. Use compare_patterns when choosing between implementation approaches.".to_string(),
         );
         info
     }
@@ -427,7 +766,7 @@ impl ServerHandler for PilcrowServer {
             RawResource::new(CURRENT_PROJECT_URI, "current-project")
                 .with_title("Pilcrow current project")
                 .with_description(
-                    "Structured scan of the current Pilcrow app and generated artifact status.",
+                    "Structured scan of the current Pilcrow app including semantic route graph and OUT_DIR status.",
                 )
                 .with_mime_type("application/json")
                 .no_annotation(),
@@ -478,9 +817,137 @@ impl ServerHandler for PilcrowServer {
             meta: None,
         })
     }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: vec![
+                Prompt::new(
+                    "pilcrow-code-review",
+                    Some("Review Pilcrow code for convention compliance, planned-feature usage, Silcrow boundary correctness, and production readiness."),
+                    Some(vec![
+                        PromptArgument::new("code").with_description("The Rust or HTML code to review").with_required(true),
+                        PromptArgument::new("path").with_description("File path (optional, improves accuracy)").with_required(false),
+                    ]),
+                ),
+                Prompt::new(
+                    "pilcrow-scaffold",
+                    Some("Scaffold a new Pilcrow pattern (route, API, middleware, etc.) with dry-run preview and validation."),
+                    Some(vec![
+                        PromptArgument::new("kind").with_description("Scaffold kind: route, static-page, loaded-page, action-page, deferred-page, api-route, middleware, etc.").with_required(true),
+                        PromptArgument::new("name").with_description("Name for the scaffolded item").with_required(true),
+                    ]),
+                ),
+                Prompt::new(
+                    "pilcrow-build-diagnosis",
+                    Some("Diagnose a Pilcrow build failure from an error log or by running a fresh build."),
+                    Some(vec![
+                        PromptArgument::new("error_log").with_description("Paste the cargo error output here (optional — tool will build if omitted)").with_required(false),
+                    ]),
+                ),
+                Prompt::new(
+                    "pilcrow-feature-explanation",
+                    Some("Get a thorough explanation of a Pilcrow feature with local evidence from docs, tests, and examples."),
+                    Some(vec![
+                        PromptArgument::new("feature").with_description("Feature ID or name (e.g. actions, deferred-streams, fragments)").with_required(true),
+                    ]),
+                ),
+            ],
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let args = request.arguments.unwrap_or_default();
+        let get = |key: &str| -> String {
+            args.get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+
+        let messages = match request.name.as_str() {
+            "pilcrow-code-review" => {
+                let code = get("code");
+                let path = get("path");
+                let path_note = if path.is_empty() { String::new() } else { format!(" (file: {path})") };
+                vec![PromptMessage::new_text(PromptMessageRole::User, format!(
+                    "Please review this Pilcrow code{path_note} for:\n\
+                    1. Convention compliance (load signature, action return types, Props struct)\n\
+                    2. Planned feature usage (Islands, SSG, ISR — must be rejected)\n\
+                    3. Silcrow boundary correctness (directives in HTML only; delegate client-runtime to silcrow-mcp)\n\
+                    4. Production readiness (error handling, deferred loading, missing skeletons)\n\n\
+                    Use validate_implementation, get_feature_spec, and diagnose_route as needed.\n\n\
+                    Code:\n```\n{code}\n```"
+                ))]
+            }
+            "pilcrow-scaffold" => {
+                let kind = get("kind");
+                let name = get("name");
+                vec![PromptMessage::new_text(PromptMessageRole::User, format!(
+                    "Scaffold a Pilcrow '{kind}' named '{name}'.\n\
+                    Steps:\n\
+                    1. Use get_feature_spec to check the feature status and constraints.\n\
+                    2. Use scan_project_context to check for existing files and Pilcrow.toml config.\n\
+                    3. Use orchestrate_feature with dry_run=true first to preview files.\n\
+                    4. Present the preview. If it looks correct, re-run with dry_run=false.\n\
+                    5. After writing, use validate_implementation on each generated file.\n\
+                    Report any validation findings and the final file paths."
+                ))]
+            }
+            "pilcrow-build-diagnosis" => {
+                let error_log = get("error_log");
+                let log_section = if error_log.is_empty() {
+                    "Run why_build_failed without an error_log to trigger a fresh build.".to_string()
+                } else {
+                    format!("Error log:\n```\n{error_log}\n```")
+                };
+                vec![PromptMessage::new_text(PromptMessageRole::User, format!(
+                    "Diagnose this Pilcrow build failure.\n\
+                    Steps:\n\
+                    1. Use why_build_failed to categorize the error.\n\
+                    2. Use diagnose_codegen to check OUT_DIR and generated file status.\n\
+                    3. For route errors, use diagnose_route to inspect the failing route.\n\
+                    4. Use propose_fix for each finding.\n\
+                    5. Apply safe automatic fixes with apply_safe_fix (dry_run=true first).\n\n\
+                    {log_section}"
+                ))]
+            }
+            "pilcrow-feature-explanation" => {
+                let feature = get("feature");
+                vec![PromptMessage::new_text(PromptMessageRole::User, format!(
+                    "Explain the Pilcrow '{feature}' feature thoroughly.\n\
+                    Steps:\n\
+                    1. Use get_feature_spec for the canonical spec, constraints, and invalid examples.\n\
+                    2. Use explain_feature for local docs/tests/examples evidence.\n\
+                    3. Use find_examples to find sandbox patterns.\n\
+                    4. If the feature touches Silcrow, note the boundary and what needs silcrow-mcp.\n\
+                    Synthesize a complete explanation from the evidence."
+                ))]
+            }
+            other => {
+                return Err(McpError::invalid_request(
+                    format!("unknown prompt: {other}"),
+                    None,
+                ))
+            }
+        };
+
+        Ok(GetPromptResult::new(messages))
+    }
 }
 
-fn structured(value: impl Serialize) -> CallToolResult {
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+fn structured(value: impl serde::Serialize) -> CallToolResult {
     match serde_json::to_value(value) {
         Ok(value) => CallToolResult::structured(value),
         Err(error) => tool_error(error.to_string()),
@@ -547,6 +1014,20 @@ fn suggest_from_context(
                 .to_string(),
         });
     }
+    // Check for deferred routes missing loading skeletons
+    let deferred_routes: Vec<_> = context
+        .route_graph
+        .iter()
+        .filter(|n| n.code_behind.as_ref().map(|cb| cb.has_deferred).unwrap_or(false) && !n.has_loading)
+        .collect();
+    if !deferred_routes.is_empty() {
+        recommendations.push(Optimization {
+            rule_id: "pilcrow-deferred-needs-skeleton",
+            severity: "warning",
+            message: format!("{} route(s) use Deferred<T> but have no _loading.html skeleton.", deferred_routes.len()),
+            suggested_fix: "Add _loading.html templates near deferred routes for better UX.".to_string(),
+        });
+    }
     if matches!(focus.as_deref(), Some("silcrow")) {
         recommendations.push(Optimization {
             rule_id: "silcrow-server-backed-interactions",
@@ -559,4 +1040,174 @@ fn suggest_from_context(
         focus,
         recommendations,
     }
+}
+
+fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparison {
+    let goal_lower = goal.to_ascii_lowercase();
+
+    let patterns = if goal_lower.contains("form") || goal_lower.contains("action") || goal_lower.contains("submit") {
+        vec![
+            Pattern {
+                name: "Silcrow enhanced form".to_string(),
+                description: "Form posts to ?/action, server patches DOM via s-target. Progressive enhancement — works without JS.".to_string(),
+                tradeoffs: vec![
+                    "Pro: works without JS, server owns state".to_string(),
+                    "Pro: req.fail() handles both enhanced and plain POST".to_string(),
+                    "Con: requires silcrow.js loaded on client".to_string(),
+                ],
+                scaffold_kind: Some("silcrow-form".to_string()),
+                status: "stable".to_string(),
+            },
+            Pattern {
+                name: "Plain action page".to_string(),
+                description: "Standard HTML form POST to ?/action, server redirects after success (PRG pattern).".to_string(),
+                tradeoffs: vec![
+                    "Pro: zero JS dependency".to_string(),
+                    "Pro: full page reloads ensure freshness".to_string(),
+                    "Con: no in-place DOM patching".to_string(),
+                ],
+                scaffold_kind: Some("action-page".to_string()),
+                status: "stable".to_string(),
+            },
+        ]
+    } else if goal_lower.contains("stream") || goal_lower.contains("defer") || goal_lower.contains("lazy") {
+        vec![
+            Pattern {
+                name: "Deferred<T>".to_string(),
+                description: "Stream a single typed value after the shell renders. Use for data that is slow to fetch but simple to display.".to_string(),
+                tradeoffs: vec![
+                    "Pro: shell renders immediately".to_string(),
+                    "Pro: silcrow.js patches the value in-place".to_string(),
+                    "Con: T must implement Display for the initial empty render".to_string(),
+                ],
+                scaffold_kind: Some("deferred-page".to_string()),
+                status: "stable".to_string(),
+            },
+            Pattern {
+                name: "DeferredHtml".to_string(),
+                description: "Stream a complete HTML fragment into a named slot. Use for complex widgets or lists that render as HTML.".to_string(),
+                tradeoffs: vec![
+                    "Pro: can stream arbitrary HTML markup".to_string(),
+                    "Pro: loading HTML shown in slot until resolved".to_string(),
+                    "Con: more verbose setup than Deferred<T>".to_string(),
+                ],
+                scaffold_kind: None,
+                status: "stable".to_string(),
+            },
+        ]
+    } else if goal_lower.contains("layout") || goal_lower.contains("shell") || goal_lower.contains("nav") {
+        vec![
+            Pattern {
+                name: "Root _layout.html".to_string(),
+                description: "Single layout wrapping all pages at src/pages/_layout.html.".to_string(),
+                tradeoffs: vec![
+                    "Pro: simple, applies everywhere".to_string(),
+                    "Con: cannot be scoped to a subset of routes".to_string(),
+                ],
+                scaffold_kind: Some("nested-layout".to_string()),
+                status: "stable".to_string(),
+            },
+            Pattern {
+                name: "Route group layout".to_string(),
+                description: "Scoped layout in (group)/_layout.html applies only to sibling routes without adding a URL segment.".to_string(),
+                tradeoffs: vec![
+                    "Pro: scoped to a logical section without URL impact".to_string(),
+                    "Con: requires route group directory organization".to_string(),
+                ],
+                scaffold_kind: Some("nested-layout".to_string()),
+                status: "stable".to_string(),
+            },
+        ]
+    } else if goal_lower.contains("api") || goal_lower.contains("endpoint") || goal_lower.contains("rest") {
+        vec![
+            Pattern {
+                name: "API route file".to_string(),
+                description: "File in src/api/ exports router(). Discovered automatically by routekit.".to_string(),
+                tradeoffs: vec![
+                    "Pro: auto-mounted, no main.rs changes".to_string(),
+                    "Pro: full axum Router flexibility".to_string(),
+                    "Con: separate from page route structure".to_string(),
+                ],
+                scaffold_kind: Some("api-route".to_string()),
+                status: "stable".to_string(),
+            },
+            Pattern {
+                name: "Named action on page".to_string(),
+                description: "pub async fn action_name(req: Req) -> ActionResult on a page code-behind. Invoked by POST ?/action_name.".to_string(),
+                tradeoffs: vec![
+                    "Pro: co-located with the page that uses it".to_string(),
+                    "Pro: shares the page's load() and layout context".to_string(),
+                    "Con: POST-only, not a standalone REST endpoint".to_string(),
+                ],
+                scaffold_kind: Some("action-page".to_string()),
+                status: "stable".to_string(),
+            },
+        ]
+    } else {
+        vec![
+            Pattern {
+                name: "SSR page with load()".to_string(),
+                description: "Standard Pilcrow page with Props and load() for server data.".to_string(),
+                tradeoffs: vec!["Pro: full server control".to_string(), "Pro: no client state".to_string()],
+                scaffold_kind: Some("loaded-page".to_string()),
+                status: "stable".to_string(),
+            },
+        ]
+    };
+
+    let recommendation = patterns
+        .first()
+        .map(|p| format!("For '{}', start with '{}'. {}", goal, p.name, p.tradeoffs.first().cloned().unwrap_or_default()))
+        .unwrap_or_else(|| format!("No specific pattern matched for '{}'. Use scan_project_context and answer_pilcrow_question for guidance.", goal));
+
+    PatternComparison {
+        goal: goal.to_string(),
+        patterns,
+        recommendation,
+    }
+}
+
+fn analyse_build_error(error_log: &str) -> Value {
+    let mut categories = Vec::new();
+    let mut suggestions = Vec::new();
+
+    if error_log.contains("load") && (error_log.contains("async") || error_log.contains("not async")) {
+        categories.push("load() signature mismatch");
+        suggestions.push("Ensure load() is `pub async fn load(req: Req) -> AppResult<Props>`. Missing async is the most common cause.");
+    }
+    if error_log.contains("Props") && error_log.contains("field") {
+        categories.push("Props field mismatch");
+        suggestions.push("Check that Props fields in the .rs file match template variable usage. Layouts and pages cannot have colliding field names.");
+    }
+    if error_log.contains("ActionResult") {
+        categories.push("ActionResult type error");
+        suggestions.push("Named action functions must return ActionResult. Check imports and return type.");
+    }
+    if error_log.contains("OUT_DIR") || error_log.contains("generated_app") || error_log.contains("include!") {
+        categories.push("Generated code error");
+        suggestions.push("Run codegen_build to regenerate OUT_DIR. Check routekit pipeline output for template or code-behind errors.");
+    }
+    if error_log.contains("cannot find type `Req`") || error_log.contains("Req` is not in scope") {
+        categories.push("Missing import for Req");
+        suggestions.push("The framework injects `use pilcrow_web::Req;` automatically in generated code. If writing standalone code, add the import manually.");
+    }
+    if error_log.contains("cannot find function `redirect`") {
+        categories.push("Missing redirect import");
+        suggestions.push("Add `use pilcrow_web::redirect;` or rely on the auto-injected import in code-behind files.");
+    }
+    if error_log.contains("field collision") || error_log.contains("defined in both") {
+        categories.push("Layout/page Props field collision");
+        suggestions.push("A field name is defined in both the layout's Props and the page's Props. Rename one to avoid the collision.");
+    }
+
+    if categories.is_empty() {
+        categories.push("unrecognized error");
+        suggestions.push("Use diagnose_project to scan for structural issues. Check the full cargo error output for the root cause.");
+    }
+
+    json!({
+        "categories": categories,
+        "suggestions": suggestions,
+        "raw_excerpt": error_log.lines().filter(|l| l.contains("error") || l.contains("error[")).take(10).collect::<Vec<_>>(),
+    })
 }

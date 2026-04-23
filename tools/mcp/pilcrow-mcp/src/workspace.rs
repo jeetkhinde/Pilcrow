@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
+use syn::{FnArg, Item, ReturnType, Type, Visibility};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileInfo {
@@ -29,12 +30,45 @@ pub struct OutDirStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PropField {
+    pub name: String,
+    pub type_name: String,
+    pub is_deferred: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CodeBehindInfo {
+    pub has_props: bool,
+    pub prop_fields: Vec<PropField>,
+    pub has_load: bool,
+    pub load_is_async: bool,
+    pub action_names: Vec<String>,
+    pub has_deferred: bool,
+    pub page_options: Vec<String>,
+    pub parse_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RouteNode {
+    pub file_path: String,
+    pub url_pattern: String,
+    pub is_dynamic: bool,
+    pub dynamic_params: Vec<String>,
+    pub has_code_behind: bool,
+    pub code_behind: Option<CodeBehindInfo>,
+    pub layout_chain: Vec<String>,
+    pub has_loading: bool,
+    pub has_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ProjectContext {
     pub project_root: String,
     pub manifest_path: String,
     pub app_root: String,
     pub pilcrow_toml: Option<toml::Value>,
     pub crate_versions: BTreeMap<String, String>,
+    // File lists (preserved for backward compat)
     pub routes: Vec<FileInfo>,
     pub layouts: Vec<FileInfo>,
     pub loading_skeletons: Vec<FileInfo>,
@@ -45,6 +79,10 @@ pub struct ProjectContext {
     pub params: Vec<FileInfo>,
     pub middleware: Option<FileInfo>,
     pub generated_out_dir: OutDirStatus,
+    // Semantic graph
+    pub route_graph: Vec<RouteNode>,
+    pub has_not_found_fallback: bool,
+    pub has_global_error: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -152,18 +190,26 @@ pub fn scan_project(
         None
     };
 
+    let route_html_files = list_matching(&pages, |path| {
+        has_ext(path, "html")
+            && !is_special_page(path, "_layout")
+            && !is_special_page(path, "_loading")
+            && !is_special_page(path, "_not_found")
+            && !is_special_page(path, "_error")
+    })?;
+
+    let route_graph = build_route_graph(&pages, &route_html_files);
+
+    let has_not_found_fallback = pages.join("_not_found.html").exists();
+    let has_global_error = pages.join("_error.html").exists();
+
     Ok(ProjectContext {
         project_root: display_path(&resolved.project_root),
         manifest_path: display_path(&resolved.manifest_path),
         app_root: display_path(&resolved.app_root),
         pilcrow_toml,
         crate_versions: crate_versions(&resolved.project_root, &resolved.manifest_path)?,
-        routes: list_matching(&pages, |path| {
-            has_ext(path, "html")
-                && !is_special_page(path, "_layout")
-                && !is_special_page(path, "_loading")
-                && !is_special_page(path, "_not_found")
-        })?,
+        routes: route_html_files,
         layouts: list_matching(&pages, |path| is_special_page(path, "_layout"))?,
         loading_skeletons: list_matching(&pages, |path| is_special_page(path, "_loading"))?,
         not_found_pages: list_matching(&pages, |path| {
@@ -175,7 +221,306 @@ pub fn scan_project(
         params: list_matching(&src.join("params"), |path| has_ext(path, "rs"))?,
         middleware,
         generated_out_dir: out_dir_status(&resolved.manifest_path)?,
+        route_graph,
+        has_not_found_fallback,
+        has_global_error,
     })
+}
+
+fn build_route_graph(pages_root: &Path, route_files: &[FileInfo]) -> Vec<RouteNode> {
+    route_files
+        .iter()
+        .map(|file| {
+            let rel = &file.path;
+            let url_pattern = derive_url_pattern(rel);
+            let dynamic_params = extract_dynamic_params(&url_pattern);
+            let is_dynamic = !dynamic_params.is_empty();
+
+            let abs_html = pages_root.join(rel);
+            let abs_rs = abs_html.with_extension("rs");
+            let has_code_behind = abs_rs.exists();
+            let code_behind = if has_code_behind {
+                parse_code_behind(&abs_rs)
+            } else {
+                None
+            };
+
+            let layout_chain = collect_layout_chain(pages_root, rel);
+            let has_loading = layout_chain_has_special(pages_root, rel, "_loading");
+            let has_error = layout_chain_has_special(pages_root, rel, "_error");
+
+            RouteNode {
+                file_path: rel.clone(),
+                url_pattern,
+                is_dynamic,
+                dynamic_params,
+                has_code_behind,
+                code_behind,
+                layout_chain,
+                has_loading,
+                has_error,
+            }
+        })
+        .collect()
+}
+
+pub fn derive_url_pattern(rel_path: &str) -> String {
+    // rel_path is relative to pages root, e.g. "products/index.html" or "[id]/index.html"
+    let without_ext = rel_path.trim_end_matches(".html");
+    // Strip trailing /index or a bare "index"
+    let stripped = if without_ext == "index" {
+        ""
+    } else {
+        without_ext.trim_end_matches("/index")
+    };
+
+    if stripped.is_empty() {
+        return "/".to_string();
+    }
+
+    let segments: Vec<&str> = stripped.split('/').collect();
+    let mut url_parts = Vec::new();
+
+    for seg in &segments {
+        // Route groups: (name) -> skip
+        if seg.starts_with('(') && seg.ends_with(')') {
+            continue;
+        }
+        // Dynamic with constraint: [id=matcher] -> :id
+        if seg.starts_with('[') && seg.ends_with(']') {
+            let inner = &seg[1..seg.len() - 1];
+            // Catch-all: [...rest]
+            if inner.starts_with("...") {
+                url_parts.push(format!("*{}", &inner[3..]));
+            } else {
+                // Strip =matcher if present
+                let name = inner.split('=').next().unwrap_or(inner);
+                url_parts.push(format!(":{name}"));
+            }
+        } else {
+            url_parts.push(seg.to_string());
+        }
+    }
+
+    if url_parts.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", url_parts.join("/"))
+    }
+}
+
+fn extract_dynamic_params(url_pattern: &str) -> Vec<String> {
+    url_pattern
+        .split('/')
+        .filter_map(|seg| {
+            if seg.starts_with(':') {
+                Some(seg[1..].to_string())
+            } else if seg.starts_with('*') {
+                Some(format!("...{}", &seg[1..]))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn collect_layout_chain_pub(pages_root: &Path, rel_path: &str) -> Vec<String> {
+    collect_layout_chain(pages_root, rel_path)
+}
+
+fn collect_layout_chain(pages_root: &Path, rel_path: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    // Walk from the file's directory up to pages root looking for _layout.html
+    let path = Path::new(rel_path);
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        let layout = if d.as_os_str().is_empty() {
+            pages_root.join("_layout.html")
+        } else {
+            pages_root.join(d).join("_layout.html")
+        };
+        if layout.exists() {
+            let rel = layout
+                .strip_prefix(pages_root)
+                .unwrap_or(&layout)
+                .to_string_lossy()
+                .into_owned();
+            chain.push(rel);
+        }
+        dir = d.parent();
+    }
+    chain.reverse();
+    chain
+}
+
+fn layout_chain_has_special(pages_root: &Path, rel_path: &str, special: &str) -> bool {
+    let filename = format!("{special}.html");
+    let path = Path::new(rel_path);
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        let special_path = if d.as_os_str().is_empty() {
+            pages_root.join(&filename)
+        } else {
+            pages_root.join(d).join(&filename)
+        };
+        if special_path.exists() {
+            return true;
+        }
+        dir = d.parent();
+    }
+    false
+}
+
+pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
+    let source = fs::read_to_string(path).ok()?;
+    let parsed = match syn::parse_file(&source) {
+        Ok(file) => file,
+        Err(e) => {
+            return Some(CodeBehindInfo {
+                has_props: false,
+                prop_fields: vec![],
+                has_load: false,
+                load_is_async: false,
+                action_names: vec![],
+                has_deferred: false,
+                page_options: vec![],
+                parse_error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let mut has_props = false;
+    let mut prop_fields = Vec::new();
+    let mut has_load = false;
+    let mut load_is_async = false;
+    let mut action_names = Vec::new();
+    let mut page_options = Vec::new();
+
+    for item in &parsed.items {
+        match item {
+            Item::Struct(s) if s.ident == "Props" => {
+                has_props = true;
+                if let syn::Fields::Named(named) = &s.fields {
+                    for field in &named.named {
+                        if let Some(ident) = &field.ident {
+                            let type_name = type_to_string(&field.ty);
+                            let is_deferred = type_name.starts_with("Deferred");
+                            prop_fields.push(PropField {
+                                name: ident.to_string(),
+                                type_name,
+                                is_deferred,
+                            });
+                        }
+                    }
+                }
+            }
+            Item::Fn(f) => {
+                let name = f.sig.ident.to_string();
+                if name == "load" {
+                    has_load = true;
+                    load_is_async = f.sig.asyncness.is_some();
+                } else if is_action_fn(f) {
+                    action_names.push(name);
+                }
+            }
+            Item::Const(c) => {
+                let name = c.ident.to_string();
+                if matches!(name.as_str(), "TRAILING_SLASH" | "LAYOUT") {
+                    page_options.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let has_deferred = prop_fields.iter().any(|f| f.is_deferred);
+
+    Some(CodeBehindInfo {
+        has_props,
+        prop_fields,
+        has_load,
+        load_is_async,
+        action_names,
+        has_deferred,
+        page_options,
+        parse_error: None,
+    })
+}
+
+fn is_action_fn(f: &syn::ItemFn) -> bool {
+    let name = f.sig.ident.to_string();
+    if name == "load" {
+        return false;
+    }
+    if !matches!(f.vis, Visibility::Public(_)) {
+        return false;
+    }
+    let has_req = f.sig.inputs.iter().any(|arg| {
+        let FnArg::Typed(arg) = arg else { return false };
+        type_contains_name(&arg.ty, "Req")
+    });
+    let returns_action = match &f.sig.output {
+        ReturnType::Type(_, ty) => type_contains_name(ty, "ActionResult") || type_contains_name(ty, "Result"),
+        ReturnType::Default => false,
+    };
+    has_req && returns_action
+}
+
+fn type_to_string(ty: &Type) -> String {
+    match ty {
+        Type::Path(p) => {
+            let segments: Vec<String> = p
+                .path
+                .segments
+                .iter()
+                .map(|seg| {
+                    let ident = seg.ident.to_string();
+                    match &seg.arguments {
+                        syn::PathArguments::AngleBracketed(args) => {
+                            let inner: Vec<String> = args
+                                .args
+                                .iter()
+                                .map(|arg| match arg {
+                                    syn::GenericArgument::Type(t) => type_to_string(t),
+                                    _ => String::from("_"),
+                                })
+                                .collect();
+                            if inner.is_empty() {
+                                ident
+                            } else {
+                                format!("{}<{}>", ident, inner.join(", "))
+                            }
+                        }
+                        _ => ident,
+                    }
+                })
+                .collect();
+            segments.join("::")
+        }
+        Type::Reference(r) => {
+            let lifetime = r
+                .lifetime
+                .as_ref()
+                .map(|l| format!("'{} ", l.ident))
+                .unwrap_or_default();
+            let mutability = if r.mutability.is_some() { "mut " } else { "" };
+            format!("&{}{}{}", lifetime, mutability, type_to_string(&r.elem))
+        }
+        Type::Tuple(t) if t.elems.is_empty() => "()".to_string(),
+        _ => "?".to_string(),
+    }
+}
+
+fn type_contains_name(ty: &Type, expected: &str) -> bool {
+    match ty {
+        Type::Path(path) => path
+            .path
+            .segments
+            .iter()
+            .any(|segment| segment.ident == expected),
+        Type::Reference(reference) => type_contains_name(&reference.elem, expected),
+        _ => false,
+    }
 }
 
 pub fn find_out_dir(manifest_path: &Path) -> Result<PathBuf> {
@@ -409,5 +754,74 @@ mod tests {
         let root = temp.path();
         let outside = root.join("../outside.txt");
         assert!(ensure_contained(root, &outside).is_err());
+    }
+
+    #[test]
+    fn derive_url_pattern_index() {
+        assert_eq!(derive_url_pattern("index.html"), "/");
+    }
+
+    #[test]
+    fn derive_url_pattern_nested() {
+        assert_eq!(derive_url_pattern("products/index.html"), "/products");
+    }
+
+    #[test]
+    fn derive_url_pattern_dynamic() {
+        assert_eq!(derive_url_pattern("[id]/index.html"), "/:id");
+    }
+
+    #[test]
+    fn derive_url_pattern_constraint() {
+        assert_eq!(derive_url_pattern("[id=integer]/index.html"), "/:id");
+    }
+
+    #[test]
+    fn derive_url_pattern_route_group_stripped() {
+        assert_eq!(derive_url_pattern("(admin)/dashboard.html"), "/dashboard");
+    }
+
+    #[test]
+    fn derive_url_pattern_catch_all() {
+        assert_eq!(derive_url_pattern("[...rest]/index.html"), "/*rest");
+    }
+
+    #[test]
+    fn route_graph_includes_url_patterns() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let context = scan_project(&root, None, None).unwrap();
+        let patterns: Vec<&str> = context
+            .route_graph
+            .iter()
+            .map(|n| n.url_pattern.as_str())
+            .collect();
+        assert!(patterns.contains(&"/"), "expected / route, got {:?}", patterns);
+    }
+
+    #[test]
+    fn code_behind_parses_load_and_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.rs");
+        fs::write(
+            &path,
+            r#"
+pub struct Props { pub title: String }
+pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { title: "hi".into() }) }
+pub async fn submit(req: Req) -> ActionResult { redirect("/") }
+"#,
+        )
+        .unwrap();
+        let info = parse_code_behind(&path).unwrap();
+        assert!(info.has_load);
+        assert!(info.load_is_async);
+        assert!(info.action_names.contains(&"submit".to_string()));
+        assert!(info.has_props);
     }
 }

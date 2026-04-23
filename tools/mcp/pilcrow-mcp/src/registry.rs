@@ -33,6 +33,18 @@ pub struct Feature {
     pub validation_rules: Vec<String>,
     #[serde(default)]
     pub scaffold_templates: Vec<String>,
+    #[serde(default)]
+    pub canonical_usage: Option<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+    #[serde(default)]
+    pub invalid_examples: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<String>,
+    #[serde(default)]
+    pub test_refs: Vec<String>,
+    #[serde(default)]
+    pub silcrow_boundary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8,6 +8,27 @@ domain = "pilcrow"
 status = "stable"
 summary = "Server-rendered pages are discovered from src/pages/**/*.html with optional Rust code-behind."
 spec = "A page is an HTML template under src/pages. A sibling .rs file may declare Props and an async load(req: Req) -> AppResult<Props> function. Pages are registered by generated code through pilcrow_web::include_generated_app!()."
+canonical_usage = "Create src/pages/products/index.html and src/pages/products/index.rs. In index.rs: `pub struct Props { pub items: Vec<String> }` and `pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { items: vec![] }) }`. Access in template: `{{ items }}`."
+constraints = [
+  "Page .html files must live under src/pages/.",
+  "Code-behind load() must be async, return AppResult<Props>, and accept Req.",
+  "Props must be a public struct named Props.",
+  "Do not call pilcrow_web::include_generated_app!() manually — the pilcrow_app!() macro does it.",
+]
+invalid_examples = [
+  "fn load() -> Props — missing async, wrong return type",
+  "pub async fn load() -> AppResult<Props> — missing Req argument",
+  "Manually registering a page route in main.rs with .route()",
+]
+source_refs = [
+  "crates/routekit/src/templating/codegen/page_routes.rs",
+  "crates/routekit/src/templating/codegen/instrument.rs",
+  "crates/web/src/lib.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+  "sandbox/apps/web/src/pages/index.rs",
+]
 validation_rules = [
   "Pages should not manually register Axum routes.",
   "Code-behind load functions should be async and return AppResult<Props>.",
@@ -20,7 +41,27 @@ name = "File Routing"
 domain = "pilcrow"
 status = "stable"
 summary = "Route paths are derived from files and directories under src/pages and src/api."
-spec = "index.html maps to its containing directory, dynamic segments use bracket syntax, route groups use parenthesized directories, and generated route helpers live in OUT_DIR."
+spec = "index.html maps to its containing directory, dynamic segments use bracket syntax [param], route groups use parenthesized directories (group), and generated route helpers live in OUT_DIR."
+canonical_usage = "src/pages/index.html -> GET /. src/pages/products/index.html -> GET /products. src/pages/[id]/index.html -> GET /:id. src/pages/(admin)/dashboard.html -> GET /dashboard (group stripped). src/pages/[id=integer]/index.html -> GET /:id with integer constraint."
+constraints = [
+  "Page routes must live under src/pages.",
+  "API routes must live under src/api.",
+  "Dynamic params use [name] syntax; constraint matchers use [name=matcher] syntax.",
+  "Route groups use (name) syntax — strips the name from the URL.",
+  "index.html in a directory maps to the directory path.",
+]
+invalid_examples = [
+  "Registering routes in main.rs with .route() or Router::new()",
+  "Using :param syntax in file names — that is axum runtime notation; file names use [param]",
+  "Placing page files outside src/pages/",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs",
+  "crates/routekit/src/templating/codegen/app_module.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Do not hand-wire page routes in main.rs.",
   "Keep routes under src/pages or src/api.",
@@ -33,7 +74,27 @@ name = "Layouts"
 domain = "pilcrow"
 status = "stable"
 summary = "Layouts are HTML templates named _layout.html and compose around nested pages."
-spec = "A _layout.html file applies to pages in its directory subtree. A route group may provide its own _layout.html without adding a URL segment."
+spec = "A _layout.html file applies to pages in its directory subtree. A route group may provide its own _layout.html without adding a URL segment. Layouts may have a .rs code-behind with their own Props and load()."
+canonical_usage = "Create src/pages/_layout.html with `{{ content }}` slot. Optionally create src/pages/_layout.rs with `pub struct Props { pub user: Option<String> }` and `pub async fn load(req: Req) -> AppResult<Props> { ... }`. The layout Props fields are merged into page Props as __MergedProps."
+constraints = [
+  "Layout files must be named _layout.html.",
+  "Layout code-behind load() must return AppResult<Props> — same convention as pages.",
+  "Layouts cannot define named actions — only load() is permitted.",
+  "Prop field names must not collide between layout and page Props (build error if they do).",
+  "Layout LAYOUT=none opt-out is set in the page code-behind, not the layout itself.",
+]
+invalid_examples = [
+  "Naming a layout file layout.html instead of _layout.html",
+  "Defining pub async fn create(req: Req) -> ActionResult in a layout code-behind",
+  "Having a field named 'title' in both _layout.rs Props and the page's Props",
+]
+source_refs = [
+  "crates/routekit/src/templating/codegen/templates.rs",
+  "crates/routekit/src/templating/codegen/types.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Use _layout.html for shared shells instead of duplicating page chrome.",
 ]
@@ -45,7 +106,22 @@ name = "Route Groups"
 domain = "pilcrow"
 status = "stable"
 summary = "Parenthesized page directories organize routes without contributing URL segments."
-spec = "Directories like src/pages/(admin) may contain pages and layouts. The group name is for organization and layout scoping only."
+spec = "Directories like src/pages/(admin) may contain pages and layouts. The group name is for organization and layout scoping only. The URL does not include the group directory name."
+canonical_usage = "Create src/pages/(admin)/_layout.html for an admin shell. Place src/pages/(admin)/dashboard.html for GET /dashboard. The (admin) group applies the layout without adding /admin to the URL."
+constraints = [
+  "Route group directories must stay inside src/pages.",
+  "Group names must be wrapped in parentheses: (name).",
+  "Groups may nest but the group name never appears in the generated URL.",
+]
+invalid_examples = [
+  "Using a plain directory 'admin' when you want a group — that creates a /admin URL prefix.",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Route group directories must stay inside src/pages.",
 ]
@@ -57,7 +133,26 @@ name = "Fragments"
 domain = "pilcrow"
 status = "stable"
 summary = "Configured fragment directories expose HTML fragments as addressable server-rendered endpoints."
-spec = "Pilcrow.toml [[fragments]] entries point to directories relative to src. Fragment HTML files are scanned and generated as URL-accessible fragment routes."
+spec = "Pilcrow.toml [[fragments]] entries point to directories relative to src. Fragment HTML files are scanned and generated as URL-accessible fragment routes. No layout wrapping is applied. Code-behind files work exactly as with pages."
+canonical_usage = "In Pilcrow.toml: `[[fragments]]\\ndir = \"widgets\"`. Create src/widgets/user-card.html -> GET /widgets/user-card. Optionally create src/widgets/user-card.rs with Props and load(). Fragment modules are auto-available as `fragments::widgets::user_card`."
+constraints = [
+  "Fragment dirs are configured in Pilcrow.toml [[fragments]] — not auto-discovered.",
+  "No layout is applied to fragment routes.",
+  "Fragment URLs default to the dir name; override with url = \"prefix\".",
+  "Module names are frag_{url_prefix}_{snake_path}.",
+  "Fragment dirs may import ui/ components.",
+]
+invalid_examples = [
+  "Placing fragment files under src/pages/ — those would be treated as regular routes with layout wrapping",
+  "Referencing a fragment dir without adding it to Pilcrow.toml [[fragments]]",
+]
+source_refs = [
+  "crates/routekit/src/templating/build_config.rs",
+  "crates/routekit/src/templating/pipeline.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Fragment scaffolds must respect Pilcrow.toml [[fragments]].",
 ]
@@ -69,7 +164,23 @@ name = "API Routes"
 domain = "pilcrow"
 status = "stable"
 summary = "Rust API routes are discovered from src/api/**/*.rs."
-spec = "API route files export a router() function returning axum::Router. Routekit discovers these files and mounts them into the generated application router."
+spec = "API route files export a `pub fn router() -> axum::Router` function. Routekit discovers these files and mounts them into the generated application router via the generated_api_mods.rs file."
+canonical_usage = "Create src/api/products.rs. Export `pub fn router() -> axum::Router { Router::new().route(\"/api/products\", get(list)) }`. The router is automatically mounted by the build pipeline."
+constraints = [
+  "API route files must live under src/api/.",
+  "Each file must export `pub fn router() -> axum::Router`.",
+  "Do not mount API routers manually in main.rs — the build pipeline does it.",
+]
+invalid_examples = [
+  "An API file without pub fn router()",
+  "Mounting the API router in main.rs with .merge()",
+]
+source_refs = [
+  "crates/routekit/src/templating/codegen/api_routes.rs",
+]
+test_refs = [
+  "sandbox/apps/web/src/api/products.rs",
+]
 validation_rules = [
   "API files should expose router() rather than registering from main.rs.",
 ]
@@ -81,7 +192,27 @@ name = "Named Actions"
 domain = "pilcrow"
 status = "stable"
 summary = "Page code-behind files can declare named action handlers for enhanced and plain form posts."
-spec = "Named actions are public functions other than load that return ActionResult, commonly pub async fn create(req: Req) -> ActionResult. The client invokes them with ?/name."
+spec = "Named actions are public functions other than load that return ActionResult, commonly `pub async fn create(req: Req) -> ActionResult`. The client invokes them with ?/name URL fragment (POST only). Unknown action names return AppError::NotFound."
+canonical_usage = "In products/index.rs: `pub async fn create(req: Req) -> ActionResult { let name = req.form.get(\"name\").unwrap_or(\"\"); redirect(\"/products\") }`. In template: `<form s-post=\"?/create\">`. A plain POST to /products?/create triggers this action."
+constraints = [
+  "Action fns must return ActionResult (or Result<Response, AppError>).",
+  "Action fns must be POST-only — GET requests do not trigger actions.",
+  "Plain POST without ?/name fragment returns 404.",
+  "Layouts cannot define named actions.",
+  "UI components must not define named actions.",
+]
+invalid_examples = [
+  "pub async fn submit() -> ActionResult — missing Req argument",
+  "pub async fn submit(req: Req) -> Response — wrong return type",
+  "Using actions in a _layout.rs code-behind",
+]
+source_refs = [
+  "crates/routekit/src/templating/codegen/page_routes.rs",
+  "crates/routekit/src/templating/codegen/instrument.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Named action handlers should return ActionResult.",
   "Actions should live next to the page template they serve.",
@@ -95,6 +226,21 @@ domain = "silcrow"
 status = "stable"
 summary = "s-boost and s-target provide server-backed SPA-style navigation."
 spec = "Use s-boost on anchors and s-target to choose the DOM target. Responses remain server-rendered HTML and should work as normal links without JavaScript."
+canonical_usage = "<a href=\"/products\" s-boost s-target=\"#content\">Products</a>. With s-boost, silcrow intercepts the click and fetches the page, swapping the #content element. Falls back to normal navigation without JS."
+constraints = [
+  "Silcrow directives belong in HTML templates, not Rust code.",
+  "Server responses must be valid HTML — silcrow swaps the target element.",
+  "Links must work without JS (progressive enhancement).",
+]
+invalid_examples = [
+  "Using s-boost in a .rs code-behind file",
+  "Returning JSON from a page handler that is targeted with s-boost",
+]
+source_refs = [
+  "crates/runtime/assets/silcrow.js",
+]
+test_refs = []
+silcrow_boundary = "Exact s-boost/s-target behavior, DOM patching, cache, and navigation history are owned by silcrow-mcp. Pilcrow MCP validates server-side HTML shape and response headers."
 validation_rules = [
   "Silcrow directives belong in HTML templates, not Rust code.",
 ]
@@ -106,7 +252,25 @@ name = "Silcrow Enhanced Forms"
 domain = "silcrow"
 status = "stable"
 summary = "Enhanced forms post to server actions and patch the DOM from server responses."
-spec = "Use standard HTML forms with Silcrow attributes and Pilcrow named actions. Server handlers return ActionResult and may set response headers through Req response helpers."
+spec = "Use standard HTML forms with Silcrow attributes and Pilcrow named actions. Server handlers return ActionResult and may set response headers through Req response helpers. Enhanced and plain-browser fallback must both work."
+canonical_usage = "<form s-post=\"?/submit\" s-target=\"#result\"><input name=\"email\" /><button>Submit</button></form>. Server: `pub async fn submit(req: Req) -> ActionResult { if req.form.get(\"email\").is_none() { return req.fail(form_errors().error(\"email\", \"required\")); } redirect(\"/dashboard\") }`."
+constraints = [
+  "Forms must have a server action at the ?/name path.",
+  "Plain HTML POST fallback must work without JavaScript.",
+  "req.fail() returns JSON for enhanced requests, flash+redirect for plain POST.",
+]
+invalid_examples = [
+  "Using onclick= or onsubmit= handlers instead of Pilcrow named actions",
+  "Returning void or () from an action handler",
+]
+source_refs = [
+  "crates/runtime/src/context.rs",
+  "crates/runtime/assets/silcrow.js",
+]
+test_refs = [
+  "crates/runtime/tests/response.rs",
+]
+silcrow_boundary = "Exact silcrow form patching, JSON response shape, and error binding are owned by silcrow-mcp. Pilcrow MCP validates action signatures, ActionResult return types, and server-side response helpers."
 validation_rules = [
   "Enhanced forms must have a server action path.",
   "Do not model Silcrow forms as standalone client-state islands.",
@@ -119,7 +283,25 @@ name = "Deferred Streams"
 domain = "pilcrow"
 status = "stable"
 summary = "Deferred<T> and DeferredHtml stream late data or HTML patches after the shell response."
-spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve."
+spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve. Deferred<T> sends `window.__pilcrow_deferred(key, value)` scripts; DeferredHtml sends `window.__pd(slot_name, html)` scripts."
+canonical_usage = "pub struct Props { pub title: String, pub count: Deferred<i32> }. pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { title: String::from(\"Hello\"), count: Deferred::spawn(async { expensive_db_call().await }) }) }. In template: {{ count }} (renders as empty string until resolved)."
+constraints = [
+  "Deferred<T> type T must implement Display for the initial shell render.",
+  "DeferredHtml requires a slot name and optional loading HTML.",
+  "Deferred fields must be declared in Props.",
+  "Deferred::ready(value) creates an already-resolved value with no streaming overhead.",
+]
+invalid_examples = [
+  "Using Deferred<T> outside of a Props struct",
+  "Forgetting that Deferred<T> renders as empty string in the initial shell",
+]
+source_refs = [
+  "crates/runtime/src/deferred.rs",
+  "crates/routekit/src/templating/codegen/templates.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Deferred fields must be declared in Props.",
 ]
@@ -131,7 +313,25 @@ name = "Middleware"
 domain = "pilcrow"
 status = "stable"
 summary = "src/middleware.rs can provide request middleware for generated routes."
-spec = "Middleware receives Req and Next, then returns a Response. It should call next.run().await when continuing to the route handler."
+spec = "Middleware receives Req and Next, then returns a Response. It should call next.run().await when continuing to the route handler. req.locals and req.res set in middleware are shared with all downstream load() and action fns."
+canonical_usage = "pub async fn middleware(req: Req, next: Next) -> Response { let token = req.cookies.get(\"session\").map(|c| c.value().to_string()); match auth::verify(token).await { Ok(user) => req.locals.set(user), Err(_) if req.path.starts_with(\"/admin\") => return AppError::Unauthorized.into_response(), _ => {} } next.run().await }"
+constraints = [
+  "Middleware must live in src/middleware.rs — no other location is auto-detected.",
+  "Middleware function must be named `middleware` (pub async fn middleware).",
+  "next.run() forwards the entire request including body.",
+  "Returning a Response without calling next.run() short-circuits the request.",
+]
+invalid_examples = [
+  "Placing middleware in src/pages/middleware.rs — not auto-detected",
+  "Naming the function `handle` instead of `middleware`",
+]
+source_refs = [
+  "crates/runtime/src/middleware.rs",
+  "crates/routekit/src/templating/codegen/app_module.rs",
+]
+test_refs = [
+  "crates/runtime/tests/context.rs",
+]
 validation_rules = [
   "Middleware should live in src/middleware.rs.",
 ]
@@ -143,7 +343,20 @@ name = "Typed Env Config"
 domain = "pilcrow"
 status = "stable"
 summary = "Pilcrow.toml [env] declarations generate typed Public and Private env structs."
-spec = "Declare public and private env var names in Pilcrow.toml. The build pipeline generates env::Public and env::Private load() helpers in OUT_DIR."
+spec = "Declare public and private env var names in Pilcrow.toml. The build pipeline generates env::Public and env::Private load() helpers in OUT_DIR. Public vars use PUBLIC_ prefix convention."
+canonical_usage = "In Pilcrow.toml: `[env]\\npublic = [\"PUBLIC_API_URL\"]\\nprivate = [\"DATABASE_URL\"]`. Generated: env::Public::load() and env::Private::load() with typed fields accessible from load() and action fns."
+constraints = [
+  "Public env names should use PUBLIC_ prefix when client-visible.",
+  "Private env names must not start with PUBLIC_.",
+  "Generated env structs are in OUT_DIR/generated_env.rs.",
+]
+invalid_examples = [
+  "Using std::env::var() directly in load() instead of typed env helpers",
+]
+source_refs = [
+  "crates/routekit/src/templating/build_config.rs",
+]
+test_refs = []
 validation_rules = [
   "Public env names should use PUBLIC_ when intended for client-visible use.",
 ]
@@ -155,7 +368,21 @@ name = "Loading Skeletons"
 domain = "pilcrow"
 status = "stable"
 summary = "_loading.html templates provide scoped loading skeletons."
-spec = "A _loading.html template in a pages subtree is appended to rendered HTML for matching routes so Silcrow can show scoped pending UI."
+spec = "A _loading.html template in a pages subtree is appended to rendered HTML for matching routes so Silcrow can show scoped pending UI during navigation. The _loading.html content is injected as a <template> element."
+canonical_usage = "Create src/pages/_loading.html with skeleton content. Silcrow will show this during navigation to routes in the same directory. Scoped to the directory — a _loading.html in (admin)/ applies to admin group routes only."
+constraints = [
+  "_loading.html applies to sibling and child routes, not parent routes.",
+  "Loading templates are injected as <template> elements — they are not rendered as routes.",
+]
+invalid_examples = [
+  "Using loading.html (without underscore) — not discovered as a loading skeleton",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Use _loading.html for route loading states.",
 ]
@@ -167,11 +394,56 @@ name = "Page Options"
 domain = "pilcrow"
 status = "stable"
 summary = "Page code-behind constants configure route-specific generation behavior."
-spec = "Routekit parses supported page option constants from code-behind and strips them from generated modules."
+spec = "Routekit parses supported page option constants from code-behind and strips them from generated modules. Supported: TRAILING_SLASH (always|never|ignore) and LAYOUT (none)."
+canonical_usage = "pub const TRAILING_SLASH: &str = \"always\"; — adds a redirect from /path to /path/ for GET. pub const LAYOUT: &str = \"none\"; — opts out of all layout wrapping for this page."
+constraints = [
+  "Only TRAILING_SLASH and LAYOUT are currently supported.",
+  "TRAILING_SLASH values: \"always\" (redirect to /path/), \"ignore\" (redirect to /path), \"never\" (default).",
+  "LAYOUT values: only \"none\" is supported.",
+  "Constants are stripped from the emitted module — they never reach the template.",
+]
+invalid_examples = [
+  "pub const PRERENDER: bool = true — SSG is planned, not stable",
+  "pub const TRAILING_SLASH: &str = \"redirect\" — invalid value",
+  "pub const LAYOUT: &str = \"minimal\" — only \"none\" is valid",
+]
+source_refs = [
+  "crates/routekit/src/templating/page_options.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs",
+]
 validation_rules = [
   "Unsupported page option constants should be rejected during validation.",
 ]
 scaffold_templates = []
+
+[[features]]
+id = "param-matchers"
+name = "Typed Param Matchers"
+domain = "pilcrow"
+status = "stable"
+summary = "Custom param matchers in src/params/ constrain dynamic route segments at request time."
+spec = "A file src/params/integer.rs exporting `pub fn match_param(value: &str) -> bool` is used when a route segment is named [id=integer]. The generated handler calls match_param at request time and returns 404 if it returns false."
+canonical_usage = "Create src/params/integer.rs: `pub fn match_param(value: &str) -> bool { value.parse::<i64>().is_ok() }`. Create src/pages/[id=integer]/index.html — only numeric :id values will match this route."
+constraints = [
+  "Matcher files must live in src/params/.",
+  "Each file must export `pub fn match_param(value: &str) -> bool`.",
+  "Matcher name in [id=name] must match the filename (without .rs).",
+]
+invalid_examples = [
+  "Using [id:int] syntax for custom matchers — that is built-in constraint syntax",
+  "Placing matcher files outside src/params/",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs",
+  "crates/routekit/src/constraint.rs",
+]
+test_refs = []
+validation_rules = [
+  "Param matcher files must export pub fn match_param(value: &str) -> bool.",
+]
+scaffold_templates = ["typed-param"]
 
 [[features]]
 id = "islands"
@@ -180,6 +452,15 @@ domain = "pilcrow"
 status = "planned"
 summary = "Client islands are planned and not supported by the current stable SSR pipeline."
 spec = "Planned feature. Agents may discuss architecture but must not scaffold Island directives or client-only stateful components."
+constraints = [
+  "Do not use <Island, client:load, client:idle, client:visible, or s-island in stable SSR pages.",
+]
+invalid_examples = [
+  "<Island client:load> — planned, not implemented",
+  "client:idle on any element — planned, not implemented",
+]
+source_refs = []
+test_refs = []
 validation_rules = [
   "Reject Island directives in stable pages.",
 ]
@@ -192,6 +473,14 @@ domain = "pilcrow"
 status = "planned"
 summary = "Build-time static output generation is planned."
 spec = "Planned feature. Current builds produce server-rendered routes rather than static output files."
+constraints = [
+  "Do not use PRERENDER, generateStaticParams, or revalidate constants.",
+]
+invalid_examples = [
+  "pub const PRERENDER: bool = true — planned, not implemented",
+]
+source_refs = []
+test_refs = []
 validation_rules = [
   "Reject SSG-only syntax and configuration until implemented.",
 ]
@@ -204,6 +493,14 @@ domain = "pilcrow"
 status = "planned"
 summary = "Incremental regeneration of SSR output is planned."
 spec = "Planned feature. Current SSR pages render on request without incremental cache semantics."
+constraints = [
+  "Do not use revalidate or ISR-specific constants.",
+]
+invalid_examples = [
+  "pub const REVALIDATE: u64 = 60 — planned, not implemented",
+]
+source_refs = []
+test_refs = []
 validation_rules = [
   "Reject incremental SSR directives until implemented.",
 ]
