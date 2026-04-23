@@ -1,13 +1,13 @@
 {
   "mcpServers": {
-    "pilcrow": {
+    "pilcrow-mcp": {
       "type": "stdio",
       "command": "cargo",
       "args": [
         "run",
         "--quiet",
         "--manifest-path",
-        "tools/mcp/pilcrow-mcp/Cargo.toml",
+        "/Users/jagjeet/Development/Pilcrow/tools/mcp/pilcrow-mcp/Cargo.toml",
         "--"
       ],
       "env": {}
