@@ -209,7 +209,7 @@ Silcrow, then defer detailed client-runtime behavior to `silcrow-mcp`.
   - domain logic stays in normal modules. ✅
   - `rmcp` churn should not leak into validators/scanners/scaffolders. ✅
 
-- Retire `tools/mcp/codegen-inspector` only after Rust MCP reaches complete parity. ⬜ (optional — Rust MCP is now complete; retirement is a separate cleanup)
+- Retire `tools/mcp/codegen-inspector` only after Rust MCP reaches complete parity. ✅ Retired — directory deleted, `.mcp.json` and `settings.local.json` cleaned up.
 
 ## Definition Of Done
 
