@@ -333,6 +333,7 @@ pub fn compile_to_out_dir_with_config(
         &templates_output.deferred_fields_map,
         &templates_output.deferred_html_fields_map,
         &templates_output.isr_config_map,
+        &templates_output.ssg_config_map,
         has_middleware,
         src_root,
         out_dir,

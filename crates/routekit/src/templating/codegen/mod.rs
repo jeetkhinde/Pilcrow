@@ -29,7 +29,7 @@ use syn::parse_quote;
 
 use crate::routing::constraint::ParameterConstraint;
 use crate::routing::discovery::{build_api_routes, build_fragment_routes, build_page_routes};
-use crate::templating::page_options::{IsrOpts, LayoutOpt, PageOptions, TrailingSlash};
+use crate::templating::page_options::{IsrOpts, LayoutOpt, PageOptions, SsgOpts, TrailingSlash};
 
 /// One generated page route entry for build-time manifests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,4 +84,5 @@ pub struct WrittenTemplatesOutput {
     pub deferred_fields_map: HashMap<String, Vec<String>>,
     pub deferred_html_fields_map: HashMap<String, Vec<String>>,
     pub isr_config_map: HashMap<String, IsrOpts>,
+    pub ssg_config_map: HashMap<String, SsgOpts>,
 }

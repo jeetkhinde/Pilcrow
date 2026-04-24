@@ -93,21 +93,33 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
             }
         }
 
-        // Detect unimplemented SSG constants (ISR constants are now supported).
-        // REVALIDATE, MAX_STALE, CACHE_TAGS, CACHE_VARY, PRERENDER are live ISR features.
-        // GENERATE_STATIC_PARAMS remains unimplemented.
+        // Detect truly unimplemented static-output constants.
+        // PRERENDER is now a stable SSG feature. GENERATE_STATIC_PARAMS remains unimplemented.
         for unsupported_const in ["GENERATE_STATIC_PARAMS"] {
             if line.contains(unsupported_const) && line.contains("const") {
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-planned-static-output",
-                    format!("`{unsupported_const}` is a planned feature (SSG) and is not currently supported."),
+                    format!("`{unsupported_const}` is not supported in Pilcrow. Use PRERENDER = true for SSG."),
                     path,
                     Some(lnum),
                     Some("registry.toml: feature ssg"),
-                    Some("Remove this constant. Use REVALIDATE for ISR or Deferred<T> for deferred loading."),
+                    Some("Use pub const PRERENDER: bool = true; in your code-behind for SSG prerendering."),
                 ));
             }
+        }
+
+        // Detect PRERENDER combined with REVALIDATE in the same file (mutually exclusive at build time).
+        if line.contains("PRERENDER") && line.contains("const") && code.contains("REVALIDATE") {
+            findings.push(finding_with_line(
+                Severity::Error,
+                "pilcrow-ssg-isr-conflict",
+                "PRERENDER and REVALIDATE are mutually exclusive — the build will panic if both are declared.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature ssg"),
+                Some("Use PRERENDER for full SSG prerendering, or REVALIDATE for stale-while-revalidate ISR. Not both."),
+            ));
         }
     }
 
@@ -272,20 +284,29 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
             }
         }
 
-        // generateStaticParams and prerender are still unimplemented SSG features.
-        // revalidate and ISR constants belong in .rs code-behind files, not HTML.
-        for directive in ["generateStaticParams", "prerender"] {
-            if line.contains(directive) {
-                findings.push(finding_with_line(
-                    Severity::Error,
-                    "pilcrow-planned-static-output",
-                    format!("`{directive}` depends on planned SSG support and is not yet implemented."),
-                    path,
-                    Some(lnum),
-                    Some("registry.toml: feature ssg"),
-                    Some("Keep the route as an SSR page. For caching, use REVALIDATE in the .rs code-behind."),
-                ));
-            }
+        // generateStaticParams is unimplemented. `prerender` in HTML is wrong syntax —
+        // PRERENDER belongs in the .rs code-behind, not the HTML template.
+        if line.contains("generateStaticParams") {
+            findings.push(finding_with_line(
+                Severity::Error,
+                "pilcrow-planned-static-output",
+                "`generateStaticParams` is not supported in Pilcrow. Use PRERENDER = true in the .rs code-behind.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature ssg"),
+                Some("Add pub const PRERENDER: bool = true; in your .rs code-behind file to enable SSG."),
+            ));
+        }
+        if line.contains("prerender") && !line.contains("PRERENDER") {
+            findings.push(finding_with_line(
+                Severity::Warning,
+                "pilcrow-prerender-in-html",
+                "`prerender` is not a valid HTML attribute. SSG is configured in the .rs code-behind.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature ssg"),
+                Some("Add pub const PRERENDER: bool = true; in your paired .rs file instead."),
+            ));
         }
         if line.contains("REVALIDATE") || line.contains("CACHE_TAGS") || line.contains("CACHE_VARY") {
             findings.push(finding_with_line(

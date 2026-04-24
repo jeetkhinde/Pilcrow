@@ -11,8 +11,6 @@ pub struct IsrOpts {
     pub cache_tags: Vec<String>,
     /// Locals keys whose values scope the cache key (`CACHE_VARY`).
     pub cache_vary: Vec<String>,
-    /// Whether to pre-warm this route at build time (`PRERENDER`).
-    pub prerender: bool,
 }
 
 impl IsrOpts {
@@ -22,18 +20,32 @@ impl IsrOpts {
     }
 }
 
+/// SSG options parsed from `pub const` declarations in code-behind files.
+///
+/// All constants are stripped from the emitted module — they never reach runtime code.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SsgOpts {
+    /// Whether to pre-render this route at server startup (`PRERENDER`).
+    pub prerender: bool,
+    /// Whether the code-behind declares `pub async fn entries()`.
+    /// Required for dynamic routes (patterns with `:param` segments).
+    pub has_entries_fn: bool,
+}
+
 /// Per-page options parsed from `pub const` declarations in code-behind files.
 ///
 /// ```rust,ignore
 /// pub const TRAILING_SLASH: &str = "always"; // "always" | "never" | "ignore"
 /// pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
 /// pub const REVALIDATE: u64 = 60;            // ISR: cache TTL in seconds
+/// pub const PRERENDER: bool = true;          // SSG: pre-render at server startup
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PageOptions {
     pub trailing_slash: TrailingSlash,
     pub layout: LayoutOpt,
     pub isr: IsrOpts,
+    pub ssg: SsgOpts,
 }
 
 /// Whether this page participates in the automatic layout chain.

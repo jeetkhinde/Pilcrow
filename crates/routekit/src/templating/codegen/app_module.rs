@@ -158,6 +158,7 @@ pub fn render_generated_app_module(
     deferred_fields_map: &HashMap<String, Vec<String>>,
     deferred_html_fields_map: &HashMap<String, Vec<String>>,
     isr_config_map: &HashMap<String, IsrOpts>,
+    ssg_config_map: &HashMap<String, SsgOpts>,
     has_middleware: bool,
 ) -> String {
     let mut out = String::new();
@@ -233,6 +234,29 @@ pub fn render_generated_app_module(
         };
 
         let isr_opts = isr_config_map.get(&entry.symbol);
+        let ssg_opts = ssg_config_map.get(&entry.symbol);
+
+        // Build-time validation: PRERENDER on a dynamic route requires entries().
+        if ssg_opts.map_or(false, |o| o.prerender) && page_load.is_some() {
+            let is_dynamic = entry.pattern.contains(':');
+            let has_entries = ssg_opts.map_or(false, |o| o.has_entries_fn);
+            if is_dynamic && !has_entries {
+                panic!(
+                    "PRERENDER = true on dynamic route '{}' (module `{}`) requires an `entries()` function.\n\
+                     Add `pub async fn entries() -> Vec<HashMap<String, String>>` to the code-behind file.",
+                    entry.pattern, entry.symbol
+                );
+            }
+            // PRERENDER and ISR are mutually exclusive.
+            if isr_opts.map_or(false, |o| o.is_active()) {
+                panic!(
+                    "PRERENDER and REVALIDATE are mutually exclusive on route '{}' (module `{}`).\n\
+                     Use either ISR (REVALIDATE) or SSG (PRERENDER), not both.",
+                    entry.pattern, entry.symbol
+                );
+            }
+        }
+
         let pattern_str = entry.pattern.as_str();
         let _ = writeln!(
             out,
@@ -277,6 +301,21 @@ pub fn render_generated_app_module(
             );
             out.push_str(&emit_loading_append(loading_mod));
             out.push_str("            ::pilcrow_web::axum::response::Html(html)\n");
+        } else if ssg_opts.map_or(false, |o| o.prerender)
+            && page_load.is_some()
+            && deferred_fields.is_empty()
+            && deferred_html_fields.is_empty()
+        {
+            // ── Case 1.5: SSG prerendered page ──────────────────────────────────
+            out.push_str(&emit_ssg_handler(
+                mod_name,
+                render_fn,
+                error_mod,
+                loading_mod,
+                page_load.expect("checked above"),
+                &active_chain,
+                chain_info,
+            ));
         } else if isr_opts.map_or(false, |o| o.is_active())
             && page_load.is_some()
             && deferred_fields.is_empty()
@@ -672,6 +711,16 @@ pub fn render_generated_app_module(
 
     out.push_str("}\n");
 
+    // ── SSG prerender function ────────────────────────────────────────────────
+    out.push_str(&emit_prerender_all(
+        page_entries,
+        load_map,
+        layout_fields_map,
+        ssg_config_map,
+        deferred_fields_map,
+        deferred_html_fields_map,
+    ));
+
     // Generated middleware shim: extracts Req from parts (body stays intact),
     // calls the user's `middleware()`, then forwards to the next handler.
     if has_middleware {
@@ -1051,6 +1100,7 @@ pub fn write_generated_app_module(
     deferred_fields_map: &HashMap<String, Vec<String>>,
     deferred_html_fields_map: &HashMap<String, Vec<String>>,
     isr_config_map: &HashMap<String, IsrOpts>,
+    ssg_config_map: &HashMap<String, SsgOpts>,
     has_middleware: bool,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
@@ -1071,6 +1121,7 @@ pub fn write_generated_app_module(
         deferred_fields_map,
         deferred_html_fields_map,
         isr_config_map,
+        ssg_config_map,
         has_middleware,
     );
     fs::write(out_dir.join("generated_app.rs"), app_source)?;
@@ -1079,4 +1130,430 @@ pub fn write_generated_app_module(
     fs::write(out_dir.join("generated_api_mods.rs"), mods_source)?;
 
     Ok(())
+}
+
+// ── SSG handler (Case 1.5) ────────────────────────────────────────────────
+
+/// Emit the handler body for an SSG prerendered page.
+///
+/// Checks the ISR cache first (keyed by `req.path`). On a hit, returns the
+/// cached HTML immediately. On a miss (startup race), runs the full load chain,
+/// renders, writes to cache with `u64::MAX` TTL, and returns the response.
+fn emit_ssg_handler(
+    mod_name: &str,
+    render_fn: &str,
+    error_mod: Option<&str>,
+    loading_mod: Option<&str>,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, &str, &Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+    out.push_str("            let __isr_arc = req.cache.__arc();\n");
+    out.push_str("            let __ssg_key = req.path.clone();\n");
+    out.push_str("            if let Some(ref __cache) = __isr_arc {\n");
+    out.push_str(
+        "                if let ::pilcrow_web::IsrCacheState::Fresh(html) = __cache.check(&__ssg_key, None).await {\n",
+    );
+    out.push_str(
+        "                    return ::pilcrow_web::axum::response::Html(html).into_response();\n",
+    );
+    out.push_str("                }\n");
+    out.push_str("            }\n");
+
+    out.push_str("            let __resp_handle = req.res.clone();\n");
+
+    let any_layout_load = !active_chain.is_empty();
+    let layout_req_consumers = active_chain.iter().filter(|(_, _, _, s)| s.wants_req).count();
+    let mut req_clones_left = {
+        let total = layout_req_consumers + if page_sig.wants_req { 1 } else { 0 };
+        total.saturating_sub(1)
+    };
+
+    // Layout loads (outermost first).
+    for (idx, layout_mod, _, lsig) in active_chain {
+        let req_arg = if lsig.wants_req {
+            if req_clones_left > 0 {
+                req_clones_left -= 1;
+                "req.clone()"
+            } else {
+                "req"
+            }
+        } else {
+            ""
+        };
+        let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
+        let awaited = if lsig.is_async { format!("{call_expr}.await") } else { call_expr };
+        let var = format!("layout_data_{idx}");
+        if lsig.returns_result {
+            let _ = writeln!(out, "            let {var} = match {awaited} {{");
+            out.push_str("                Ok(p) => p,\n");
+            out.push_str(&emit_error_branch(error_mod));
+            out.push_str("            };\n");
+        } else {
+            let _ = writeln!(out, "            let {var} = {awaited};");
+        }
+    }
+
+    // Page load.
+    let req_arg = if page_sig.wants_req {
+        if req_clones_left > 0 { "req.clone()" } else { "req" }
+    } else {
+        ""
+    };
+    let call_expr = format!("__pilcrow_gen::{mod_name}::load({req_arg})");
+    let awaited = if page_sig.is_async { format!("{call_expr}.await") } else { call_expr };
+    if page_sig.returns_result {
+        let _ = writeln!(out, "            let page_data = match {awaited} {{");
+        out.push_str("                Ok(p) => p,\n");
+        out.push_str(&emit_error_branch(error_mod));
+        out.push_str("            };\n");
+    } else {
+        let _ = writeln!(out, "            let page_data = {awaited};");
+    }
+
+    // Construct props.
+    if any_layout_load {
+        let info = chain_info.expect("chain_info present when active_chain is non-empty");
+        let _ = writeln!(out, "            let props = __pilcrow_gen::{mod_name}::__MergedProps {{");
+        for (idx, _, field_names, _) in active_chain {
+            let var = format!("layout_data_{idx}");
+            for field in *field_names {
+                let _ = writeln!(out, "                {field}: {var}.{field},");
+            }
+        }
+        for field in &info.page_field_names {
+            let _ = writeln!(out, "                {field}: page_data.{field},");
+        }
+        out.push_str("            };\n");
+    } else {
+        out.push_str("            let props = page_data;\n");
+    }
+
+    let _ = writeln!(
+        out,
+        "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
+    );
+    out.push_str(&emit_loading_append(loading_mod));
+
+    // Cache the rendered HTML with u64::MAX TTL (never expires naturally).
+    out.push_str("            if let Some(ref __cache) = __isr_arc {\n");
+    out.push_str("                __cache.store(&__ssg_key, html.clone(), u64::MAX, vec![]).await;\n");
+    out.push_str("            }\n");
+
+    out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
+    out.push_str("            __resp_handle.apply_to(&mut __response);\n");
+    out.push_str("            __response\n");
+
+    out
+}
+
+// ── SSG startup prerender function ───────────────────────────────────────
+
+/// Emit the `__pilcrow_prerender_all` function that pre-renders all SSG pages
+/// at server startup before accepting connections.
+fn emit_prerender_all(
+    page_entries: &[GeneratedPageRoute],
+    load_map: &HashMap<String, Option<LoadSignature>>,
+    layout_fields_map: &HashMap<String, LayoutFieldsInfo>,
+    ssg_config_map: &HashMap<String, SsgOpts>,
+    deferred_fields_map: &HashMap<String, Vec<String>>,
+    deferred_html_fields_map: &HashMap<String, Vec<String>>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("\n#[allow(dead_code)]\n");
+    out.push_str(
+        "pub async fn __pilcrow_prerender_all(cache: &::pilcrow_web::IsrCache) {\n",
+    );
+
+    let mut has_any = false;
+
+    for entry in page_entries {
+        let Some(ssg_opts) = ssg_config_map.get(&entry.symbol) else { continue };
+        if !ssg_opts.prerender {
+            continue;
+        }
+        // Pages without load() are served via Props::default() — already static, skip.
+        let Some(page_sig) = load_map.get(&entry.symbol).copied().flatten() else {
+            continue;
+        };
+        // Pages with Deferred fields stream JavaScript — not suitable for SSG prerendering.
+        if deferred_fields_map.contains_key(&entry.symbol)
+            || deferred_html_fields_map.contains_key(&entry.symbol)
+        {
+            continue;
+        }
+
+        has_any = true;
+        let chain_info = layout_fields_map.get(&entry.symbol);
+        // Collect layout chain entries that have load().
+        let active_chain: Vec<(usize, String, Vec<String>, LoadSignature)> = chain_info
+            .map(|info| {
+                info.chain
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, (lmod, fields))| {
+                        load_map
+                            .get(lmod.as_str())
+                            .copied()
+                            .flatten()
+                            .map(|sig| (i, lmod.clone(), fields.clone(), sig))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let is_dynamic = entry.pattern.contains(':');
+        if is_dynamic {
+            let param_names: Vec<&str> = entry
+                .pattern
+                .split('/')
+                .filter(|s| s.starts_with(':'))
+                .map(|s| &s[1..])
+                .collect();
+            out.push_str(&emit_ssg_prerender_dynamic_block(
+                &entry.symbol,
+                &entry.render_symbol,
+                &entry.pattern,
+                &param_names,
+                page_sig,
+                &active_chain,
+                chain_info,
+            ));
+        } else {
+            out.push_str(&emit_ssg_prerender_static_block(
+                &entry.symbol,
+                &entry.render_symbol,
+                &entry.pattern,
+                page_sig,
+                &active_chain,
+                chain_info,
+            ));
+        }
+    }
+
+    if !has_any {
+        out.push_str("    let _ = cache;\n");
+    }
+
+    out.push_str("}\n");
+    out
+}
+
+/// Emit a prerender block for a static route (no path params).
+fn emit_ssg_prerender_static_block(
+    mod_name: &str,
+    render_fn: &str,
+    path: &str,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    let path_lit = rust_string(path);
+    let _ = writeln!(out, "    // SSG: {path}");
+    out.push_str("    {\n");
+    let _ = writeln!(out, "        let __ssg_key = {path_lit};");
+    out.push_str("        let __req = ::pilcrow_web::Req::__synthetic(\n");
+    let _ = writeln!(out, "            {path_lit}.to_string(),");
+    out.push_str("            Default::default(),\n");
+    out.push_str("            Default::default(),\n");
+    out.push_str("            Default::default(),\n");
+    out.push_str("            Default::default(),\n");
+    out.push_str("            Default::default(),\n");
+    out.push_str("        );\n");
+    out.push_str(&emit_ssg_load_render_store(
+        mod_name,
+        render_fn,
+        "__req",
+        "__ssg_key",
+        page_sig,
+        active_chain,
+        chain_info,
+    ));
+    out.push_str("    }\n");
+    out
+}
+
+/// Emit a prerender block for a dynamic route (iterates over `entries()`).
+fn emit_ssg_prerender_dynamic_block(
+    mod_name: &str,
+    render_fn: &str,
+    pattern: &str,
+    param_names: &[&str],
+    page_sig: LoadSignature,
+    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "    // SSG (entries): {pattern}");
+    out.push_str("    {\n");
+    let _ = writeln!(
+        out,
+        "        let __entries = __pilcrow_gen::{mod_name}::entries().await;"
+    );
+    out.push_str("        for __entry_params in __entries {\n");
+
+    // Extract each param value from the entry map.
+    for name in param_names {
+        let name_lit = rust_string(name);
+        let _ = writeln!(
+            out,
+            "            let __{name} = __entry_params.get({name_lit}).map(|s| s.as_str()).unwrap_or(\"\");"
+        );
+    }
+
+    // Build the path by substituting param values into the pattern.
+    let mut path_build = String::new();
+    let _ = writeln!(path_build, "            let __ssg_key = {{");
+    let _ = writeln!(
+        path_build,
+        "                let mut __p = {}.to_string();",
+        rust_string(pattern)
+    );
+    for name in param_names {
+        let _ = writeln!(
+            path_build,
+            "                __p = __p.replacen(\":{name}\", __{name}, 1);"
+        );
+    }
+    path_build.push_str("                __p\n");
+    path_build.push_str("            };\n");
+    out.push_str(&path_build);
+
+    // Build the params HashMap.
+    out.push_str("            let mut __params: ::std::collections::HashMap<String, String> = Default::default();\n");
+    for name in param_names {
+        let name_lit = rust_string(name);
+        let _ = writeln!(
+            out,
+            "            __params.insert({name_lit}.to_string(), __{name}.to_string());"
+        );
+    }
+
+    // Create the synthetic request.
+    out.push_str("            let __req = ::pilcrow_web::Req::__synthetic(\n");
+    out.push_str("                __ssg_key.clone(),\n");
+    out.push_str("                __params,\n");
+    out.push_str("                Default::default(),\n");
+    out.push_str("                Default::default(),\n");
+    out.push_str("                Default::default(),\n");
+    out.push_str("                Default::default(),\n");
+    out.push_str("            );\n");
+
+    out.push_str(&emit_ssg_load_render_store(
+        mod_name,
+        render_fn,
+        "__req",
+        "&__ssg_key",
+        page_sig,
+        active_chain,
+        chain_info,
+    ));
+
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out
+}
+
+/// Emit the load → render → cache-store body used by both static and dynamic prerender blocks.
+///
+/// `req_var` is the identifier of the `Req` to use (e.g. `"__req"`).
+/// `key_expr` is an expression for the cache key (e.g. `"__ssg_key"` or `"&__ssg_key"`).
+/// Indented for use inside a `{ }` block (8-space indent for static, 12-space for dynamic loop).
+fn emit_ssg_load_render_store(
+    mod_name: &str,
+    render_fn: &str,
+    req_var: &str,
+    key_expr: &str,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    // Determine the indentation based on the call context.
+    // Static blocks are at 8-space indent; dynamic blocks are at 12-space (inside for loop).
+    // We detect this by checking whether key_expr starts with '&' (dynamic path variable).
+    let indent = if key_expr.starts_with('&') { "            " } else { "        " };
+
+    let mut out = String::new();
+    let any_layout_load = !active_chain.is_empty();
+
+    let _ = writeln!(
+        out,
+        "{indent}let __ssg_result: ::std::result::Result<String, String> = async {{"
+    );
+
+    // Layout loads — always clone the req since this is a startup task.
+    for (idx, layout_mod, _, lsig) in active_chain {
+        let req_arg = if lsig.wants_req { format!("{req_var}.clone()") } else { String::new() };
+        let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
+        let awaited = if lsig.is_async { format!("{call_expr}.await") } else { call_expr };
+        let var = format!("layout_data_{idx}");
+        if lsig.returns_result {
+            let _ = writeln!(
+                out,
+                "{indent}    let {var} = {awaited}.map_err(|e| e.to_string())?;"
+            );
+        } else {
+            let _ = writeln!(out, "{indent}    let {var} = {awaited};");
+        }
+    }
+
+    // Page load.
+    let req_arg = if page_sig.wants_req { req_var.to_string() } else { String::new() };
+    let call_expr = format!("__pilcrow_gen::{mod_name}::load({req_arg})");
+    let awaited = if page_sig.is_async { format!("{call_expr}.await") } else { call_expr };
+    if page_sig.returns_result {
+        let _ = writeln!(
+            out,
+            "{indent}    let page_data = {awaited}.map_err(|e| e.to_string())?;"
+        );
+    } else {
+        let _ = writeln!(out, "{indent}    let page_data = {awaited};");
+    }
+
+    // Construct props.
+    if any_layout_load {
+        let info = chain_info.expect("chain_info present when active_chain is non-empty");
+        let _ = writeln!(
+            out,
+            "{indent}    let props = __pilcrow_gen::{mod_name}::__MergedProps {{"
+        );
+        for (idx, _, field_names, _) in active_chain {
+            let var = format!("layout_data_{idx}");
+            for field in field_names {
+                let _ = writeln!(out, "{indent}        {field}: {var}.{field},");
+            }
+        }
+        for field in &info.page_field_names {
+            let _ = writeln!(out, "{indent}        {field}: page_data.{field},");
+        }
+        let _ = writeln!(out, "{indent}    }};");
+    } else {
+        let _ = writeln!(out, "{indent}    let props = page_data;");
+    }
+
+    let _ = writeln!(
+        out,
+        "{indent}    __pilcrow_gen::{mod_name}::{render_fn}(props).map_err(|e| e.to_string())"
+    );
+    let _ = writeln!(out, "{indent}}}.await;");
+
+    let _ = writeln!(out, "{indent}match __ssg_result {{");
+    let _ = writeln!(out, "{indent}    ::std::result::Result::Ok(html) => {{");
+    let _ = writeln!(
+        out,
+        "{indent}        cache.store({key_expr}, html, u64::MAX, vec![]).await;"
+    );
+    let _ = writeln!(out, "{indent}    }}");
+    let _ = writeln!(out, "{indent}    ::std::result::Result::Err(e) => {{");
+    let _ = writeln!(
+        out,
+        "{indent}        ::pilcrow_web::tracing::error!(\"SSG prerender failed for {{}}: {{}}\", {key_expr}, e);"
+    );
+    let _ = writeln!(out, "{indent}    }}");
+    let _ = writeln!(out, "{indent}}}");
+
+    out
 }

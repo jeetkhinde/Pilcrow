@@ -40,7 +40,7 @@ pub use pilcrow_core::{
 
 pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
-pub use runtime::start;
+pub use runtime::{start, start_with_prerender};
 
 // ── Deferred streaming ───────────────────────────────────────
 pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
@@ -96,6 +96,18 @@ macro_rules! pilcrow_app {
 
         fn pilcrow_router() -> ::pilcrow_web::axum::Router {
             __pilcrow_app::build_router()
+        }
+
+        /// Start the Pilcrow server, pre-rendering any SSG pages before accepting connections.
+        ///
+        /// Use `pilcrow_start(pilcrow_router()).await` in place of
+        /// `pilcrow_web::start(pilcrow_router()).await` when your app has pages with
+        /// `pub const PRERENDER: bool = true`.
+        async fn pilcrow_start(router: ::pilcrow_web::axum::Router) {
+            ::pilcrow_web::start_with_prerender(router, |cache| async move {
+                __pilcrow_app::__pilcrow_prerender_all(&cache).await
+            })
+            .await;
         }
     };
 }

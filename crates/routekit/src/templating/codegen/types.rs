@@ -90,6 +90,8 @@ pub struct GeneratedTemplatesModule {
     pub deferred_html_fields_map: HashMap<String, Vec<String>>,
     /// Map from page module_name to its ISR configuration (only for pages with `REVALIDATE`).
     pub isr_config_map: HashMap<String, IsrOpts>,
+    /// Map from page module_name to its SSG configuration (only for pages with `PRERENDER = true`).
+    pub ssg_config_map: HashMap<String, SsgOpts>,
 }
 
 /// Result of instrumenting a template's Rust frontmatter.
@@ -101,6 +103,7 @@ pub struct InstrumentedFrontmatter {
     /// Named action handlers discovered in the frontmatter (pages only).
     pub actions: Vec<ActionFn>,
     /// Per-page options parsed from `pub const` declarations and stripped from output.
+    /// `page_options.ssg.has_entries_fn` is set when `pub async fn entries()` is detected.
     pub page_options: PageOptions,
     /// Names of `Deferred<T>` (JSON patch) fields in `Props`, in declaration order.
     pub deferred_fields: Vec<String>,

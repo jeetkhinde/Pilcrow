@@ -138,6 +138,7 @@ Declare in a code-behind file (or `---` frontmatter):
 ```rust
 pub const TRAILING_SLASH: &str = "always"; // "always" | "never" | "ignore"
 pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
+pub const PRERENDER: bool = true;          // SSG: pre-render at server startup
 ```
 
 **`TRAILING_SLASH`:**
@@ -148,7 +149,12 @@ pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
 **`LAYOUT`:**
 - `"none"` — strip all auto-layout wrapping; the page renders directly with no `_layout.html` ancestors applied and no layout `load()` calls
 
-Both constants are stripped from the emitted module and never reach the template.
+**`PRERENDER`:**
+- `true` — page is rendered once at server startup and served from the ISR cache with TTL=∞ on all subsequent requests. No-op for pages without `load()` (already static). Incompatible with `REVALIDATE` (build error).
+- Dynamic routes with `PRERENDER = true` must also declare `pub async fn entries() -> Vec<HashMap<String, String>>` (build error otherwise).
+- Use `pilcrow_start(pilcrow_router()).await` instead of `pilcrow_web::start(pilcrow_router()).await` to trigger startup prerendering.
+
+All constants are stripped from the emitted module and never reach the template.
 
 ## Code-Behind Pattern
 
@@ -491,7 +497,7 @@ When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeli
 
 | Feature | SvelteKit | Astro | Pilcrow Status |
 |---------|-----------|-------|----------------|
-| SSG (Static Site Generation) | ✅ `prerender = true` | ✅ Default mode | ❌ Not implemented |
+| SSG (Static Site Generation) | ✅ `prerender = true` | ✅ Default mode | ✅ `PRERENDER = true` (startup prerender) |
 | Incremental SSR (ISR) | ✅ `isr` | ✅ Hybrid | ❌ Not implemented |
 | Island Architecture | ❌ (not core) | ✅ Core feature | ❌ Not implemented |
 | Adapter System (deploy targets) | ✅ Vercel/Cloudflare/Node | ✅ Multiple | ❌ Hardcoded tokio TcpListener |

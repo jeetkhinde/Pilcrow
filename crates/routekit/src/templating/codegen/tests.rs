@@ -314,14 +314,89 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
         assert!(src.contains("pub struct Props"), "Props was stripped");
         assert!(src.contains("pub async fn load"), "load() was stripped");
 
-        // ISR config must be recorded in the map.
+        // ISR config must be recorded in the ISR map.
         let isr = generated.isr_config_map.get("page_products")
             .expect("page_products should have ISR config");
         assert_eq!(isr.revalidate, Some(60));
         assert_eq!(isr.max_stale, Some(3600));
         assert_eq!(isr.cache_tags, vec!["products".to_string(), "inventory".to_string()]);
         assert_eq!(isr.cache_vary, vec!["tenant_id".to_string()]);
-        assert!(isr.prerender);
+
+        // PRERENDER is now in the SSG map, not in ISrOpts.
+        let ssg = generated.ssg_config_map.get("page_products")
+            .expect("page_products should have SSG config");
+        assert!(ssg.prerender);
+    }
+
+    #[test]
+    fn ssg_prerender_constant_is_stripped_and_recorded_in_ssg_map() {
+        let frontmatter = r#"
+pub const PRERENDER: bool = true;
+
+pub struct Props {
+    pub title: String,
+}
+
+pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
+    Ok(Props { title: "Hello".to_string() })
+}
+"#;
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_about".to_string(),
+            render_symbol: "render_page_about".to_string(),
+            source_path: "/tmp/src/pages/about.html".to_string(),
+            rust_frontmatter: frontmatter.to_string(),
+            template_source: "<h1>{{ title }}</h1>".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+        }])
+        .expect("should generate with PRERENDER constant");
+
+        // PRERENDER must not appear in the emitted source.
+        assert!(!generated.source.contains("PRERENDER"), "PRERENDER leaked into emitted source");
+
+        // SSG config must be recorded.
+        let ssg = generated.ssg_config_map.get("page_about")
+            .expect("page_about should have SSG config");
+        assert!(ssg.prerender);
+        assert!(!ssg.has_entries_fn);
+
+        // Must NOT be in the ISR map.
+        assert!(generated.isr_config_map.get("page_about").is_none());
+    }
+
+    #[test]
+    fn entries_fn_is_detected_in_ssg_opts() {
+        let frontmatter = r#"
+pub const PRERENDER: bool = true;
+
+pub struct Props {
+    pub name: String,
+}
+
+pub async fn entries() -> Vec<::std::collections::HashMap<String, String>> {
+    vec![]
+}
+
+pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
+    Ok(Props { name: "test".to_string() })
+}
+"#;
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_products_id".to_string(),
+            render_symbol: "render_page_products_id".to_string(),
+            source_path: "/tmp/src/pages/products/[id].html".to_string(),
+            rust_frontmatter: frontmatter.to_string(),
+            template_source: "<h1>{{ name }}</h1>".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+        }])
+        .expect("should generate with entries fn");
+
+        let ssg = generated.ssg_config_map.get("page_products_id")
+            .expect("page_products_id should have SSG config");
+        assert!(ssg.prerender);
+        assert!(ssg.has_entries_fn);
     }
 
     #[test]

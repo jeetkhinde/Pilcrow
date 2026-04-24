@@ -168,19 +168,24 @@ fn answers_silcrow_vs_pilcrow_question_delegates() {
 // ── Status note accuracy ──────────────────────────────────────────────────────
 
 #[test]
-fn answer_about_ssg_reports_planned() {
+fn answer_about_ssg_reports_stable() {
     let (kb, registry) = qa_fixtures();
-    // Verify the ssg feature is planned via explain_feature (ID-keyed path).
-    // answer_question keyword-matching may rank other stable features first
-    // (known gap), so we use explain_feature for the definitive status check.
+    // SSG shipped 2026-04-24 (startup-prerender model). Verify it is now stable.
     let explanation = kb
         .explain_feature(&registry, "ssg")
         .expect("ssg feature should exist in registry");
     assert_eq!(
-        explanation.implementation_status, "planned",
-        "ssg should be marked as planned"
+        explanation.implementation_status, "stable",
+        "ssg should be marked as stable after shipping"
     );
-    // Also verify answer_question at least returns non-empty content for an SSG question
+    // Verify the explanation includes the PRERENDER constant.
+    let spec_has_prerender = explanation.feature.spec.contains("PRERENDER");
+    let usage_has_prerender = explanation.feature.canonical_usage.as_deref().unwrap_or("").contains("PRERENDER");
+    assert!(
+        spec_has_prerender || usage_has_prerender,
+        "ssg explanation should mention PRERENDER"
+    );
+    // answer_question should also return non-empty content.
     let answer = kb.answer_question(
         &registry,
         "What is the status of ssg static site generation in Pilcrow?",

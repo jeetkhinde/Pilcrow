@@ -445,6 +445,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-start",
+            title: "Server startup (start / start_with_prerender)",
+            path: "crates/runtime/src/start.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-lib",
             title: "Routekit library",
             path: "crates/routekit/src/lib.rs",

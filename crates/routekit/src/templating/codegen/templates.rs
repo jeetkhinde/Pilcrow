@@ -37,6 +37,7 @@ pub fn render_generated_templates_module(
     let mut deferred_fields_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut deferred_html_fields_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut isr_config_map: HashMap<String, IsrOpts> = HashMap::new();
+    let mut ssg_config_map: HashMap<String, SsgOpts> = HashMap::new();
     // fragment_url_prefix → [(leaf_name, module_name)] — built to emit `pub mod fragments`.
     let mut fragment_groups: std::collections::BTreeMap<String, Vec<(String, String)>> =
         std::collections::BTreeMap::new();
@@ -127,6 +128,13 @@ pub fn render_generated_templates_module(
             isr_config_map.insert(
                 entry.module_name.clone(),
                 instrumented.page_options.isr.clone(),
+            );
+        }
+
+        if instrumented.page_options.ssg.prerender {
+            ssg_config_map.insert(
+                entry.module_name.clone(),
+                instrumented.page_options.ssg.clone(),
             );
         }
 
@@ -228,6 +236,7 @@ pub fn render_generated_templates_module(
         deferred_fields_map,
         deferred_html_fields_map,
         isr_config_map,
+        ssg_config_map,
     })
 }
 
@@ -253,5 +262,6 @@ pub fn write_generated_templates_module(
         deferred_fields_map: generated.deferred_fields_map,
         deferred_html_fields_map: generated.deferred_html_fields_map,
         isr_config_map: generated.isr_config_map,
+        ssg_config_map: generated.ssg_config_map,
     })
 }

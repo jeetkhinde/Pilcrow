@@ -11,7 +11,7 @@ pub mod response;
 pub mod sse;
 pub mod start;
 pub mod ws;
-pub use start::start;
+pub use start::{start, start_with_prerender};
 // ── Core API re-exports ──────────────────────────────────────
 pub use axum::http::StatusCode;
 pub use axum::response::Response;

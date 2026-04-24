@@ -53,7 +53,7 @@ pub fn instrument_frontmatter(
                     page_options.isr.cache_vary = parse_str_slice_const(&c.expr);
                     const_remove_indices.push(index);
                 } else if c.ident == "PRERENDER" {
-                    page_options.isr.prerender = value_str.trim() == "true";
+                    page_options.ssg.prerender = value_str.trim() == "true";
                     const_remove_indices.push(index);
                 }
             }
@@ -100,6 +100,22 @@ pub fn instrument_frontmatter(
             None
         }
     });
+
+    // Detect `entries()` — marks a dynamic SSG route with an explicit param list.
+    // Required signature: `pub async fn entries() -> Vec<...>` (no parameters).
+    let has_entries_fn = file.items.iter().any(|item| {
+        if let syn::Item::Fn(f) = item {
+            f.sig.ident == "entries"
+                && f.sig.asyncness.is_some()
+                && f.sig.inputs.is_empty()
+                && matches!(f.vis, syn::Visibility::Public(_))
+        } else {
+            false
+        }
+    });
+    if has_entries_fn {
+        page_options.ssg.has_entries_fn = true;
+    }
 
     // Discover named action handlers. An action is any `pub` fn in a page's
     // code-behind with an `ActionResult`-shaped return. The fn name is the URL

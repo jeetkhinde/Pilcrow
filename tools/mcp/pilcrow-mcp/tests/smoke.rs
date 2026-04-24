@@ -470,7 +470,8 @@ fn smoke_validate_island_directive_returns_error_finding() {
 }
 
 #[test]
-fn smoke_validate_prerender_const_returns_error_finding() {
+fn smoke_validate_prerender_const_is_accepted() {
+    // PRERENDER is now a stable SSG feature — pub const PRERENDER: bool = true is valid.
     let mut client = McpClient::spawn();
     let resp = client.call_tool(
         "validate_implementation",
@@ -481,9 +482,10 @@ fn smoke_validate_prerender_const_returns_error_finding() {
     );
     assert!(resp["error"].is_null(), "validate_implementation errored");
     let text = serde_json::to_string(&resp["result"]).unwrap_or_default();
+    // Valid SSG declaration should produce no error-level findings.
     assert!(
-        text.contains("planned") || text.contains("PRERENDER") || text.contains("static"),
-        "result should mention planned static output; got: {text}"
+        text.contains("\"valid\":true") || text.contains("findings\":[]"),
+        "PRERENDER = true should be accepted as valid SSG syntax; got: {text}"
     );
 }
 
