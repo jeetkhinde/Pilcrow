@@ -3,8 +3,9 @@ use super::*;
 /// Build an API route manifest from `src/api/**/*.rs`.
 pub fn build_generated_api_manifest(
     src_root: impl AsRef<Path>,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<GeneratedApiRoute>> {
-    build_api_routes(src_root)?
+    build_api_routes(src_root, ignored_dirs)?
         .into_iter()
         .map(|route| {
             Ok(GeneratedApiRoute {
@@ -69,8 +70,9 @@ pub fn render_generated_api_routes_module(entries: &[GeneratedApiRoute]) -> Stri
 pub fn write_generated_api_routes_module(
     src_root: impl AsRef<Path>,
     out_file: impl AsRef<Path>,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<GeneratedApiRoute>> {
-    let entries = build_generated_api_manifest(src_root)?;
+    let entries = build_generated_api_manifest(src_root, ignored_dirs)?;
     let source = render_generated_api_routes_module(&entries);
 
     let out_file = out_file.as_ref();

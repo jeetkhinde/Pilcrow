@@ -3,12 +3,13 @@ use super::*;
 /// Build a page-route manifest from `src/pages/**/*.html`.
 pub fn build_generated_page_manifest(
     src_root: impl AsRef<Path>,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<GeneratedPageRoute>> {
     let src_root = src_root.as_ref();
     let pages_dir = src_root.join("pages");
     let pages_dir_norm = normalize_path_text(&pages_dir);
 
-    let routes = build_page_routes(src_root)?;
+    let routes = build_page_routes(src_root, ignored_dirs)?;
     let mut generated = routes
         .into_iter()
         .map(|route| {
@@ -48,10 +49,12 @@ pub fn build_generated_page_manifest(
 ///
 /// Routes are prefixed with `/{url_prefix}/`; module symbols are `frag_{url_prefix}_{path}`.
 pub fn build_generated_fragment_manifest(
+    src_root: impl AsRef<Path>,
     fragment_dir: &Path,
     url_prefix: &str,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<GeneratedPageRoute>> {
-    let routes = build_fragment_routes(fragment_dir, url_prefix)?;
+    let routes = build_fragment_routes(src_root, fragment_dir, url_prefix, ignored_dirs)?;
     let dir_norm = normalize_path_text(fragment_dir);
     let generated = routes
         .into_iter()
@@ -133,8 +136,9 @@ pub fn render_generated_routes_module(entries: &[GeneratedPageRoute]) -> String 
 pub fn write_generated_routes_module(
     src_root: impl AsRef<Path>,
     out_file: impl AsRef<Path>,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<GeneratedPageRoute>> {
-    let entries = build_generated_page_manifest(src_root)?;
+    let entries = build_generated_page_manifest(src_root, ignored_dirs)?;
     let source = render_generated_routes_module(&entries);
 
     let out_file = out_file.as_ref();

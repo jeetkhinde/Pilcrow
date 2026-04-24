@@ -69,6 +69,31 @@ validation_rules = [
 scaffold_templates = ["route"]
 
 [[features]]
+id = "ignore-directories"
+name = "Glob-Based Ignore Directories"
+domain = "pilcrow"
+status = "stable"
+summary = "Exclude specific directories or path patterns from route discovery using globsets."
+spec = "In Pilcrow.toml under [routing] ignore_directories, specify glob patterns to ignore directories. Patterns without slashes (e.g., 'Cards') behave as recursive directory matchers ('**/Cards'). Patterns with slashes (e.g., 'pages/admin/**/components') evaluate as path-based globs relative to the src directory."
+canonical_usage = "In Pilcrow.toml: `[routing]\nignore_directories = [\"Cards\", \"pages/admin/**/components\"]`. This ignores any directory named 'Cards' anywhere, and specifically ignores 'components' directories nested inside 'pages/admin'."
+constraints = [
+  "Patterns without slashes are implicitly prefixed with **/. so they match recursively.",
+  "Patterns with slashes match paths relative to the src directory.",
+  "Directories matching the glob patterns are completely skipped during page, fragment, and API route discovery.",
+]
+invalid_examples = [
+  "Using absolute paths like '/src/pages/Cards'",
+]
+source_refs = [
+  "crates/routekit/src/routing/discovery.rs",
+]
+test_refs = []
+validation_rules = [
+  "ignore_directories paths should be valid glob patterns.",
+]
+scaffold_templates = []
+
+[[features]]
 id = "layouts"
 name = "Layouts"
 domain = "pilcrow"

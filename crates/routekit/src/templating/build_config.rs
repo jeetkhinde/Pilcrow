@@ -11,6 +11,18 @@ pub struct PilcrowBuildConfig {
     /// Environment variable declarations — generates typed `env::Public` / `env::Private` structs.
     #[serde(default)]
     pub env: EnvConfig,
+
+    /// Routing configuration (e.g. directories to ignore).
+    #[serde(default)]
+    pub routing: RoutingConfig,
+}
+
+/// Routing configuration.
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct RoutingConfig {
+    /// Directory names to ignore during route discovery.
+    #[serde(default)]
+    pub ignore_directories: Vec<String>,
 }
 
 /// Typed environment variable declarations.

@@ -2,7 +2,38 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
+
 use crate::Route;
+
+/// A compiled globset for ignoring directories
+#[derive(Clone)]
+pub struct IgnoreFilter {
+    set: GlobSet,
+}
+
+impl IgnoreFilter {
+    pub fn new(patterns: &[String]) -> Self {
+        let mut builder = GlobSetBuilder::new();
+        for p in patterns {
+            let pat = if !p.contains('/') {
+                format!("**/{p}")
+            } else {
+                p.clone()
+            };
+            if let Ok(glob) = Glob::new(&pat) {
+                builder.add(glob);
+            }
+        }
+        Self {
+            set: builder.build().unwrap_or_else(|_| GlobSetBuilder::new().build().unwrap()),
+        }
+    }
+
+    pub fn is_ignored(&self, relative_path: &Path) -> bool {
+        self.set.is_match(relative_path)
+    }
+}
 
 /// One discovered API route source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,10 +74,11 @@ pub struct DiscoveredHtmlFiles {
 /// - `_not_found.html` → `not_found_pages`
 ///
 /// `src_root` should point to the project `src` directory.
-pub fn discover_html_files(src_root: impl AsRef<Path>) -> io::Result<DiscoveredHtmlFiles> {
+pub fn discover_html_files(src_root: impl AsRef<Path>, ignored_dirs: &[String]) -> io::Result<DiscoveredHtmlFiles> {
     let src_root = src_root.as_ref();
+    let filter = IgnoreFilter::new(ignored_dirs);
 
-    let all_page_files = collect_html_files(&src_root.join("pages"))?;
+    let all_page_files = collect_html_files(&src_root.join("pages"), src_root, &filter)?;
 
     let mut pages = Vec::new();
     let mut auto_layouts = Vec::new();
@@ -69,7 +101,7 @@ pub fn discover_html_files(src_root: impl AsRef<Path>) -> io::Result<DiscoveredH
         }
     }
 
-    let mut ui = collect_html_files(&src_root.join("ui"))?;
+    let mut ui = collect_html_files(&src_root.join("ui"), src_root, &filter)?;
 
     pages.sort();
     ui.sort();
@@ -123,10 +155,11 @@ fn is_special_page_file(path: &Path) -> bool {
 }
 
 /// Build `Route` entries from discovered page files in `src/pages`.
-pub fn build_page_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<Route>> {
+pub fn build_page_routes(src_root: impl AsRef<Path>, ignored_dirs: &[String]) -> io::Result<Vec<Route>> {
     let src_root = src_root.as_ref();
     let pages_dir = src_root.join("pages");
-    let mut page_files = collect_html_files(&pages_dir)?;
+    let filter = IgnoreFilter::new(ignored_dirs);
+    let mut page_files = collect_html_files(&pages_dir, src_root, &filter)?;
     // Special files (_layout, _error, _not_found) are not routable pages.
     page_files.retain(|p| !is_special_page_file(p));
     page_files.sort();
@@ -165,13 +198,15 @@ pub struct DiscoveredFragmentFiles {
     pub auto_layouts: Vec<PathBuf>,
 }
 
-pub fn discover_fragment_files(fragment_dir: &Path) -> io::Result<DiscoveredFragmentFiles> {
+pub fn discover_fragment_files(src_root: impl AsRef<Path>, fragment_dir: &Path, ignored_dirs: &[String]) -> io::Result<DiscoveredFragmentFiles> {
+    let src_root = src_root.as_ref();
     let mut result = DiscoveredFragmentFiles::default();
     if !fragment_dir.exists() {
         return Ok(result);
     }
+    let filter = IgnoreFilter::new(ignored_dirs);
 
-    let all = collect_html_files(fragment_dir)?;
+    let all = collect_html_files(fragment_dir, src_root, &filter)?;
     for path in all {
         if is_error_page_file(&path) {
             result.error_pages.push(path);
@@ -192,11 +227,15 @@ pub fn discover_fragment_files(fragment_dir: &Path) -> io::Result<DiscoveredFrag
 ///
 /// Routes are prefixed with `/{url_prefix}/`.
 pub fn build_fragment_routes(
+    src_root: impl AsRef<Path>,
     fragment_dir: impl AsRef<Path>,
     url_prefix: &str,
+    ignored_dirs: &[String],
 ) -> io::Result<Vec<Route>> {
+    let src_root = src_root.as_ref();
     let fragment_dir = fragment_dir.as_ref();
-    let mut files = collect_html_files(fragment_dir)?;
+    let filter = IgnoreFilter::new(ignored_dirs);
+    let mut files = collect_html_files(fragment_dir, src_root, &filter)?;
     files.retain(|p| !is_special_page_file(p));
     files.sort();
 
@@ -230,19 +269,22 @@ pub fn build_fragment_routes(
 ///
 /// `src_root` should point to the project `src` directory.
 #[allow(dead_code)]
-pub(crate) fn discover_api_files(src_root: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
-    let mut files = collect_rs_files(&src_root.as_ref().join("api"))?;
+pub(crate) fn discover_api_files(src_root: impl AsRef<Path>, ignored_dirs: &[String]) -> io::Result<Vec<PathBuf>> {
+    let src_root = src_root.as_ref();
+    let filter = IgnoreFilter::new(ignored_dirs);
+    let mut files = collect_rs_files(&src_root.join("api"), src_root, &filter)?;
     files.sort();
     Ok(files)
 }
 
 /// Build `ApiRoute` entries from `.rs` files discovered in `src/api/`.
-pub(crate) fn build_api_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<ApiRoute>> {
+pub(crate) fn build_api_routes(src_root: impl AsRef<Path>, ignored_dirs: &[String]) -> io::Result<Vec<ApiRoute>> {
     let src_root = src_root.as_ref();
     let api_dir = src_root.join("api");
     let api_dir_text = path_to_unix_slashes(&api_dir);
+    let filter = IgnoreFilter::new(ignored_dirs);
 
-    let mut files = collect_rs_files(&api_dir)?;
+    let mut files = collect_rs_files(&api_dir, src_root, &filter)?;
     files.sort();
 
     let mut routes = files
@@ -273,21 +315,24 @@ pub(crate) fn build_api_routes(src_root: impl AsRef<Path>) -> io::Result<Vec<Api
     Ok(routes)
 }
 
-fn collect_rs_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+fn collect_rs_files(root: &Path, base: &Path, filter: &IgnoreFilter) -> io::Result<Vec<PathBuf>> {
     if !root.exists() {
         return Ok(Vec::new());
     }
-    walk_rs_dir(root)
+    walk_rs_dir(root, base, filter)
 }
 
 /// Recursively collect `.rs` route files; excludes `mod.rs`.
-fn walk_rs_dir(dir: &Path) -> io::Result<Vec<PathBuf>> {
+fn walk_rs_dir(dir: &Path, base: &Path, filter: &IgnoreFilter) -> io::Result<Vec<PathBuf>> {
     fs::read_dir(dir)?.try_fold(Vec::new(), |mut acc, entry| {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            acc.extend(walk_rs_dir(&path)?);
+            let relative_path = path.strip_prefix(base).unwrap_or(&path);
+            if !filter.is_ignored(relative_path) {
+                acc.extend(walk_rs_dir(&path, base, filter)?);
+            }
         } else if file_type.is_file() && is_rs_route(&path) {
             acc.push(path);
         }
@@ -356,27 +401,32 @@ fn build_api_symbol(without_ext: &str) -> String {
     format!("api_{base}")
 }
 
-pub fn collect_html_files_pub(root: &Path) -> io::Result<Vec<PathBuf>> {
-    collect_html_files(root)
+pub fn collect_html_files_pub(root: &Path, src_root: &Path, ignored_dirs: &[String]) -> io::Result<Vec<PathBuf>> {
+    let filter = IgnoreFilter::new(ignored_dirs);
+    collect_html_files(root, src_root, &filter)
 }
 
-fn collect_html_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+fn collect_html_files(root: &Path, base: &Path, filter: &IgnoreFilter) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     if !root.exists() {
         return Ok(files);
     }
-    walk_dir(root, &mut files)?;
+    walk_dir(root, base, &mut files, filter)?;
     Ok(files)
 }
 
-fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+fn walk_dir(dir: &Path, base: &Path, files: &mut Vec<PathBuf>, filter: &IgnoreFilter) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         let file_type = entry.file_type()?;
 
         if file_type.is_dir() {
-            walk_dir(&path, files)?;
+            let relative_path = path.strip_prefix(base).unwrap_or(&path);
+            if filter.is_ignored(relative_path) {
+                continue;
+            }
+            walk_dir(&path, base, files, filter)?;
         } else if file_type.is_file() && is_html(&path) {
             files.push(path);
         }
@@ -409,10 +459,31 @@ mod tests {
         write_file(&src.join("ui/Card.html"), "<div>Card</div>");
         write_file(&src.join("pages/ignore.txt"), "ignored");
 
-        let discovered = discover_html_files(&src).expect("expected discovery to succeed");
+        let discovered = discover_html_files(&src, &[]).expect("expected discovery to succeed");
 
         assert_eq!(discovered.pages.len(), 2);
         assert_eq!(discovered.ui.len(), 1);
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn discover_html_files_skips_ignored_directories() {
+        let root = mk_temp_root("discover_html_ignored");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(&src.join("pages/Cards/Card.html"), "<div>Card</div>");
+        write_file(&src.join("pages/posts/[id].html"), "<h1>Post</h1>");
+
+        let ignored = vec!["Cards".to_string()];
+        let discovered = discover_html_files(&src, &ignored).expect("expected discovery to succeed");
+
+        assert_eq!(discovered.pages.len(), 2);
+        let patterns: Vec<_> = discovered.pages.iter().filter_map(|p| p.file_name().and_then(|n| n.to_str())).collect();
+        assert!(patterns.contains(&"index.html"));
+        assert!(patterns.contains(&"[id].html"));
+        assert!(!patterns.contains(&"Card.html"));
 
         cleanup(&root);
     }
@@ -430,7 +501,7 @@ mod tests {
             "<div><slot /></div>",
         );
 
-        let discovered = discover_html_files(&src).expect("expected discovery to succeed");
+        let discovered = discover_html_files(&src, &[]).expect("expected discovery to succeed");
 
         // _layout.html files are auto_layouts, not pages
         assert_eq!(discovered.pages.len(), 2, "only non-layout pages");
@@ -460,7 +531,7 @@ mod tests {
             "<h1>Products Error</h1>",
         );
 
-        let discovered = discover_html_files(&src).expect("discovery should succeed");
+        let discovered = discover_html_files(&src, &[]).expect("discovery should succeed");
 
         assert_eq!(discovered.pages.len(), 2, "only routable pages");
         assert_eq!(discovered.error_pages.len(), 2, "two _error.html files");
@@ -493,7 +564,7 @@ mod tests {
             "<div><slot /></div>",
         );
 
-        let routes = build_page_routes(&src).expect("routes should build");
+        let routes = build_page_routes(&src, &[]).expect("routes should build");
         let patterns: Vec<_> = routes.iter().map(|r| r.pattern.as_str()).collect();
 
         assert!(patterns.contains(&"/"), "index page is a route");
@@ -515,7 +586,7 @@ mod tests {
         write_file(&src.join("pages/_error.html"), "<h1>Error</h1>");
         write_file(&src.join("pages/_not_found.html"), "<h1>404</h1>");
 
-        let routes = build_page_routes(&src).expect("routes should build");
+        let routes = build_page_routes(&src, &[]).expect("routes should build");
         let patterns: Vec<_> = routes.iter().map(|r| r.pattern.as_str()).collect();
 
         assert_eq!(patterns, vec!["/"], "only index.html is a route");
@@ -532,7 +603,7 @@ mod tests {
         write_file(&src.join("pages/about.html"), "<h1>About</h1>");
         write_file(&src.join("pages/posts/[id].html"), "<h1>Post</h1>");
 
-        let routes = build_page_routes(&src).expect("expected route manifest");
+        let routes = build_page_routes(&src, &[]).expect("expected route manifest");
         let patterns = routes
             .iter()
             .map(|r| r.pattern.as_str())
@@ -551,7 +622,7 @@ mod tests {
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create src");
 
-        let routes = build_page_routes(&src).expect("expected empty route list");
+        let routes = build_page_routes(&src, &[]).expect("expected empty route list");
         assert!(routes.is_empty());
 
         cleanup(&root);
@@ -595,7 +666,7 @@ mod tests {
         write_file(&src.join("api/mod.rs"), "// ignored");
         write_file(&src.join("api/users/ignore.txt"), "ignored");
 
-        let files = discover_api_files(&src).expect("discovery should succeed");
+        let files = discover_api_files(&src, &[]).expect("discovery should succeed");
         assert_eq!(files.len(), 2, "mod.rs and .txt should be excluded");
 
         cleanup(&root);
@@ -610,7 +681,7 @@ mod tests {
         write_file(&src.join("api/todos.rs"), "pub fn router() {}");
         write_file(&src.join("api/users/[id].rs"), "pub fn router() {}");
 
-        let routes = build_api_routes(&src).expect("routes should build");
+        let routes = build_api_routes(&src, &[]).expect("routes should build");
         let patterns = routes
             .iter()
             .map(|r| r.pattern.as_str())
@@ -632,7 +703,7 @@ mod tests {
         let src = root.join("src");
         fs::create_dir_all(&src).expect("create src");
 
-        let routes = build_api_routes(&src).expect("expected empty route list");
+        let routes = build_api_routes(&src, &[]).expect("expected empty route list");
         assert!(routes.is_empty());
 
         cleanup(&root);

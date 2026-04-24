@@ -91,7 +91,7 @@ pub fn compile_to_out_dir_with_config(
     let src_root = src_root.as_ref();
     let out_dir = out_dir.as_ref();
 
-    let discovered = discover_html_files(src_root)?;
+    let discovered = discover_html_files(src_root, &build_config.routing.ignore_directories)?;
     let templates_root = out_dir.join("pilcrow_templates");
     let mut files = preprocess_discovered_sources(src_root, &templates_root, &discovered)?;
 
@@ -103,7 +103,7 @@ pub fn compile_to_out_dir_with_config(
             continue;
         }
         let url_prefix = entry.url_prefix();
-        let discovered_frags = discover_fragment_files(&fragment_dir)?;
+        let discovered_frags = discover_fragment_files(src_root, &fragment_dir, &build_config.routing.ignore_directories)?;
         let frag_templates_root = templates_root.join("fragments").join(&url_prefix);
 
         // Load routable fragment HTML files into the module graph.
@@ -132,7 +132,7 @@ pub fn compile_to_out_dir_with_config(
             HtmlSourceKind::Ui,
             &{
                 let mut ui_files =
-                    crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"))?;
+                    crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"), src_root, &build_config.routing.ignore_directories)?;
                 ui_files.sort();
                 ui_files
             },
@@ -188,13 +188,13 @@ pub fn compile_to_out_dir_with_config(
         }
 
         // Build route manifest entries for this fragment group.
-        let frag_page_routes = build_generated_fragment_manifest(&fragment_dir, &url_prefix)?;
+        let frag_page_routes = build_generated_fragment_manifest(src_root, &fragment_dir, &url_prefix, &build_config.routing.ignore_directories)?;
         fragment_routes.extend(frag_page_routes);
     }
     // ─────────────────────────────────────────────────────────────────────────
 
     let generated_routes_file = out_dir.join("generated_routes.rs");
-    let generated_routes = write_generated_routes_module(src_root, &generated_routes_file)?;
+    let generated_routes = write_generated_routes_module(src_root, &generated_routes_file, &build_config.routing.ignore_directories)?;
     let generated_templates_file = out_dir.join("generated_templates.rs");
 
     let template_codegen_inputs = files
@@ -215,7 +215,7 @@ pub fn compile_to_out_dir_with_config(
 
     let generated_api_routes_file = out_dir.join("generated_api_routes.rs");
     let generated_api_routes =
-        write_generated_api_routes_module(src_root, &generated_api_routes_file)?;
+        write_generated_api_routes_module(src_root, &generated_api_routes_file, &build_config.routing.ignore_directories)?;
 
     // Build directory-keyed maps for special page lookups (nearest-ancestor wins).
     let pages_dir = src_root.join("pages");
