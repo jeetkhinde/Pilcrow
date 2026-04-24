@@ -88,6 +88,8 @@ pub struct GeneratedTemplatesModule {
     pub deferred_fields_map: HashMap<String, Vec<String>>,
     /// Map from page module_name to its `DeferredHtml` (HTML slot) field names.
     pub deferred_html_fields_map: HashMap<String, Vec<String>>,
+    /// Map from page module_name to its ISR configuration (only for pages with `REVALIDATE`).
+    pub isr_config_map: HashMap<String, IsrOpts>,
 }
 
 /// Result of instrumenting a template's Rust frontmatter.

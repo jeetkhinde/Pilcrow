@@ -18,7 +18,7 @@ pub fn instrument_frontmatter(
     })?;
 
     // Parse and strip framework-reserved `pub const` declarations before other processing.
-    // Currently: TRAILING_SLASH and LAYOUT.
+    // Handled: TRAILING_SLASH, LAYOUT, REVALIDATE, MAX_STALE, CACHE_TAGS, CACHE_VARY, PRERENDER.
     let mut page_options = PageOptions::default();
     let mut const_remove_indices: Vec<usize> = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
@@ -35,6 +35,25 @@ pub fn instrument_frontmatter(
                     } else {
                         LayoutOpt::Inherit
                     };
+                    const_remove_indices.push(index);
+                } else if c.ident == "REVALIDATE" {
+                    if let Ok(v) = parse_u64_const(&c.expr) {
+                        page_options.isr.revalidate = Some(v);
+                    }
+                    const_remove_indices.push(index);
+                } else if c.ident == "MAX_STALE" {
+                    if let Ok(v) = parse_u64_const(&c.expr) {
+                        page_options.isr.max_stale = Some(v);
+                    }
+                    const_remove_indices.push(index);
+                } else if c.ident == "CACHE_TAGS" {
+                    page_options.isr.cache_tags = parse_str_slice_const(&c.expr);
+                    const_remove_indices.push(index);
+                } else if c.ident == "CACHE_VARY" {
+                    page_options.isr.cache_vary = parse_str_slice_const(&c.expr);
+                    const_remove_indices.push(index);
+                } else if c.ident == "PRERENDER" {
+                    page_options.isr.prerender = value_str.trim() == "true";
                     const_remove_indices.push(index);
                 }
             }
@@ -512,4 +531,50 @@ pub fn normalize_derive_path(input: &str) -> String {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect::<String>()
+}
+
+/// Parse a `u64` literal from a `pub const X: u64 = N;` expression.
+fn parse_u64_const(expr: &syn::Expr) -> Result<u64, ()> {
+    if let syn::Expr::Lit(lit_expr) = expr {
+        if let syn::Lit::Int(lit_int) = &lit_expr.lit {
+            return lit_int.base10_parse::<u64>().map_err(|_| ());
+        }
+    }
+    Err(())
+}
+
+/// Parse a `&[&str]` array literal into a `Vec<String>`.
+///
+/// Handles `&["a", "b"]` and `&["a"]` forms.
+fn parse_str_slice_const(expr: &syn::Expr) -> Vec<String> {
+    // &[...] → Reference to Array
+    let inner = match expr {
+        syn::Expr::Reference(r) => r.expr.as_ref(),
+        other => other,
+    };
+    let syn::Expr::Array(arr) = inner else {
+        return vec![];
+    };
+    arr.elems
+        .iter()
+        .filter_map(|elem| {
+            // Each element may be a &str literal (reference to lit) or just a lit.
+            let lit_expr = match elem {
+                syn::Expr::Lit(l) => l,
+                syn::Expr::Reference(r) => {
+                    if let syn::Expr::Lit(l) = r.expr.as_ref() {
+                        l
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            };
+            if let syn::Lit::Str(s) = &lit_expr.lit {
+                Some(s.value())
+            } else {
+                None
+            }
+        })
+        .collect()
 }

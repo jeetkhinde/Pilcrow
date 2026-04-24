@@ -1,5 +1,8 @@
 use pilcrow_web::AppError;
 
+pub const REVALIDATE: u64 = 60;
+pub const CACHE_TAGS: &[&str] = &["products"];
+
 #[derive(serde::Deserialize)]
 pub struct ApiResponse {
     pub products: Vec<Product>,

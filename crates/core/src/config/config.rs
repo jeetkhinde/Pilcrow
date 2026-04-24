@@ -10,6 +10,45 @@ pub struct PilcrowConfig {
     pub web: WebConfig,
     #[serde(default)]
     pub backend: BackendConfig,
+    #[serde(default)]
+    pub cache: CacheConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CacheConfig {
+    #[serde(default)]
+    pub provider: CacheProvider,
+    /// Redis connection URL (`redis://...`). Required when `provider = "redis"`.
+    pub url: Option<String>,
+    /// SQLite database path. Used when `provider = "sqlite"`.
+    pub path: Option<String>,
+    /// Maximum duration (seconds) a background revalidation task may run before abort.
+    #[serde(default = "default_revalidate_timeout_secs")]
+    pub revalidate_timeout_secs: u64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            provider: CacheProvider::default(),
+            url: None,
+            path: None,
+            revalidate_timeout_secs: default_revalidate_timeout_secs(),
+        }
+    }
+}
+
+/// Which backing store to use for the ISR cache.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheProvider {
+    /// In-process HashMap — zero config, no persistence across restarts.
+    #[default]
+    Memory,
+    /// SQLite file — single-node persistence.
+    Sqlite,
+    /// Redis — multi-node shared cache.
+    Redis,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -134,6 +173,10 @@ fn get_env_u16(key: &str) -> io::Result<Option<u16>> {
         }),
         None => Ok(None),
     }
+}
+
+fn default_revalidate_timeout_secs() -> u64 {
+    30
 }
 
 fn default_web_host() -> String {

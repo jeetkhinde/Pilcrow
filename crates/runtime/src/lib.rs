@@ -5,6 +5,7 @@ pub mod deferred;
 pub mod context;
 pub mod csrf;
 pub mod generated_routes;
+pub mod isr;
 pub mod middleware;
 pub mod response;
 pub mod sse;
@@ -44,5 +45,10 @@ pub use deferred::{
     __deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred,
     deferred_response, deferred_response_combined,
 };
+// ── ISR ──────────────────────────────────────────────────────
+pub use isr::{IsrCache, IsrCacheState, IsrHandle, __isr_cache_key};
+
 // ── Internal helpers (used by ws.rs, macros, generated code) ─
 pub(crate) use sse::serialize_or_null;
+#[doc(hidden)]
+pub use tokio;

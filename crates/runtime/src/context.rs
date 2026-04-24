@@ -16,6 +16,7 @@ use headers::HeaderMapExt;
 use pilcrow_core::AppError;
 use serde::Serialize;
 
+use crate::isr::IsrHandle;
 use crate::response::headers::*;
 use crate::response::response::{ActionResult, BaseResponse, FormErrors, ToastLevel};
 
@@ -190,6 +191,30 @@ impl Res {
         self
     }
 
+    /// Prevent the ISR middleware from writing the rendered HTML to the cache.
+    ///
+    /// Call this inside `load()` to serve a non-cacheable response (e.g. preview mode
+    /// or admin views). The render still happens normally; only the cache write is skipped.
+    ///
+    /// ```rust,ignore
+    /// pub async fn load(req: Req) -> AppResult<Props> {
+    ///     if req.query.contains("preview") {
+    ///         req.res.bypass_cache();
+    ///     }
+    ///     // ...
+    /// }
+    /// ```
+    pub fn bypass_cache(&self) -> &Self {
+        self.0.lock().unwrap().set_bypass_cache();
+        self
+    }
+
+    /// Check the bypass-cache flag. Used by generated ISR handler code.
+    #[doc(hidden)]
+    pub fn __is_bypass_cache(&self) -> bool {
+        self.0.lock().unwrap().is_bypass_cache()
+    }
+
     /// Apply all accumulated modifications to an existing response.
     ///
     /// Called by generated handler code after rendering is complete.
@@ -332,6 +357,9 @@ pub struct Req {
     pub locals: Locals,
     /// Response modifier: set headers, cookies, toasts from inside any handler.
     pub res: Res,
+    /// ISR cache handle. Use `req.cache.revalidate(path)` or
+    /// `req.cache.revalidate_tag(tag)` to bust the cache from within an action.
+    pub cache: IsrHandle,
     /// The named action, parsed from `?/<name>`. `None` when the URL has no
     /// action marker (default POST / GET). See [`Req::action`].
     action: Option<String>,
@@ -443,7 +471,36 @@ impl Req {
             is_enhanced: common.is_enhanced,
             locals: common.locals,
             res: common.res,
+            cache: common.cache,
             action: common.action,
+        }
+    }
+
+    /// Construct a synthetic `Req` from captured parts for ISR background revalidation tasks.
+    ///
+    /// The synthetic request has an empty form body, `is_enhanced = false`, a fresh `Res`,
+    /// and a no-op `IsrHandle` (to prevent recursive cache writes inside the spawned task).
+    #[doc(hidden)]
+    pub fn __synthetic(
+        path: String,
+        params: HashMap<String, String>,
+        query: FormMap,
+        headers: HeaderMap,
+        cookies: CookieJar,
+        locals: Locals,
+    ) -> Self {
+        Req {
+            params,
+            query,
+            form: FormMap::default(),
+            cookies,
+            headers,
+            path,
+            is_enhanced: false,
+            locals,
+            res: Res::default(),
+            cache: IsrHandle::default(),
+            action: None,
         }
     }
 }
@@ -459,6 +516,7 @@ struct CommonParts {
     is_enhanced: bool,
     locals: Locals,
     res: Res,
+    cache: IsrHandle,
     action: Option<String>,
 }
 
@@ -505,7 +563,15 @@ async fn extract_common_parts<S: Send + Sync>(
             r
         });
 
-    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, action }
+    // ISR cache handle — injected by start() when the cache is initialised.
+    // Pages without REVALIDATE will have a no-op IsrHandle (inner = None).
+    let cache = parts
+        .extensions
+        .get::<IsrHandle>()
+        .cloned()
+        .unwrap_or_default();
+
+    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, cache, action }
 }
 
 #[async_trait]
@@ -541,6 +607,7 @@ impl<S: Send + Sync> FromRequest<S> for Req {
             is_enhanced: common.is_enhanced,
             locals: common.locals,
             res: common.res,
+            cache: common.cache,
             action: common.action,
         })
     }

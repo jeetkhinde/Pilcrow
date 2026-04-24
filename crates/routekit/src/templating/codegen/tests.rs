@@ -274,6 +274,72 @@ mod tests {
     }
 
     #[test]
+    fn isr_constants_are_stripped_from_emitted_module() {
+        let frontmatter = r#"
+pub const REVALIDATE: u64 = 60;
+pub const MAX_STALE: u64 = 3600;
+pub const CACHE_TAGS: &[&str] = &["products", "inventory"];
+pub const CACHE_VARY: &[&str] = &["tenant_id"];
+pub const PRERENDER: bool = true;
+
+pub struct Props {
+    pub products: Vec<String>,
+}
+
+pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
+    Ok(Props { products: vec![] })
+}
+"#;
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_products".to_string(),
+            render_symbol: "render_page_products".to_string(),
+            source_path: "/tmp/src/pages/products.html".to_string(),
+            rust_frontmatter: frontmatter.to_string(),
+            template_source: "{% for p in products %}<p>{{ p }}</p>{% endfor %}".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+        }])
+        .expect("should generate with ISR constants");
+
+        let src = &generated.source;
+
+        // ISR constants must not appear in the emitted module source.
+        assert!(!src.contains("REVALIDATE"), "REVALIDATE leaked into emitted source");
+        assert!(!src.contains("MAX_STALE"), "MAX_STALE leaked into emitted source");
+        assert!(!src.contains("CACHE_TAGS"), "CACHE_TAGS leaked into emitted source");
+        assert!(!src.contains("CACHE_VARY"), "CACHE_VARY leaked into emitted source");
+        assert!(!src.contains("PRERENDER"), "PRERENDER leaked into emitted source");
+
+        // Props and load() must still be emitted.
+        assert!(src.contains("pub struct Props"), "Props was stripped");
+        assert!(src.contains("pub async fn load"), "load() was stripped");
+
+        // ISR config must be recorded in the map.
+        let isr = generated.isr_config_map.get("page_products")
+            .expect("page_products should have ISR config");
+        assert_eq!(isr.revalidate, Some(60));
+        assert_eq!(isr.max_stale, Some(3600));
+        assert_eq!(isr.cache_tags, vec!["products".to_string(), "inventory".to_string()]);
+        assert_eq!(isr.cache_vary, vec!["tenant_id".to_string()]);
+        assert!(isr.prerender);
+    }
+
+    #[test]
+    fn non_isr_page_has_no_isr_config() {
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_index".to_string(),
+            render_symbol: "render_page_index".to_string(),
+            source_path: "/tmp/src/pages/index.html".to_string(),
+            rust_frontmatter: "pub struct Props { pub title: String }".to_string(),
+            template_source: "<h1>{{ title }}</h1>".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+        }])
+        .expect("should generate");
+        assert!(generated.isr_config_map.get("page_index").is_none());
+    }
+
+    #[test]
     fn emit_action_route_uses_custom_error_module_when_provided() {
         let actions = vec![ActionFn {
             name: "update".to_string(),

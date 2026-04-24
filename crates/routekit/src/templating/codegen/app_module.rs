@@ -157,6 +157,7 @@ pub fn render_generated_app_module(
     page_options_map: &HashMap<String, PageOptions>,
     deferred_fields_map: &HashMap<String, Vec<String>>,
     deferred_html_fields_map: &HashMap<String, Vec<String>>,
+    isr_config_map: &HashMap<String, IsrOpts>,
     has_middleware: bool,
 ) -> String {
     let mut out = String::new();
@@ -231,6 +232,7 @@ pub fn render_generated_app_module(
             (false, false) => "",
         };
 
+        let isr_opts = isr_config_map.get(&entry.symbol);
         let pattern_str = entry.pattern.as_str();
         let _ = writeln!(
             out,
@@ -275,6 +277,23 @@ pub fn render_generated_app_module(
             );
             out.push_str(&emit_loading_append(loading_mod));
             out.push_str("            ::pilcrow_web::axum::response::Html(html)\n");
+        } else if isr_opts.map_or(false, |o| o.is_active())
+            && page_load.is_some()
+            && deferred_fields.is_empty()
+            && deferred_html_fields.is_empty()
+        {
+            // ── Case 2: ISR-enabled dynamic page ────────────────────────────────
+            let isr = isr_opts.expect("checked above");
+            out.push_str(&emit_isr_handler(
+                isr,
+                mod_name,
+                render_fn,
+                error_mod,
+                loading_mod,
+                page_load.expect("checked above"),
+                &active_chain,
+                chain_info,
+            ));
         } else {
             out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
             // Clone the response handle before req consumption so load() calls
@@ -674,6 +693,350 @@ pub fn render_generated_app_module(
     out
 }
 
+/// Emit the handler body for an ISR-enabled page (stale-while-revalidate).
+///
+/// This generates:
+/// 1. ISR preamble — extract cache Arc, compute key, pre-bypass check.
+/// 2. Cache-state dispatch — Fresh returns immediately; Stale spawns a background
+///    revalidation task then returns the stale HTML; Miss falls through.
+/// 3. Normal load + render (identical to the non-ISR path).
+/// 4. ISR cache store — writes the freshly rendered HTML to the cache.
+#[allow(clippy::too_many_arguments)]
+fn emit_isr_handler(
+    isr: &IsrOpts,
+    mod_name: &str,
+    render_fn: &str,
+    error_mod: Option<&str>,
+    loading_mod: Option<&str>,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, &str, &Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+
+    // ISR constants (statically embedded at codegen time).
+    let ttl = isr.revalidate.unwrap_or(60);
+    let _ = writeln!(out, "            const __ISR_TTL: u64 = {ttl}u64;");
+    match isr.max_stale {
+        Some(ms) => {
+            let _ = writeln!(
+                out,
+                "            const __ISR_MAX_STALE: ::std::option::Option<u64> = ::std::option::Option::Some({ms}u64);"
+            );
+        }
+        None => {
+            out.push_str("            const __ISR_MAX_STALE: ::std::option::Option<u64> = ::std::option::Option::None;\n");
+        }
+    }
+    let tags_lit = if isr.cache_tags.is_empty() {
+        "&[]".to_string()
+    } else {
+        let items: Vec<String> = isr.cache_tags.iter().map(|t| format!("\"{t}\"")).collect();
+        format!("&[{}]", items.join(", "))
+    };
+    let _ = writeln!(out, "            const __ISR_TAGS: &[&str] = {tags_lit};");
+    let vary_lit = if isr.cache_vary.is_empty() {
+        "&[]".to_string()
+    } else {
+        let items: Vec<String> = isr.cache_vary.iter().map(|k| format!("\"{k}\"")).collect();
+        format!("&[{}]", items.join(", "))
+    };
+    let _ = writeln!(out, "            const __ISR_VARY: &[&str] = {vary_lit};");
+
+    // Preamble: extract cache, resp handle, compute key, check pre-bypass.
+    out.push_str("            let __isr_arc = req.cache.__arc();\n");
+    out.push_str("            let __resp_handle = req.res.clone();\n");
+    out.push_str("            let __isr_key = ::pilcrow_web::__isr_cache_key(&req.path, &req.query, __ISR_VARY, &req.locals);\n");
+    out.push_str("            let __pre_bypass = __resp_handle.__is_bypass_cache();\n");
+
+    // Cache-state dispatch block.
+    out.push_str("            if let (::std::option::Option::Some(ref __cache), false) = (&__isr_arc, __pre_bypass) {\n");
+    out.push_str("                match __cache.check(&__isr_key, __ISR_MAX_STALE).await {\n");
+
+    // Fresh branch.
+    out.push_str("                    ::pilcrow_web::IsrCacheState::Fresh(html) => {\n");
+    out.push_str("                        return ::pilcrow_web::axum::response::Html(html).into_response();\n");
+    out.push_str("                    }\n");
+
+    // Stale branch — serve stale HTML immediately, spawn background revalidation.
+    out.push_str("                    ::pilcrow_web::IsrCacheState::Stale(stale_html) => {\n");
+    out.push_str("                        if __cache.begin_revalidation(&__isr_key).await {\n");
+    out.push_str("                            let __cache2 = ::std::sync::Arc::clone(__cache);\n");
+    out.push_str("                            let __key2 = __isr_key.clone();\n");
+    // Capture req parts for the synthetic request used in the background task.
+    out.push_str("                            let __synth_path = req.path.clone();\n");
+    out.push_str("                            let __synth_params = req.params.clone();\n");
+    out.push_str("                            let __synth_query = req.query.clone();\n");
+    out.push_str("                            let __synth_headers = req.headers.clone();\n");
+    out.push_str("                            let __synth_cookies = req.cookies.clone();\n");
+    out.push_str("                            let __synth_locals = req.locals.clone();\n");
+    out.push_str("                            ::pilcrow_web::tokio::spawn(async move {\n");
+    // Synthetic req used ONLY in the background task.
+    out.push_str("                                let __synth_req = ::pilcrow_web::Req::__synthetic(\n");
+    out.push_str("                                    __synth_path, __synth_params, __synth_query,\n");
+    out.push_str("                                    __synth_headers, __synth_cookies, __synth_locals,\n");
+    out.push_str("                                );\n");
+    // Emit the revalidation body inside the spawn task.
+    out.push_str(&emit_isr_revalidation_body(
+        mod_name,
+        render_fn,
+        page_sig,
+        active_chain,
+        chain_info,
+    ));
+    out.push_str("                            });\n"); // close tokio::spawn
+    out.push_str("                        }\n"); // close if begin_revalidation
+    out.push_str("                        return ::pilcrow_web::axum::response::Html(stale_html).into_response();\n");
+    out.push_str("                    }\n"); // close Stale branch
+
+    // Miss branch — fall through to normal load.
+    out.push_str("                    ::pilcrow_web::IsrCacheState::Miss => {}\n");
+    out.push_str("                }\n"); // close match
+    out.push_str("            }\n"); // close if let
+
+    // ── Normal load path (identical to existing non-ISR code) ──────────────────
+    // Layout loads (outermost first).
+    let any_layout_load = !active_chain.is_empty();
+    let layout_req_consumers = active_chain
+        .iter()
+        .filter(|(_, _, _, s)| s.wants_req)
+        .count();
+    let mut req_clones_left = if any_layout_load || page_sig.wants_req {
+        let total = layout_req_consumers + if page_sig.wants_req { 1 } else { 0 };
+        total.saturating_sub(1)
+    } else {
+        0
+    };
+
+    let layout_client_consumers = active_chain
+        .iter()
+        .filter(|(_, _, _, s)| s.wants_client)
+        .count();
+    let mut client_clones_left = if layout_client_consumers + if page_sig.wants_client { 1 } else { 0 } > 0 {
+        (layout_client_consumers + if page_sig.wants_client { 1 } else { 0 }).saturating_sub(1)
+    } else {
+        0
+    };
+
+    for (idx, layout_mod, _, lsig) in active_chain {
+        let req_arg = if lsig.wants_req {
+            if req_clones_left > 0 {
+                req_clones_left -= 1;
+                "req.clone()"
+            } else {
+                "req"
+            }
+        } else {
+            ""
+        };
+        let client_arg = if lsig.wants_client {
+            if client_clones_left > 0 {
+                client_clones_left -= 1;
+                "client.clone()"
+            } else {
+                "client"
+            }
+        } else {
+            ""
+        };
+        let layout_call_args = match (req_arg, client_arg) {
+            ("", "") => String::new(),
+            (r, "") => r.to_string(),
+            ("", cl) => cl.to_string(),
+            (r, cl) => format!("{r}, {cl}"),
+        };
+        let call_expr = format!("__pilcrow_gen::{layout_mod}::load({layout_call_args})");
+        let awaited = if lsig.is_async {
+            format!("{call_expr}.await")
+        } else {
+            call_expr
+        };
+        let var = format!("layout_data_{idx}");
+        if lsig.returns_result {
+            let _ = writeln!(out, "            let {var} = match {awaited} {{");
+            out.push_str("                Ok(p) => p,\n");
+            out.push_str(&emit_error_branch(error_mod));
+            out.push_str("            };\n");
+        } else {
+            let _ = writeln!(out, "            let {var} = {awaited};");
+        }
+    }
+
+    // Page load.
+    let req_arg = if page_sig.wants_req {
+        if req_clones_left > 0 {
+            "req.clone()"
+        } else {
+            "req"
+        }
+    } else {
+        ""
+    };
+    let client_arg = if page_sig.wants_client {
+        if client_clones_left > 0 {
+            "client.clone()"
+        } else {
+            "client"
+        }
+    } else {
+        ""
+    };
+    let page_call_args = match (req_arg, client_arg) {
+        ("", "") => String::new(),
+        (r, "") => r.to_string(),
+        ("", cl) => cl.to_string(),
+        (r, cl) => format!("{r}, {cl}"),
+    };
+    let page_call = format!("__pilcrow_gen::{mod_name}::load({page_call_args})");
+    let page_awaited = if page_sig.is_async {
+        format!("{page_call}.await")
+    } else {
+        page_call
+    };
+    if page_sig.returns_result {
+        let _ = writeln!(out, "            let page_data = match {page_awaited} {{");
+        out.push_str("                Ok(p) => p,\n");
+        out.push_str(&emit_error_branch(error_mod));
+        out.push_str("            };\n");
+    } else {
+        let _ = writeln!(out, "            let page_data = {page_awaited};");
+    }
+
+    // Construct props (MergedProps if layout chain contributed fields, else Props).
+    if any_layout_load {
+        let info = chain_info.expect("chain_info present when active_chain is non-empty");
+        let _ = writeln!(
+            out,
+            "            let props = __pilcrow_gen::{mod_name}::__MergedProps {{"
+        );
+        for (idx, _, field_names, _) in active_chain {
+            let var = format!("layout_data_{idx}");
+            for field in *field_names {
+                let _ = writeln!(out, "                {field}: {var}.{field},");
+            }
+        }
+        for field in &info.page_field_names {
+            let _ = writeln!(out, "                {field}: page_data.{field},");
+        }
+        out.push_str("            };\n");
+    } else {
+        out.push_str("            let props = page_data;\n");
+    }
+
+    // Render to HTML.
+    let _ = writeln!(
+        out,
+        "            let html = __pilcrow_gen::{mod_name}::{render_fn}(props).expect(\"template render failed\");"
+    );
+    out.push_str(&emit_loading_append(loading_mod));
+
+    // ISR cache store (skip if load() called bypass_cache()).
+    out.push_str("            let __post_bypass = __resp_handle.__is_bypass_cache();\n");
+    out.push_str("            if let (::std::option::Option::Some(ref __cache), false) = (&__isr_arc, __post_bypass) {\n");
+    out.push_str("                let __tags: ::std::vec::Vec<String> = __ISR_TAGS.iter().map(|s| s.to_string()).collect();\n");
+    out.push_str("                __cache.store(&__isr_key, html.clone(), __ISR_TTL, __tags).await;\n");
+    out.push_str("            }\n");
+
+    // Apply response side-effects and return.
+    out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
+    out.push_str("            __resp_handle.apply_to(&mut __response);\n");
+    out.push_str("            __response\n");
+
+    out
+}
+
+/// Emit the body of the background ISR revalidation `tokio::spawn` task.
+///
+/// The task receives a `__synth_req: Req`, runs all load()s, merges props,
+/// renders to HTML, and stores the result in `__cache2` under `__key2`.
+fn emit_isr_revalidation_body(
+    mod_name: &str,
+    render_fn: &str,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, &str, &Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    let any_layout_load = !active_chain.is_empty();
+
+    out.push_str("                                let __reval_result: ::std::result::Result<String, String> = async {\n");
+
+    // Layout loads — always clone __synth_req since it's a background task.
+    for (idx, layout_mod, _, lsig) in active_chain {
+        let req_arg = if lsig.wants_req { "__synth_req.clone()" } else { "" };
+        let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
+        let awaited = if lsig.is_async {
+            format!("{call_expr}.await")
+        } else {
+            call_expr
+        };
+        let var = format!("layout_data_{idx}");
+        if lsig.returns_result {
+            let _ = writeln!(out, "                                    let {var} = {awaited}.map_err(|e| e.to_string())?;");
+        } else {
+            let _ = writeln!(out, "                                    let {var} = {awaited};");
+        }
+    }
+
+    // Page load.
+    let page_req_arg = if page_sig.wants_req { "__synth_req" } else { "" };
+    let page_call = format!("__pilcrow_gen::{mod_name}::load({page_req_arg})");
+    let page_awaited = if page_sig.is_async {
+        format!("{page_call}.await")
+    } else {
+        page_call
+    };
+    if page_sig.returns_result {
+        let _ = writeln!(out, "                                    let page_data = {page_awaited}.map_err(|e| e.to_string())?;");
+    } else {
+        let _ = writeln!(out, "                                    let page_data = {page_awaited};");
+    }
+
+    // Construct props.
+    if any_layout_load {
+        let info = chain_info.expect("chain_info present when active_chain is non-empty");
+        let _ = writeln!(
+            out,
+            "                                    let props = __pilcrow_gen::{mod_name}::__MergedProps {{"
+        );
+        for (idx, _, field_names, _) in active_chain {
+            let var = format!("layout_data_{idx}");
+            for field in *field_names {
+                let _ = writeln!(out, "                                        {field}: {var}.{field},");
+            }
+        }
+        for field in &info.page_field_names {
+            let _ = writeln!(out, "                                        {field}: page_data.{field},");
+        }
+        out.push_str("                                    };\n");
+    } else {
+        out.push_str("                                    let props = page_data;\n");
+    }
+
+    // Render.
+    let _ = writeln!(
+        out,
+        "                                    __pilcrow_gen::{mod_name}::{render_fn}(props).map_err(|e| e.to_string())"
+    );
+
+    out.push_str("                                }.await;\n");
+
+    // Handle result.
+    out.push_str("                                match __reval_result {\n");
+    out.push_str("                                    ::std::result::Result::Ok(fresh_html) => {\n");
+    out.push_str("                                        let __tags: ::std::vec::Vec<String> = __ISR_TAGS.iter().map(|s| s.to_string()).collect();\n");
+    out.push_str("                                        __cache2.store(&__key2, fresh_html, __ISR_TTL, __tags).await;\n");
+    out.push_str("                                    }\n");
+    out.push_str("                                    ::std::result::Result::Err(e) => {\n");
+    out.push_str("                                        ::pilcrow_web::tracing::error!(\"ISR revalidation failed for {}: {}\", __key2, e);\n");
+    out.push_str("                                    }\n");
+    out.push_str("                                }\n");
+    out.push_str("                                __cache2.end_revalidation(&__key2).await;\n");
+
+    out
+}
+
 /// Generate and write the app module and API mods files.
 pub fn write_generated_app_module(
     page_entries: &[GeneratedPageRoute],
@@ -687,6 +1050,7 @@ pub fn write_generated_app_module(
     page_options_map: &HashMap<String, PageOptions>,
     deferred_fields_map: &HashMap<String, Vec<String>>,
     deferred_html_fields_map: &HashMap<String, Vec<String>>,
+    isr_config_map: &HashMap<String, IsrOpts>,
     has_middleware: bool,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
@@ -706,6 +1070,7 @@ pub fn write_generated_app_module(
         page_options_map,
         deferred_fields_map,
         deferred_html_fields_map,
+        isr_config_map,
         has_middleware,
     );
     fs::write(out_dir.join("generated_app.rs"), app_source)?;

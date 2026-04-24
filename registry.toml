@@ -513,20 +513,57 @@ scaffold_templates = []
 
 [[features]]
 id = "incremental-ssr"
-name = "Incremental SSR"
+name = "Incremental SSR (ISR)"
 domain = "pilcrow"
-status = "planned"
-summary = "Incremental regeneration of SSR output is planned."
-spec = "Planned feature. Current SSR pages render on request without incremental cache semantics."
+status = "stable"
+summary = "Stale-while-revalidate page caching. Add pub const REVALIDATE: u64 = <secs>; to any code-behind with load() to opt in."
+spec = """
+ISR is implemented as of 2026-04-24. When REVALIDATE is declared in a code-behind file, routekit wraps the GET handler with a stale-while-revalidate cache layer. Three states: Fresh (return cached HTML), Stale (return stale HTML + spawn background revalidation), Miss (blocking render + cache store).
+
+Constants (all optional except REVALIDATE):
+  pub const REVALIDATE: u64 = 60;           — required to opt in; TTL in seconds
+  pub const MAX_STALE: u64 = 3600;          — max age before stale is treated as miss
+  pub const CACHE_TAGS: &[&str] = &["tag"]; — tags for tag-based invalidation
+  pub const CACHE_VARY: &[&str] = &[];      — vary keys (v1: parsed, not yet applied to key)
+  pub const PRERENDER: bool = true;         — parsed, SSG pipeline not yet implemented
+
+All constants are stripped from the emitted module — they never appear in generated Rust.
+ISR is incompatible with Deferred<T>/DeferredHtml fields; those pages fall through to normal SSR.
+
+Runtime types: IsrCache, IsrCacheState (Fresh/Stale/Miss), IsrHandle (req.cache).
+req.res.bypass_cache() skips both cache read and write (preview/admin mode).
+req.cache.revalidate_tag("tag") and req.cache.revalidate("/path") for manual invalidation.
+"""
+canonical_usage = """
+// src/pages/products/index.rs
+pub const REVALIDATE: u64 = 60;
+pub const CACHE_TAGS: &[&str] = &["products"];
+
+pub struct Props { pub items: Vec<Item> }
+pub async fn load(req: Req) -> AppResult<Props> { ... }
+"""
 constraints = [
-  "Do not use revalidate or ISR-specific constants.",
+  "ISR requires a load() fn — static pages (no .rs file) are served directly without caching.",
+  "ISR is disabled for pages with Deferred<T> or DeferredHtml fields.",
+  "CACHE_VARY vary-key lookup against Locals is deferred to v2; currently parsed but not applied.",
+  "PRERENDER (SSG pre-warming) is parsed but the build-time pipeline is not yet implemented.",
 ]
 invalid_examples = [
-  "pub const REVALIDATE: u64 = 60 — planned, not implemented",
+  "pub const REVALIDATE: u64 = 60 without a load() fn — ISR only activates when load exists",
 ]
-source_refs = []
-test_refs = []
+source_refs = [
+  "crates/runtime/src/isr.rs",
+  "crates/routekit/src/templating/codegen/app_module.rs — emit_isr_handler / emit_isr_revalidation_body",
+  "crates/routekit/src/templating/codegen/instrument.rs — ISR constant detection and stripping",
+  "crates/routekit/src/templating/page_options.rs — IsrOpts struct",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs — isr_constants_are_stripped_from_emitted_module",
+  "crates/routekit/src/templating/codegen/tests.rs — non_isr_page_has_no_isr_config",
+]
 validation_rules = [
-  "Reject incremental SSR directives until implemented.",
+  "REVALIDATE must be u64. MAX_STALE must be u64. CACHE_TAGS and CACHE_VARY must be &[&str] literals.",
+  "All ISR constants are stripped — never emit them in generated module source.",
+  "ISR activates only when load() exists and no Deferred fields are present.",
 ]
 scaffold_templates = []

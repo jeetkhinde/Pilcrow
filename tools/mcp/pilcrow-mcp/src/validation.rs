@@ -93,17 +93,19 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
             }
         }
 
-        // Detect SSG/ISR planned constants
-        for planned_const in ["PRERENDER", "REVALIDATE", "GENERATE_STATIC_PARAMS"] {
-            if line.contains(planned_const) && line.contains("const") {
+        // Detect unimplemented SSG constants (ISR constants are now supported).
+        // REVALIDATE, MAX_STALE, CACHE_TAGS, CACHE_VARY, PRERENDER are live ISR features.
+        // GENERATE_STATIC_PARAMS remains unimplemented.
+        for unsupported_const in ["GENERATE_STATIC_PARAMS"] {
+            if line.contains(unsupported_const) && line.contains("const") {
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-planned-static-output",
-                    format!("`{planned_const}` is a planned feature (SSG/ISR) and is not currently supported."),
+                    format!("`{unsupported_const}` is a planned feature (SSG) and is not currently supported."),
                     path,
                     Some(lnum),
-                    Some("registry.toml: feature ssg, feature incremental-ssr"),
-                    Some("Remove this constant. Use server-side caching or Deferred<T> for deferred loading."),
+                    Some("registry.toml: feature ssg"),
+                    Some("Remove this constant. Use REVALIDATE for ISR or Deferred<T> for deferred loading."),
                 ));
             }
         }
@@ -270,18 +272,31 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
             }
         }
 
-        for directive in ["generateStaticParams", "prerender", "revalidate"] {
+        // generateStaticParams and prerender are still unimplemented SSG features.
+        // revalidate and ISR constants belong in .rs code-behind files, not HTML.
+        for directive in ["generateStaticParams", "prerender"] {
             if line.contains(directive) {
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-planned-static-output",
-                    format!("`{directive}` depends on planned SSG or incremental SSR support."),
+                    format!("`{directive}` depends on planned SSG support and is not yet implemented."),
                     path,
                     Some(lnum),
-                    Some("registry.toml: feature ssg, feature incremental-ssr"),
-                    Some("Keep the route as an SSR page until static generation is implemented."),
+                    Some("registry.toml: feature ssg"),
+                    Some("Keep the route as an SSR page. For caching, use REVALIDATE in the .rs code-behind."),
                 ));
             }
+        }
+        if line.contains("REVALIDATE") || line.contains("CACHE_TAGS") || line.contains("CACHE_VARY") {
+            findings.push(finding_with_line(
+                Severity::Warning,
+                "pilcrow-isr-const-in-html",
+                "ISR constants (REVALIDATE, CACHE_TAGS, CACHE_VARY) belong in the .rs code-behind, not the HTML template.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature incremental-ssr"),
+                Some("Move ISR constants to the paired .rs file alongside your Props and load() fn."),
+            ));
         }
 
         if line.contains("useState(") || line.contains("onclick=") || line.contains("x-data") {

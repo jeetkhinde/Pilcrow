@@ -52,6 +52,7 @@ pub struct BaseResponse {
     pub cookies: CookieJar,
     pub toasts: Vec<Toast>,         // Future-proof: multiple toasts
     pub status: Option<StatusCode>, // Optional explicit status code
+    pub bypass_cache: bool,         // Set by req.res.bypass_cache() inside load()
 }
 
 impl BaseResponse {
@@ -76,6 +77,16 @@ impl BaseResponse {
     pub fn set_no_cache(&mut self) {
         self.headers
             .typed_insert(SilcrowCache("no-cache".to_string()));
+    }
+
+    /// Mark this response as bypassing the ISR cache — the result will not be
+    /// written back to the cache even if the page has `REVALIDATE` set.
+    pub fn set_bypass_cache(&mut self) {
+        self.bypass_cache = true;
+    }
+
+    pub fn is_bypass_cache(&self) -> bool {
+        self.bypass_cache
     }
 
     /// Add a `Set-Cookie` header to the response.

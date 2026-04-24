@@ -439,6 +439,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-isr",
+            title: "ISR cache runtime",
+            path: "crates/runtime/src/isr.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-lib",
             title: "Routekit library",
             path: "crates/routekit/src/lib.rs",

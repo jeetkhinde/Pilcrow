@@ -45,6 +45,9 @@ pub use runtime::start;
 // ── Deferred streaming ───────────────────────────────────────
 pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
 
+// ── ISR (Incremental Static Regeneration) ────────────────────
+pub use runtime::{IsrCache, IsrCacheState, IsrHandle};
+
 // ── Doc-hidden re-exports for generated code ────────────────
 #[doc(hidden)]
 pub use axum;
@@ -56,6 +59,10 @@ pub use pilcrow_client;
 pub use runtime::csrf_middleware as __csrf_middleware;
 #[doc(hidden)]
 pub use runtime::{__deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred};
+#[doc(hidden)]
+pub use runtime::__isr_cache_key;
+#[doc(hidden)]
+pub use runtime::tokio;
 
 /// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
 ///

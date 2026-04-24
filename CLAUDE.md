@@ -511,6 +511,20 @@ When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeli
 | Client-side JS bundling beyond silcrow.js | ❌ Not implemented |
 | View Transitions API | ❌ Not implemented |
 
+## pilcrow-mcp as Source of Truth
+
+`tools/mcp/pilcrow-mcp` is the authoritative knowledge source for AI assistants working in this codebase. **After every change to framework functionality, update the MCP server to match.** This is not optional — a stale MCP will give wrong answers to future AI sessions.
+
+The three files to keep in sync:
+
+| File | What to update |
+|------|----------------|
+| `registry.toml` | Feature status (`planned` → `stable`), spec, constraints, canonical_usage, source_refs, test_refs |
+| `tools/mcp/pilcrow-mcp/src/validation.rs` | Remove error rules for newly-implemented features; add validation rules for new constants/syntax |
+| `tools/mcp/pilcrow-mcp/src/docs.rs` — `document_specs()` | Add new runtime/routekit source files as `DocumentSpec` entries so the knowledge base can pull evidence from them |
+
+After any update, run `cargo check --manifest-path tools/mcp/pilcrow-mcp/Cargo.toml` to verify the MCP server still compiles.
+
 ### Priority Roadmap (Suggested)
 
 1. **Fix scaffold bugs** — users can't create working projects (`silcrow.js` path + crate references)
