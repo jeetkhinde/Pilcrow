@@ -451,6 +451,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-csrf",
+            title: "CSRF protection middleware",
+            path: "crates/runtime/src/csrf.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-lib",
             title: "Routekit library",
             path: "crates/routekit/src/lib.rs",
@@ -478,6 +484,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             id: "routekit-page-options",
             title: "Page options",
             path: "crates/routekit/src/templating/page_options.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "routekit-routes-codegen",
+            title: "Typed route helper codegen",
+            path: "crates/routekit/src/templating/routes_codegen.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "routekit-env-codegen",
+            title: "Typed env struct codegen",
+            path: "crates/routekit/src/templating/env_codegen.rs",
             category: KnowledgeCategory::Routekit,
         },
         DocumentSpec {

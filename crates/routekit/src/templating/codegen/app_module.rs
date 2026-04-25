@@ -796,7 +796,7 @@ fn emit_isr_handler(
     // Preamble: extract cache, resp handle, compute key, check pre-bypass.
     out.push_str("            let __isr_arc = req.cache.__arc();\n");
     out.push_str("            let __resp_handle = req.res.clone();\n");
-    out.push_str("            let __isr_key = ::pilcrow_web::__isr_cache_key(&req.path, &req.query, __ISR_VARY, &req.locals);\n");
+    out.push_str("            let __isr_key = ::pilcrow_web::__isr_cache_key(&req.path, &req.query, __ISR_VARY, &req.cookies, &req.headers);\n");
     out.push_str("            let __pre_bypass = __resp_handle.__is_bypass_cache();\n");
 
     // Cache-state dispatch block.

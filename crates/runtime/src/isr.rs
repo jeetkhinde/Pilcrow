@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::context::{FormMap, Locals};
+use axum::http::HeaderMap;
+use axum_extra::extract::CookieJar;
+
+use crate::context::FormMap;
 
 // ── Cache entry ───────────────────────────────────────────────
 
@@ -199,17 +202,22 @@ impl std::fmt::Debug for IsrHandle {
 
 // ── Cache key computation ─────────────────────────────────────
 
-/// Compute the ISR cache key: `{path}?{sorted_query}#{vary_values}`.
+/// Compute the ISR cache key: `{path}?{sorted_query}#{vary_hash}`.
 ///
 /// - `path` — normalized request path
 /// - `query` — the request query map (params are sorted for stability)
-/// - `vary_keys` — names of `req.locals` keys whose values scope the key
-/// - `locals` — the request-local store (for CACHE_VARY lookups)
-///
-/// `vary_keys` is currently not fully implemented — the vary segment is always
-/// empty. Full CACHE_VARY support via named locals is planned.
+/// - `vary_keys` — names declared in `CACHE_VARY`; each key is resolved as a
+///   cookie name first, then as a request header name. Missing values are
+///   treated as empty string so they still produce a stable key segment.
+/// - `cookies` / `headers` — the request cookies and headers for vary resolution
 #[doc(hidden)]
-pub fn __isr_cache_key(path: &str, query: &FormMap, vary_keys: &[&str], _locals: &Locals) -> String {
+pub fn __isr_cache_key(
+    path: &str,
+    query: &FormMap,
+    vary_keys: &[&str],
+    cookies: &CookieJar,
+    headers: &HeaderMap,
+) -> String {
     let mut pairs: Vec<(String, String)> = query
         .0
         .iter()
@@ -222,14 +230,26 @@ pub fn __isr_cache_key(path: &str, query: &FormMap, vary_keys: &[&str], _locals:
         .collect::<Vec<_>>()
         .join("&");
 
-    // CACHE_VARY: would extract string-keyed values from locals here.
-    // Skipped in v1 — all requests for the same path share one cache entry.
     let vary = if vary_keys.is_empty() {
         String::new()
     } else {
-        // Placeholder: return the vary key names joined (not their values).
-        // A full implementation would look up typed values from locals.
-        vary_keys.join(":")
+        vary_keys
+            .iter()
+            .map(|k| {
+                // Cookie takes priority over header (auth state is cookie-based in Pilcrow).
+                cookies
+                    .get(k)
+                    .map(|c| c.value().to_string())
+                    .or_else(|| {
+                        headers
+                            .get(*k)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join(":")
     };
 
     match (qs.is_empty(), vary.is_empty()) {
@@ -237,5 +257,66 @@ pub fn __isr_cache_key(path: &str, query: &FormMap, vary_keys: &[&str], _locals:
         (false, true) => format!("{path}?{qs}"),
         (true, false) => format!("{path}#{vary}"),
         (false, false) => format!("{path}?{qs}#{vary}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_cookies() -> CookieJar {
+        CookieJar::default()
+    }
+
+    fn empty_headers() -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    #[test]
+    fn cache_key_no_vary_no_query() {
+        let key = __isr_cache_key("/products", &FormMap::default(), &[], &empty_cookies(), &empty_headers());
+        assert_eq!(key, "/products");
+    }
+
+    #[test]
+    fn cache_key_query_sorted() {
+        let mut q = FormMap::default();
+        q.0.insert("z".into(), vec!["1".into()]);
+        q.0.insert("a".into(), vec!["2".into()]);
+        let key = __isr_cache_key("/p", &q, &[], &empty_cookies(), &empty_headers());
+        assert_eq!(key, "/p?a=2&z=1");
+    }
+
+    #[test]
+    fn cache_key_vary_by_cookie() {
+        let jar = CookieJar::default().add(cookie::Cookie::new("session", "abc123"));
+        let key = __isr_cache_key("/dash", &FormMap::default(), &["session"], &jar, &empty_headers());
+        assert_eq!(key, "/dash#abc123");
+    }
+
+    #[test]
+    fn cache_key_vary_by_header_fallback() {
+        let mut h = HeaderMap::new();
+        h.insert("accept-language", "en-US".parse().unwrap());
+        let key = __isr_cache_key("/dash", &FormMap::default(), &["accept-language"], &empty_cookies(), &h);
+        assert_eq!(key, "/dash#en-US");
+    }
+
+    #[test]
+    fn cache_key_vary_cookie_takes_priority_over_header() {
+        let jar = CookieJar::default().add(cookie::Cookie::new("locale", "fr"));
+        let mut h = HeaderMap::new();
+        h.insert("locale", "de".parse().unwrap());
+        let key = __isr_cache_key("/p", &FormMap::default(), &["locale"], &jar, &h);
+        assert_eq!(key, "/p#fr");
+    }
+
+    #[test]
+    fn cache_key_vary_missing_key_falls_back_to_base_key() {
+        // When the vary key is absent from both cookies and headers, the vary
+        // segment is empty and the key degrades to the plain path — the
+        // unauthenticated case shares the same cache as the no-vary case.
+        let key = __isr_cache_key("/p", &FormMap::default(), &["session"], &empty_cookies(), &empty_headers());
+        assert_eq!(key, "/p");
     }
 }
