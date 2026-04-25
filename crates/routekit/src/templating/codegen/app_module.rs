@@ -247,14 +247,7 @@ pub fn render_generated_app_module(
                     entry.pattern, entry.symbol
                 );
             }
-            // PRERENDER and ISR are mutually exclusive.
-            if isr_opts.map_or(false, |o| o.is_active()) {
-                panic!(
-                    "PRERENDER and REVALIDATE are mutually exclusive on route '{}' (module `{}`).\n\
-                     Use either ISR (REVALIDATE) or SSG (PRERENDER), not both.",
-                    entry.pattern, entry.symbol
-                );
-            }
+            // PRERENDER + REVALIDATE: allowed — startup-prerender with ISR revalidation.
         }
 
         let pattern_str = entry.pattern.as_str();
@@ -302,11 +295,12 @@ pub fn render_generated_app_module(
             out.push_str(&emit_loading_append(loading_mod));
             out.push_str("            ::pilcrow_web::axum::response::Html(html)\n");
         } else if ssg_opts.map_or(false, |o| o.prerender)
+            && !isr_opts.map_or(false, |o| o.is_active())
             && page_load.is_some()
             && deferred_fields.is_empty()
             && deferred_html_fields.is_empty()
         {
-            // ── Case 1.5: SSG prerendered page ──────────────────────────────────
+            // ── Case 1.5: SSG-only prerendered page (no REVALIDATE) ─────────────
             out.push_str(&emit_ssg_handler(
                 mod_name,
                 render_fn,
@@ -717,6 +711,7 @@ pub fn render_generated_app_module(
         load_map,
         layout_fields_map,
         ssg_config_map,
+        isr_config_map,
         deferred_fields_map,
         deferred_html_fields_map,
     ));
@@ -1258,6 +1253,7 @@ fn emit_prerender_all(
     load_map: &HashMap<String, Option<LoadSignature>>,
     layout_fields_map: &HashMap<String, LayoutFieldsInfo>,
     ssg_config_map: &HashMap<String, SsgOpts>,
+    isr_config_map: &HashMap<String, IsrOpts>,
     deferred_fields_map: &HashMap<String, Vec<String>>,
     deferred_html_fields_map: &HashMap<String, Vec<String>>,
 ) -> String {
@@ -1304,6 +1300,22 @@ fn emit_prerender_all(
             })
             .unwrap_or_default();
 
+        // When combined with ISR, store at the ISR TTL so revalidation can happen.
+        // Otherwise use u64::MAX (never expires) for pure SSG.
+        let isr = isr_config_map.get(&entry.symbol);
+        let (ttl_expr, tags_expr) = if let Some(isr) = isr.filter(|o| o.is_active()) {
+            let ttl = isr.revalidate.unwrap_or(60);
+            let tags = if isr.cache_tags.is_empty() {
+                "vec![]".to_string()
+            } else {
+                let items: Vec<String> = isr.cache_tags.iter().map(|t| format!("\"{t}\"")).collect();
+                format!("vec![{}]", items.join(", "))
+            };
+            (format!("{ttl}u64"), tags)
+        } else {
+            ("u64::MAX".to_string(), "vec![]".to_string())
+        };
+
         let is_dynamic = entry.pattern.contains(':');
         if is_dynamic {
             let param_names: Vec<&str> = entry
@@ -1320,6 +1332,8 @@ fn emit_prerender_all(
                 page_sig,
                 &active_chain,
                 chain_info,
+                &ttl_expr,
+                &tags_expr,
             ));
         } else {
             out.push_str(&emit_ssg_prerender_static_block(
@@ -1329,6 +1343,8 @@ fn emit_prerender_all(
                 page_sig,
                 &active_chain,
                 chain_info,
+                &ttl_expr,
+                &tags_expr,
             ));
         }
     }
@@ -1349,6 +1365,8 @@ fn emit_ssg_prerender_static_block(
     page_sig: LoadSignature,
     active_chain: &[(usize, String, Vec<String>, LoadSignature)],
     chain_info: Option<&LayoutFieldsInfo>,
+    ttl_expr: &str,
+    tags_expr: &str,
 ) -> String {
     let mut out = String::new();
     let path_lit = rust_string(path);
@@ -1371,6 +1389,8 @@ fn emit_ssg_prerender_static_block(
         page_sig,
         active_chain,
         chain_info,
+        ttl_expr,
+        tags_expr,
     ));
     out.push_str("    }\n");
     out
@@ -1385,6 +1405,8 @@ fn emit_ssg_prerender_dynamic_block(
     page_sig: LoadSignature,
     active_chain: &[(usize, String, Vec<String>, LoadSignature)],
     chain_info: Option<&LayoutFieldsInfo>,
+    ttl_expr: &str,
+    tags_expr: &str,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "    // SSG (entries): {pattern}");
@@ -1450,6 +1472,8 @@ fn emit_ssg_prerender_dynamic_block(
         page_sig,
         active_chain,
         chain_info,
+        ttl_expr,
+        tags_expr,
     ));
 
     out.push_str("        }\n");
@@ -1461,6 +1485,8 @@ fn emit_ssg_prerender_dynamic_block(
 ///
 /// `req_var` is the identifier of the `Req` to use (e.g. `"__req"`).
 /// `key_expr` is an expression for the cache key (e.g. `"__ssg_key"` or `"&__ssg_key"`).
+/// `ttl_expr` is a Rust expression for the TTL (e.g. `"u64::MAX"` or `"60u64"`).
+/// `tags_expr` is a Rust expression for the tag vec (e.g. `"vec![]"` or `"vec![\"products\"]"`).
 /// Indented for use inside a `{ }` block (8-space indent for static, 12-space for dynamic loop).
 fn emit_ssg_load_render_store(
     mod_name: &str,
@@ -1470,6 +1496,8 @@ fn emit_ssg_load_render_store(
     page_sig: LoadSignature,
     active_chain: &[(usize, String, Vec<String>, LoadSignature)],
     chain_info: Option<&LayoutFieldsInfo>,
+    ttl_expr: &str,
+    tags_expr: &str,
 ) -> String {
     // Determine the indentation based on the call context.
     // Static blocks are at 8-space indent; dynamic blocks are at 12-space (inside for loop).
@@ -1544,7 +1572,7 @@ fn emit_ssg_load_render_store(
     let _ = writeln!(out, "{indent}    ::std::result::Result::Ok(html) => {{");
     let _ = writeln!(
         out,
-        "{indent}        cache.store({key_expr}, html, u64::MAX, vec![]).await;"
+        "{indent}        cache.store({key_expr}, html, {ttl_expr}, {tags_expr}).await;"
     );
     let _ = writeln!(out, "{indent}    }}");
     let _ = writeln!(out, "{indent}    ::std::result::Result::Err(e) => {{");

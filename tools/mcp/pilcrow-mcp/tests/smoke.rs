@@ -158,6 +158,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "diagnose_codegen",
     "propose_fix",
     "apply_safe_fix",
+    "suggest_pattern",
 ];
 
 #[test]

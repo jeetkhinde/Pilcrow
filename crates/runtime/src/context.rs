@@ -273,6 +273,39 @@ impl FormMap {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)
     }
+
+    /// Deserialize the map into a typed struct using `serde`.
+    ///
+    /// Repeated keys (e.g. `<select multiple>`) are represented as multiple
+    /// values per key; `serde_urlencoded` handles this with `Vec<T>` fields.
+    /// Absent keys return the field default when `#[serde(default)]` is applied.
+    ///
+    /// ```rust,ignore
+    /// #[derive(serde::Deserialize)]
+    /// struct CreateInput {
+    ///     name: String,
+    ///     price: f64,
+    ///     #[serde(default)]
+    ///     active: bool,
+    /// }
+    ///
+    /// pub async fn create(req: Req) -> ActionResult {
+    ///     let input: CreateInput = req.form.parse()?;
+    ///     // ...
+    ///     redirect("/items")
+    /// }
+    /// ```
+    pub fn parse<T: serde::de::DeserializeOwned>(&self) -> Result<T, AppError> {
+        let mut parts: Vec<String> = Vec::with_capacity(self.0.len());
+        for (k, vs) in &self.0 {
+            for v in vs {
+                parts.push(format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)));
+            }
+        }
+        let encoded = parts.join("&");
+        serde_urlencoded::from_str::<T>(&encoded)
+            .map_err(|e| AppError::Validation(e.to_string()))
+    }
 }
 
 /// Parse a raw query string into a multi-value [`FormMap`], stripping any
@@ -476,6 +509,20 @@ impl Req {
         }
     }
 
+    /// Return a builder for constructing a synthetic `Req` in unit tests.
+    ///
+    /// ```rust,ignore
+    /// let req = Req::for_test()
+    ///     .param("id", "42")
+    ///     .query("page", "1")
+    ///     .form_field("name", "Widget")
+    ///     .build();
+    /// let props = load(req).await.unwrap();
+    /// ```
+    pub fn for_test() -> ReqBuilder {
+        ReqBuilder::new()
+    }
+
     /// Construct a synthetic `Req` from captured parts for ISR background revalidation tasks.
     ///
     /// The synthetic request has an empty form body, `is_enhanced = false`, a fresh `Res`,
@@ -498,6 +545,86 @@ impl Req {
             path,
             is_enhanced: false,
             locals,
+            res: Res::default(),
+            cache: IsrHandle::default(),
+            action: None,
+        }
+    }
+}
+
+// ── ReqBuilder ───────────────────────────────────────────────
+
+/// Builder for a synthetic [`Req`] used in unit tests. Obtain via [`Req::for_test()`].
+pub struct ReqBuilder {
+    params: HashMap<String, String>,
+    query: FormMap,
+    form: FormMap,
+    cookies: CookieJar,
+    headers: HeaderMap,
+    path: String,
+    is_enhanced: bool,
+}
+
+impl ReqBuilder {
+    fn new() -> Self {
+        Self {
+            params: HashMap::new(),
+            query: FormMap::default(),
+            form: FormMap::default(),
+            cookies: CookieJar::default(),
+            headers: HeaderMap::new(),
+            path: "/".to_string(),
+            is_enhanced: false,
+        }
+    }
+
+    /// Set a URL path param (e.g. `:id`).
+    pub fn param(mut self, key: &str, value: &str) -> Self {
+        self.params.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    /// Append a query string value.
+    pub fn query(mut self, key: &str, value: &str) -> Self {
+        self.query.0.entry(key.to_string()).or_default().push(value.to_string());
+        self
+    }
+
+    /// Append a form body field.
+    pub fn form_field(mut self, key: &str, value: &str) -> Self {
+        self.form.0.entry(key.to_string()).or_default().push(value.to_string());
+        self
+    }
+
+    /// Add a cookie.
+    pub fn cookie(mut self, name: &str, value: &str) -> Self {
+        self.cookies = self.cookies.add(Cookie::new(name.to_string(), value.to_string()));
+        self
+    }
+
+    /// Set the request path (default: `"/"`).
+    pub fn path(mut self, path: &str) -> Self {
+        self.path = path.to_string();
+        self
+    }
+
+    /// Mark as an enhanced (silcrow.js) request (`is_enhanced = true`).
+    pub fn enhanced(mut self) -> Self {
+        self.is_enhanced = true;
+        self
+    }
+
+    /// Finalise and return the synthetic [`Req`].
+    pub fn build(self) -> Req {
+        Req {
+            params: self.params,
+            query: self.query,
+            form: self.form,
+            cookies: self.cookies,
+            headers: self.headers,
+            path: self.path,
+            is_enhanced: self.is_enhanced,
+            locals: Locals::default(),
             res: Res::default(),
             cache: IsrHandle::default(),
             action: None,

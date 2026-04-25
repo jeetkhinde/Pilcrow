@@ -756,7 +756,7 @@ constraints = [
   "ISR requires a load() fn — static pages (no .rs file) are served directly without caching.",
   "ISR is disabled for pages with Deferred<T> or DeferredHtml fields.",
   "CACHE_VARY keys are resolved as cookie names first, then request header names. Missing keys produce an empty string segment so the key is still stable.",
-  "ISR and SSG (PRERENDER) are mutually exclusive — build panics if both are declared together.",
+  "PRERENDER and REVALIDATE can be combined: page is warm-rendered at startup then ISR-revalidated on TTL expiry.",
 ]
 invalid_examples = [
   "pub const REVALIDATE: u64 = 60 without a load() fn — ISR only activates when load exists",
@@ -869,4 +869,143 @@ source_refs = [
 ]
 test_refs = []
 validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "form-parse"
+name = "Typed Form Deserialization"
+domain = "pilcrow"
+status = "stable"
+summary = "Deserialize req.form or req.query into any serde::Deserialize struct via .parse::<T>()."
+spec = """
+FormMap::parse::<T>() re-encodes the multi-value map as a urlencoded string and calls
+serde_urlencoded::from_str, returning Result<T, AppError::Validation>. The ? operator
+propagates the error in action fns and load() without any boilerplate.
+
+Repeated keys (e.g. multiple checkboxes) are preserved as multiple values; use Vec<T>
+fields to capture them. Absent keys return the field's Default if #[serde(default)] is set.
+"""
+canonical_usage = """
+// src/pages/items.rs
+#[derive(serde::Deserialize)]
+struct CreateInput {
+    name: String,
+    price: f64,
+    #[serde(default)]
+    active: bool,
+}
+
+pub async fn create(req: Req) -> ActionResult {
+    let input: CreateInput = req.form.parse()?;
+    // input.name, input.price, input.active available
+    redirect("/items")
+}
+"""
+constraints = [
+  "Returns AppError::Validation on parse failure — propagate with ? in action fns.",
+  "Boolean HTML checkbox fields arrive as \"on\" when checked, absent when unchecked — use #[serde(default)] for correct bool deserialization.",
+  "Works on both req.form (POST body) and req.query (GET query string).",
+]
+invalid_examples = [
+  "let name = req.form.get(\"name\").unwrap_or(\"\"); — verbose, use req.form.parse::<T>() instead",
+]
+source_refs = [
+  "crates/runtime/src/context.rs — FormMap::parse",
+]
+test_refs = [
+  "crates/runtime/tests/context.rs — formmap_parse_basic_fields",
+  "crates/runtime/tests/context.rs — formmap_parse_returns_validation_error_on_type_mismatch",
+]
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "req-for-test"
+name = "Test Request Builder"
+domain = "pilcrow"
+status = "stable"
+summary = "Build synthetic Req values for unit-testing load() and action fns without spinning up an HTTP server."
+spec = """
+Req::for_test() returns a ReqBuilder. Chain .param(), .query(), .form_field(), .cookie(),
+.path(), .enhanced() to configure it, then call .build() to get a Req.
+
+The resulting Req has empty Locals, a fresh Res, no-op IsrHandle, and is_enhanced=false by
+default. This enables direct unit tests of load() and action fns without axum test harness.
+"""
+canonical_usage = """
+// In a #[cfg(test)] block or tests/ file:
+#[tokio::test]
+async fn test_product_load() {
+    let req = Req::for_test()
+        .param("id", "42")
+        .build();
+    let props = load(req).await.unwrap();
+    assert_eq!(props.product.id, 42);
+}
+
+#[tokio::test]
+async fn test_create_action_validates_name() {
+    let req = Req::for_test()
+        .form_field("name", "")
+        .build();
+    let result = create(req).await;
+    // result should be Ok(Json(FormErrors { has_errors: true, ... }))
+}
+"""
+constraints = [
+  "Req::for_test() is for unit tests only — never use in production handlers.",
+  "Locals and Res are fresh (empty) on every builder call — middleware effects are not simulated.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/context.rs — Req::for_test, ReqBuilder",
+]
+test_refs = [
+  "crates/runtime/tests/context.rs — req_for_test_param_and_query",
+  "crates/runtime/tests/context.rs — req_for_test_drives_load_fn",
+]
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "combined-prerender-isr"
+name = "Combined PRERENDER + REVALIDATE"
+domain = "pilcrow"
+status = "stable"
+summary = "Pre-render at server startup AND revalidate on a TTL — startup-warm ISR."
+spec = """
+When a page declares both PRERENDER = true and REVALIDATE = <secs>, routekit:
+1. Includes the page in __pilcrow_prerender_all() — rendered once at server startup,
+   stored in the ISR cache with the ISR TTL (not u64::MAX).
+2. The request handler is the full ISR stale-while-revalidate handler — Fresh/Stale/Miss
+   states apply as normal after the TTL expires.
+3. CACHE_TAGS and CACHE_VARY are respected in both startup prerendering and runtime.
+
+This is the recommended pattern for pages that need fast first-load AND fresh data over time.
+Requires pilcrow_start() in main.rs (same as PRERENDER-only).
+"""
+canonical_usage = """
+// src/pages/products/index.rs
+pub const PRERENDER: bool = true;
+pub const REVALIDATE: u64 = 60;
+pub const CACHE_TAGS: &[&str] = &["products"];
+
+pub struct Props { pub items: Vec<Item> }
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { items: db_fetch().await? })
+}
+"""
+constraints = [
+  "Requires pilcrow_start() in main.rs — same as PRERENDER-only pages.",
+  "Dynamic routes with both flags still require entries() for startup prerendering.",
+  "CACHE_VARY is applied both at startup (synthetic request, so only vary on path) and at runtime.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/routekit/src/templating/codegen/app_module.rs — emit_prerender_all, emit_isr_handler",
+]
+test_refs = []
+validation_rules = [
+  "Both PRERENDER = true and REVALIDATE must use correct types (bool and u64).",
+]
 scaffold_templates = []

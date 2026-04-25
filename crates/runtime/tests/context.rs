@@ -406,3 +406,103 @@ async fn req_take_form_flash_returns_none_without_cookie() {
 
     assert_eq!(body_string(resp).await, "none");
 }
+
+// ── FormMap::parse tests ─────────────────────────────────────
+
+#[derive(serde::Deserialize, Debug, PartialEq)]
+struct ParseInput {
+    name: String,
+    price: f64,
+    #[serde(default)]
+    active: bool,
+}
+
+#[test]
+fn formmap_parse_basic_fields() {
+    let mut m = FormMap::default();
+    m.0.insert("name".into(), vec!["Widget".into()]);
+    m.0.insert("price".into(), vec!["9.99".into()]);
+    let input: ParseInput = m.parse().unwrap();
+    assert_eq!(input.name, "Widget");
+    assert!((input.price - 9.99).abs() < 1e-9);
+    assert!(!input.active);
+}
+
+#[test]
+fn formmap_parse_bool_default_when_absent() {
+    let mut m = FormMap::default();
+    m.0.insert("name".into(), vec!["Gadget".into()]);
+    m.0.insert("price".into(), vec!["1.0".into()]);
+    // active is absent — should default to false
+    let input: ParseInput = m.parse().unwrap();
+    assert!(!input.active);
+}
+
+#[test]
+fn formmap_parse_returns_validation_error_on_type_mismatch() {
+    let mut m = FormMap::default();
+    m.0.insert("name".into(), vec!["Widget".into()]);
+    m.0.insert("price".into(), vec!["not-a-number".into()]);
+    let result: Result<ParseInput, _> = m.parse();
+    match result {
+        Err(AppError::Validation(_)) => {}
+        other => panic!("expected Validation error, got {:?}", other),
+    }
+}
+
+#[test]
+fn formmap_parse_encodes_special_chars() {
+    let mut m = FormMap::default();
+    m.0.insert("name".into(), vec!["Hello World & Co.".into()]);
+    m.0.insert("price".into(), vec!["0.0".into()]);
+    let input: ParseInput = m.parse().unwrap();
+    assert_eq!(input.name, "Hello World & Co.");
+}
+
+// ── Req::for_test tests ──────────────────────────────────────
+
+#[test]
+fn req_for_test_defaults() {
+    let req = Req::for_test().build();
+    assert_eq!(req.path, "/");
+    assert!(!req.is_enhanced);
+    assert!(req.params.is_empty());
+}
+
+#[test]
+fn req_for_test_param_and_query() {
+    let req = Req::for_test()
+        .param("id", "42")
+        .query("page", "1")
+        .path("/products/42")
+        .build();
+    assert_eq!(req.params.get("id").map(|s| s.as_str()), Some("42"));
+    assert_eq!(req.query.get("page"), Some("1"));
+    assert_eq!(req.path, "/products/42");
+}
+
+#[test]
+fn req_for_test_form_field() {
+    let req = Req::for_test()
+        .form_field("name", "Widget")
+        .form_field("price", "9.99")
+        .build();
+    assert_eq!(req.form.get("name"), Some("Widget"));
+    assert_eq!(req.form.get("price"), Some("9.99"));
+}
+
+#[test]
+fn req_for_test_enhanced_flag() {
+    let req = Req::for_test().enhanced().build();
+    assert!(req.is_enhanced);
+}
+
+#[tokio::test]
+async fn req_for_test_drives_load_fn() {
+    async fn load(req: Req) -> Result<String, pilcrow_core::AppError> {
+        Ok(req.params.get("id").cloned().unwrap_or_default())
+    }
+    let req = Req::for_test().param("id", "99").build();
+    let result = load(req).await.unwrap();
+    assert_eq!(result, "99");
+}

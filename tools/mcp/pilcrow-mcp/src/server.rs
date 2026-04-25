@@ -188,6 +188,16 @@ pub struct ComparePatternArgs {
     pub options: Option<Value>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SuggestPatternArgs {
+    /// Natural-language description of what you want to build.
+    /// Examples: "page with 60s cache", "real-time counter with SSE",
+    /// "product listing with deferred reviews", "action that updates a product"
+    pub description: String,
+    #[serde(default)]
+    pub include_code: Option<bool>,
+}
+
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct WhyBuildFailedArgs {
     #[serde(default)]
@@ -703,6 +713,104 @@ impl PilcrowServer {
     }
 
     #[tool(
+        description = "Given a natural-language description of what to build, identify the relevant Pilcrow features and return a ready-to-use code skeleton. Use this before writing any page, action, or API route."
+    )]
+    async fn suggest_pattern(
+        &self,
+        Parameters(args): Parameters<SuggestPatternArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let desc = args.description.to_lowercase();
+        let include_code = args.include_code.unwrap_or(true);
+
+        // Detect which features apply based on keyword matching.
+        let mut matched: Vec<(&str, &str)> = Vec::new(); // (feature_id, reason)
+
+        if desc.contains("cache") || desc.contains("isr") || desc.contains("revalidat") || desc.contains("stale") {
+            matched.push(("incremental-ssr", "caching / revalidation keywords"));
+        }
+        if desc.contains("prerender") || desc.contains("ssg") || desc.contains("static") || desc.contains("startup") {
+            matched.push(("ssg", "static site generation keywords"));
+        }
+        if desc.contains("sse") || desc.contains("server-sent") || desc.contains("real-time") || desc.contains("live") || desc.contains("stream") {
+            matched.push(("sse", "real-time / streaming keywords"));
+        }
+        if desc.contains("websocket") || desc.contains("ws") || desc.contains("socket") {
+            matched.push(("websockets", "WebSocket keywords"));
+        }
+        if desc.contains("defer") || desc.contains("lazy") || desc.contains("after shell") {
+            matched.push(("deferred-streams", "deferred / lazy loading keywords"));
+        }
+        if desc.contains("action") || desc.contains("form") || desc.contains("submit") || desc.contains("post") || desc.contains("creat") || desc.contains("updat") || desc.contains("delet") {
+            matched.push(("named-actions", "form / action keywords"));
+        }
+        if desc.contains("layout") || desc.contains("shared") || desc.contains("wrap") {
+            matched.push(("layouts", "layout keywords"));
+        }
+        if desc.contains("error") || desc.contains("not found") || desc.contains("404") {
+            matched.push(("error-pages", "error handling keywords"));
+        }
+        if desc.contains("fragment") || desc.contains("partial") || desc.contains("widget") {
+            matched.push(("fragments", "fragment / partial keywords"));
+        }
+        if desc.contains("middleware") || desc.contains("auth") || desc.contains("session") || desc.contains("guard") {
+            matched.push(("middleware", "middleware / auth keywords"));
+        }
+        if desc.contains("redirect") || desc.contains("navigate") || desc.contains("route") {
+            matched.push(("typed-routes", "navigation / routing keywords"));
+        }
+        if desc.contains("env") || desc.contains("config") || desc.contains("secret") || desc.contains("database_url") {
+            matched.push(("env-config", "environment / config keywords"));
+        }
+        if desc.contains("api") || desc.contains("json") || desc.contains("rest") || desc.contains("endpoint") {
+            matched.push(("api-routes", "API / JSON endpoint keywords"));
+        }
+        if desc.contains("load") || desc.contains("page") || desc.contains("props") {
+            if !matched.iter().any(|(id, _)| *id == "ssr-pages") {
+                matched.push(("ssr-pages", "page / load keywords"));
+            }
+        }
+
+        // If no features matched, default to ssr-pages as a safe starting point.
+        if matched.is_empty() {
+            matched.push(("ssr-pages", "default starting point — refine your description for more specific patterns"));
+        }
+
+        // Collect specs for matched features.
+        let features: Vec<Value> = matched
+            .iter()
+            .filter_map(|(id, reason)| {
+                self.registry.feature(id).map(|f| {
+                    json!({
+                        "feature_id": id,
+                        "matched_because": reason,
+                        "summary": f.summary,
+                        "canonical_usage": f.canonical_usage,
+                        "constraints": f.constraints,
+                        "invalid_examples": f.invalid_examples,
+                    })
+                })
+            })
+            .collect();
+
+        let skeleton = if include_code {
+            Some(build_code_skeleton(&desc, &matched))
+        } else {
+            None
+        };
+
+        Ok(structured(json!({
+            "description": args.description,
+            "matched_features": features,
+            "code_skeleton": skeleton,
+            "next_steps": [
+                "Copy the code_skeleton into your src/pages/ or src/api/ file.",
+                "Run validate_implementation on the file before running cargo build.",
+                "Use get_feature_spec for the full spec of any matched feature.",
+            ]
+        })))
+    }
+
+    #[tool(
         description = "Apply a safe, conservative automatic fix for a diagnostic finding. Dry-run by default. Only applies to findings with safe_to_auto_apply=true (e.g. adding async to load())."
     )]
     async fn apply_safe_fix(
@@ -1039,6 +1147,72 @@ fn suggest_from_context(
     Optimizations {
         focus,
         recommendations,
+    }
+}
+
+/// Generate a minimal but complete code skeleton based on the detected feature set.
+fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
+    let ids: Vec<&str> = matched.iter().map(|(id, _)| *id).collect();
+
+    let has = |id: &str| ids.contains(&id);
+
+    // Determine the primary pattern and produce the appropriate skeleton.
+    if has("incremental-ssr") && has("ssg") {
+        // Combined PRERENDER + REVALIDATE
+        json!({
+            "rs": "// src/pages/products/index.rs\npub const PRERENDER: bool = true;\npub const REVALIDATE: u64 = 60;\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}",
+            "html": "<!-- src/pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            "note": "Prerendered at startup, then ISR-revalidated every 60s. Use pilcrow_start() in main.rs.",
+        })
+    } else if has("incremental-ssr") {
+        let ttl = if desc.contains("60") { 60 } else if desc.contains("300") { 300 } else { 60 };
+        json!({
+            "rs": format!("// src/pages/products/index.rs\npub const REVALIDATE: u64 = {ttl};\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props {{ pub items: Vec<String> }}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ items: vec![] }})\n}}"),
+            "html": "<!-- src/pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            "invalidation": "Call req.cache.revalidate_tag(\"products\") in an action to bust the cache.",
+        })
+    } else if has("ssg") {
+        json!({
+            "rs": "// src/pages/about.rs\npub const PRERENDER: bool = true;\n\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"About\".into() })\n}",
+            "html": "<!-- src/pages/about.html -->\n<h1>{{ title }}</h1>",
+            "note": "Rendered once at startup. Use pilcrow_start() in main.rs instead of pilcrow_web::start().",
+        })
+    } else if has("named-actions") && has("ssr-pages") {
+        json!({
+            "rs": "// src/pages/items.rs\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}\n\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    if name.is_empty() {\n        return req.fail(form_errors().error(\"name\", \"required\").value(\"name\", name));\n    }\n    redirect(\"/items\")\n}",
+            "html": "<!-- src/pages/items.html -->\n<form s-post=\"?/create\" s-target=\"#form\">\n  <input name=\"name\" />\n  <span :text=\"errors.name\"></span>\n  <button>Add</button>\n</form>",
+        })
+    } else if has("named-actions") {
+        json!({
+            "rs": "// src/pages/items.rs\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    redirect(\"/items\")\n}\n\npub async fn delete(req: Req) -> ActionResult {\n    let id = req.params.get(\"id\").map(|s| s.as_str()).unwrap_or(\"\");\n    redirect(\"/items\")\n}",
+            "html": "<!-- src/pages/items.html -->\n<form s-post=\"?/create\">...</form>\n<button s-post=\"?/delete\">Delete</button>",
+        })
+    } else if has("sse") {
+        json!({
+            "rs": "// src/api/counter.rs\npub async fn get(req: Req) -> Response {\n    pilcrow_web::sse(async_stream::stream! {\n        let mut n = 0u64;\n        loop {\n            yield pilcrow_web::SseEvent::json(serde_json::json!({ \"count\": n }));\n            n += 1;\n            tokio::time::sleep(std::time::Duration::from_secs(1)).await;\n        }\n    })\n}",
+            "html": "<!-- src/pages/index.html -->\n<span :text=\"count\" s-sse=\"/counter\">0</span>",
+        })
+    } else if has("deferred-streams") {
+        json!({
+            "rs": "// src/pages/dashboard.rs\nuse pilcrow_web::Deferred;\n\npub struct Props {\n    pub title: String,\n    pub count: Deferred<i64>,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props {\n        title: \"Dashboard\".into(),\n        count: Deferred::spawn(async { expensive_db_count().await }),\n    })\n}",
+            "html": "<!-- src/pages/dashboard.html -->\n<h1>{{ title }}</h1>\n<span :text=\"count\">…</span>",
+        })
+    } else if has("api-routes") {
+        json!({
+            "rs": "// src/api/products.rs\nuse pilcrow_web::{Req, json};\nuse axum::response::Response;\n\npub async fn get(_req: Req) -> Response {\n    json(serde_json::json!({ \"products\": [] }))\n}",
+            "note": "File becomes GET /api/products. Add post(), put(), delete() for other methods.",
+        })
+    } else if has("middleware") {
+        json!({
+            "rs": "// src/middleware.rs\nuse pilcrow_web::{AppError, Next, Req, Response};\nuse axum::response::IntoResponse;\n\npub async fn middleware(req: Req, next: Next) -> Response {\n    let token = req.cookies.get(\"session\").map(|c| c.value().to_string());\n    match verify_session(token).await {\n        Ok(user) => req.locals.set(user),\n        Err(_) if req.path.starts_with(\"/admin\") => {\n            return AppError::Unauthorized.into_response();\n        }\n        _ => {}\n    }\n    next.run().await\n}",
+            "note": "Detected automatically — place at src/middleware.rs. No registration needed.",
+        })
+    } else {
+        // Default: basic loaded page
+        json!({
+            "rs": "// src/pages/index.rs\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Hello, Pilcrow\".into() })\n}",
+            "html": "<!-- src/pages/index.html -->\n<h1>{{ title }}</h1>",
+        })
     }
 }
 
