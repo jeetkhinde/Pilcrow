@@ -1,25 +1,50 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
+use serde::{Deserialize, Serialize};
 
 use crate::context::FormMap;
 
 // ── Cache entry ───────────────────────────────────────────────
 
+#[derive(Serialize, Deserialize)]
 struct CacheEntry {
+    /// The cache key this entry belongs to (stored for filesystem round-trips).
+    key: String,
     html: String,
-    stored_at: Instant,
+    /// Unix timestamp (seconds) when this entry was stored.
+    stored_unix: u64,
     ttl_secs: u64,
+    #[serde(skip)]
     revalidating: bool,
     tags: Vec<String>,
 }
 
 impl CacheEntry {
+    fn new(key: String, html: String, ttl_secs: u64, tags: Vec<String>) -> Self {
+        Self {
+            key,
+            html,
+            stored_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            ttl_secs,
+            revalidating: false,
+            tags,
+        }
+    }
+
     fn age_secs(&self) -> u64 {
-        self.stored_at.elapsed().as_secs()
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(self.stored_unix)
     }
 
     fn is_fresh(&self) -> bool {
@@ -40,32 +65,86 @@ pub enum IsrCacheState {
     Miss,
 }
 
+// ── Snapshot (for /__pilcrow/isr endpoint) ───────────────────
+
+/// Serializable view of one ISR cache entry — returned by `IsrCache::snapshot()`.
+#[derive(Debug, Serialize)]
+pub struct CacheEntrySnapshot {
+    pub key: String,
+    pub age_secs: u64,
+    pub ttl_secs: u64,
+    pub is_fresh: bool,
+    pub revalidating: bool,
+    pub tags: Vec<String>,
+}
+
 // ── IsrCache ──────────────────────────────────────────────────
+
+struct IsrInner {
+    map: HashMap<String, CacheEntry>,
+    /// When set, entries are persisted to this directory as JSON files.
+    persist_dir: Option<PathBuf>,
+}
 
 /// In-process ISR cache backed by a `HashMap<String, CacheEntry>`.
 ///
 /// This is the default (`provider = "memory"`) backend. It is single-node and
-/// does not persist across process restarts. Use `provider = "redis"` for
-/// multi-node deployments.
+/// does not persist across process restarts. Set `provider = "filesystem"` and
+/// `dir = ".pilcrow-cache"` in `[cache]` in `Pilcrow.toml` for single-node
+/// persistence that survives restarts.
 ///
 /// `IsrCache` is `Clone` — cloning shares the same underlying storage.
 #[derive(Clone, Default)]
-pub struct IsrCache(Arc<Mutex<HashMap<String, CacheEntry>>>);
+pub struct IsrCache(Arc<Mutex<IsrInner>>);
+
+impl Default for IsrInner {
+    fn default() -> Self {
+        Self { map: HashMap::new(), persist_dir: None }
+    }
+}
 
 impl IsrCache {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Check the cache state for a given key.
+    /// Create a cache that persists entries as JSON files in `dir`.
     ///
-    /// - `Fresh`: within `ttl_secs`. Return cached HTML, no action needed.
-    /// - `Stale`: beyond `ttl_secs` but within `max_stale` (or no cap). Return
-    ///   cached HTML and trigger a background revalidation.
-    /// - `Miss`: no entry, or stale age exceeds `max_stale`. Block and render.
+    /// Existing files in `dir` are loaded on construction so the cache is
+    /// warm after a server restart. Files whose TTL has already expired are
+    /// loaded as stale (they will be revalidated on the first request).
+    ///
+    /// # Pilcrow.toml
+    /// ```toml
+    /// [cache]
+    /// provider = "filesystem"
+    /// dir = ".pilcrow-cache"
+    /// ```
+    pub fn with_persistence(dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref().to_path_buf();
+        let _ = std::fs::create_dir_all(&dir);
+
+        let mut map = HashMap::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                        if let Ok(ce) = serde_json::from_str::<CacheEntry>(&raw) {
+                            map.insert(ce.key.clone(), ce);
+                        }
+                    }
+                }
+            }
+        }
+
+        Self(Arc::new(Mutex::new(IsrInner { map, persist_dir: Some(dir) })))
+    }
+
+    /// Check the cache state for a given key.
     pub async fn check(&self, key: &str, max_stale: Option<u64>) -> IsrCacheState {
-        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        match map.get(key) {
+        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match inner.map.get(key) {
             None => IsrCacheState::Miss,
             Some(entry) => {
                 if entry.is_fresh() {
@@ -88,8 +167,8 @@ impl IsrCache {
     /// Returns `false` if another concurrent request has already claimed it
     /// (thundering-herd coalescing).
     pub async fn begin_revalidation(&self, key: &str) -> bool {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        match map.get_mut(key) {
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match inner.map.get_mut(key) {
             None => true,
             Some(entry) => {
                 if entry.revalidating {
@@ -102,40 +181,76 @@ impl IsrCache {
         }
     }
 
-    /// Clear the `revalidating` flag. Always called at the end of a revalidation task,
-    /// whether successful or not, so the next stale request can try again.
+    /// Clear the `revalidating` flag. Always called at the end of a revalidation task.
     pub async fn end_revalidation(&self, key: &str) {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = map.get_mut(key) {
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = inner.map.get_mut(key) {
             entry.revalidating = false;
         }
     }
 
     /// Write a rendered HTML string to the cache with the given TTL and tags.
     pub async fn store(&self, key: &str, html: String, ttl_secs: u64, tags: Vec<String>) {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        map.insert(
-            key.to_string(),
-            CacheEntry {
-                html,
-                stored_at: Instant::now(),
-                ttl_secs,
-                revalidating: false,
-                tags,
-            },
-        );
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = CacheEntry::new(key.to_string(), html, ttl_secs, tags);
+        if let Some(dir) = &inner.persist_dir {
+            let filename = format!("{:016x}.json", crc32fast::hash(key.as_bytes()));
+            let path = dir.join(filename);
+            if let Ok(json) = serde_json::to_string(&entry) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+        inner.map.insert(key.to_string(), entry);
     }
 
     /// Remove all cache entries whose key starts with `path`.
     pub fn invalidate_path(&self, path: &str) {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        map.retain(|k, _| !k.starts_with(path));
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let persist_dir = inner.persist_dir.clone();
+        inner.map.retain(|k, entry| {
+            if k.starts_with(path) {
+                if let Some(dir) = &persist_dir {
+                    let filename = format!("{:016x}.json", crc32fast::hash(k.as_bytes()));
+                    let _ = std::fs::remove_file(dir.join(filename));
+                }
+                false
+            } else {
+                let _ = entry; // suppress unused variable warning
+                true
+            }
+        });
     }
 
     /// Remove all cache entries that carry the given tag.
     pub fn invalidate_tag(&self, tag: &str) {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        map.retain(|_, v| !v.tags.iter().any(|t| t == tag));
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let persist_dir = inner.persist_dir.clone();
+        inner.map.retain(|k, entry| {
+            if entry.tags.iter().any(|t| t == tag) {
+                if let Some(dir) = &persist_dir {
+                    let filename = format!("{:016x}.json", crc32fast::hash(k.as_bytes()));
+                    let _ = std::fs::remove_file(dir.join(filename));
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Return a snapshot of all current cache entries for inspection.
+    ///
+    /// Used by the `GET /__pilcrow/isr` dev endpoint.
+    pub fn snapshot(&self) -> Vec<CacheEntrySnapshot> {
+        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        inner.map.values().map(|e| CacheEntrySnapshot {
+            key: e.key.clone(),
+            age_secs: e.age_secs(),
+            ttl_secs: e.ttl_secs,
+            is_fresh: e.is_fresh(),
+            revalidating: e.revalidating,
+            tags: e.tags.clone(),
+        }).collect()
     }
 }
 
@@ -314,9 +429,78 @@ mod tests {
     #[test]
     fn cache_key_vary_missing_key_falls_back_to_base_key() {
         // When the vary key is absent from both cookies and headers, the vary
-        // segment is empty and the key degrades to the plain path — the
-        // unauthenticated case shares the same cache as the no-vary case.
+        // segment is empty and the key degrades to the plain path.
         let key = __isr_cache_key("/p", &FormMap::default(), &["session"], &empty_cookies(), &empty_headers());
         assert_eq!(key, "/p");
+    }
+
+    #[tokio::test]
+    async fn store_and_check_fresh() {
+        let cache = IsrCache::new();
+        cache.store("/products", "<h1>Products</h1>".into(), 60, vec![]).await;
+        match cache.check("/products", None).await {
+            IsrCacheState::Fresh(html) => assert!(html.contains("Products")),
+            other => panic!("expected Fresh, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn miss_for_unknown_key() {
+        let cache = IsrCache::new();
+        assert!(matches!(cache.check("/unknown", None).await, IsrCacheState::Miss));
+    }
+
+    #[tokio::test]
+    async fn snapshot_reflects_stored_entries() {
+        let cache = IsrCache::new();
+        cache.store("/a", "html".into(), 60, vec!["tag1".into()]).await;
+        let snap = cache.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].key, "/a");
+        assert_eq!(snap[0].ttl_secs, 60);
+        assert!(snap[0].is_fresh);
+        assert_eq!(snap[0].tags, vec!["tag1"]);
+    }
+
+    #[tokio::test]
+    async fn invalidate_path_removes_matching_entries() {
+        let cache = IsrCache::new();
+        cache.store("/products", "html".into(), 60, vec![]).await;
+        cache.store("/products/1", "html".into(), 60, vec![]).await;
+        cache.store("/about", "html".into(), 60, vec![]).await;
+        cache.invalidate_path("/products");
+        assert!(matches!(cache.check("/products", None).await, IsrCacheState::Miss));
+        assert!(matches!(cache.check("/products/1", None).await, IsrCacheState::Miss));
+        assert!(matches!(cache.check("/about", None).await, IsrCacheState::Fresh(_)));
+    }
+
+    #[tokio::test]
+    async fn invalidate_tag_removes_tagged_entries() {
+        let cache = IsrCache::new();
+        cache.store("/p1", "html".into(), 60, vec!["products".into()]).await;
+        cache.store("/p2", "html".into(), 60, vec!["products".into()]).await;
+        cache.store("/about", "html".into(), 60, vec!["pages".into()]).await;
+        cache.invalidate_tag("products");
+        assert!(matches!(cache.check("/p1", None).await, IsrCacheState::Miss));
+        assert!(matches!(cache.check("/p2", None).await, IsrCacheState::Miss));
+        assert!(matches!(cache.check("/about", None).await, IsrCacheState::Fresh(_)));
+    }
+
+    #[tokio::test]
+    async fn filesystem_persistence_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let cache = IsrCache::with_persistence(dir.path());
+            cache.store("/products", "<p>data</p>".into(), 3600, vec!["products".into()]).await;
+        }
+        // Reload from disk.
+        let cache2 = IsrCache::with_persistence(dir.path());
+        match cache2.check("/products", None).await {
+            IsrCacheState::Fresh(html) => assert_eq!(html, "<p>data</p>"),
+            other => panic!("expected Fresh after reload, got {other:?}"),
+        }
+        let snap = cache2.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].tags, vec!["products"]);
     }
 }

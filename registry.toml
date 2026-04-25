@@ -1009,3 +1009,169 @@ validation_rules = [
   "Both PRERENDER = true and REVALIDATE must use correct types (bool and u64).",
 ]
 scaffold_templates = []
+
+[[features]]
+id = "form-validator"
+name = "Form Validator"
+domain = "pilcrow"
+status = "stable"
+summary = "Fluent validation builder — accumulates field errors in one pass, returns FormErrors for req.fail()."
+spec = """
+Validator::new() chains .required(), .min_length(), .max_length(), .email(), and .custom() calls.
+Each rule automatically echoes the submitted value for form repopulation.
+.into_result() returns Ok(()) when all rules pass, or Err(FormErrors) to pass to req.fail().
+
+Reduces per-field error blocks to one chained expression.
+"""
+canonical_usage = """
+pub async fn create(req: Req) -> ActionResult {
+    let name  = req.form.get("name").unwrap_or("");
+    let email = req.form.get("email").unwrap_or("");
+
+    if let Err(errs) = Validator::new()
+        .required("name",  name)
+        .required("email", email)
+        .min_length("name", name, 2)
+        .email("email", email)
+        .into_result()
+    {
+        return req.fail(errs);
+    }
+    redirect("/dashboard")
+}
+"""
+constraints = [
+  "Validator::new() is available as pilcrow_web::Validator — no extra import needed.",
+  "Each rule echoes the submitted value automatically; no need to call .value() separately.",
+  ".into_result() returns Err(FormErrors) containing all accumulated errors, not just the first.",
+]
+invalid_examples = [
+  "if name.is_empty() { return req.fail(form_errors().error(...).value(...))} — use Validator instead",
+]
+source_refs = [
+  "crates/runtime/src/validator.rs",
+]
+test_refs = [
+  "crates/runtime/src/validator.rs — required_passes_for_nonempty_value",
+  "crates/runtime/src/validator.rs — multiple_errors_accumulate",
+]
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "env-singleton"
+name = "Env Singleton (global())"
+domain = "pilcrow"
+status = "stable"
+summary = "env::Private::global() and env::Public::global() return a process-wide singleton — load env vars once."
+spec = """
+The generated env module gains a global() -> &'static Self method on both Public and Private.
+The first call loads the env vars and panics with a clear message if any are missing.
+Subsequent calls return the cached reference — zero cost.
+
+Use global() in middleware where it is called on every request; use load() in main() or startup
+code where you want to handle VarError explicitly.
+"""
+canonical_usage = """
+// src/middleware.rs — call global() once per request at near-zero cost
+pub async fn middleware(req: Req, next: Next) -> Response {
+    let env = env::Private::global();
+    let user = verify_session(req.cookies.get("session"), &env.database_url).await;
+    // ...
+    next.run().await
+}
+"""
+constraints = [
+  "global() panics if required env vars are not set — suitable for fail-fast startup.",
+  "global() loads vars on first call; set env vars before the first request, not lazily during tests.",
+  "Use load() when you need Result<Self, VarError> (e.g. in main() to surface a helpful startup error).",
+]
+invalid_examples = [
+  "let env = env::Private::load().unwrap(); // called inside every load() fn — use global() instead",
+]
+source_refs = [
+  "crates/routekit/src/templating/env_codegen.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/env_codegen.rs — render_env_module_generates_public_and_private_structs",
+]
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "isr-inspect-endpoint"
+name = "ISR Cache Inspect Endpoint"
+domain = "pilcrow"
+status = "stable"
+summary = "GET /__pilcrow/isr returns a JSON snapshot of all ISR cache entries — useful for debugging."
+spec = """
+Available on all Pilcrow apps automatically. Returns a JSON array of CacheEntrySnapshot objects:
+  { key, age_secs, ttl_secs, is_fresh, revalidating, tags }
+
+Returns an empty array when no entries are cached. No authentication — intended for
+development and internal tooling only. Do not expose this endpoint publicly in production
+(use a reverse proxy path block or middleware guard if needed).
+"""
+canonical_usage = """
+# In your browser or curl:
+curl http://localhost:3000/__pilcrow/isr | jq .
+# Returns:
+# [
+#   { "key": "/products", "age_secs": 12, "ttl_secs": 60, "is_fresh": true,
+#     "revalidating": false, "tags": ["products"] }
+# ]
+"""
+constraints = [
+  "No authentication is applied — use middleware to guard in production if necessary.",
+  "The endpoint always returns the current in-memory state; filesystem-persisted entries that have been loaded are included.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/start.rs — isr_inspect_handler",
+  "crates/runtime/src/isr.rs — IsrCache::snapshot",
+]
+test_refs = [
+  "crates/runtime/src/isr.rs — snapshot_reflects_stored_entries",
+]
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "filesystem-isr-cache"
+name = "Filesystem ISR Cache"
+domain = "pilcrow"
+status = "stable"
+summary = "Persist ISR cache entries as JSON files — cache survives server restarts with zero external dependencies."
+spec = """
+Set provider = "filesystem" in [cache] in Pilcrow.toml. The cache reads all .json files from
+the configured directory at startup (warm start after restart) and writes a file on every
+cache store. Invalidation (by path or tag) also deletes the corresponding files.
+
+File names are based on a CRC32 hash of the cache key; the full key, HTML, TTL, and tags
+are stored in the file so the cache can be fully restored on reload.
+
+Combined PRERENDER + REVALIDATE pages are written to disk at startup, so the first request
+after a restart hits the cache (no cold start) while ISR revalidation is still in effect.
+"""
+canonical_usage = """
+# Pilcrow.toml
+[cache]
+provider = "filesystem"
+dir = ".pilcrow-cache"   # relative to the working directory
+"""
+constraints = [
+  "Single-node only — use Redis for multi-instance deployments.",
+  "Files are written synchronously in the store() async fn — not suitable for extremely high write rates.",
+  "The .pilcrow-cache directory should be added to .gitignore.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/isr.rs — IsrCache::with_persistence",
+  "crates/core/src/config/config.rs — CacheProvider::Filesystem",
+  "crates/runtime/src/start.rs — filesystem cache wiring",
+]
+test_refs = [
+  "crates/runtime/src/isr.rs — filesystem_persistence_survives_reload",
+]
+validation_rules = []
+scaffold_templates = []

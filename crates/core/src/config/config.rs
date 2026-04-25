@@ -22,6 +22,9 @@ pub struct CacheConfig {
     pub url: Option<String>,
     /// SQLite database path. Used when `provider = "sqlite"`.
     pub path: Option<String>,
+    /// Directory for filesystem-backed ISR cache. Used when `provider = "filesystem"`.
+    /// Defaults to `.pilcrow-cache` in the current directory.
+    pub dir: Option<String>,
     /// Maximum duration (seconds) a background revalidation task may run before abort.
     #[serde(default = "default_revalidate_timeout_secs")]
     pub revalidate_timeout_secs: u64,
@@ -33,6 +36,7 @@ impl Default for CacheConfig {
             provider: CacheProvider::default(),
             url: None,
             path: None,
+            dir: None,
             revalidate_timeout_secs: default_revalidate_timeout_secs(),
         }
     }
@@ -45,6 +49,9 @@ pub enum CacheProvider {
     /// In-process HashMap — zero config, no persistence across restarts.
     #[default]
     Memory,
+    /// Filesystem JSON files — single-node persistence that survives restarts.
+    /// Set `dir = ".pilcrow-cache"` to configure the storage directory.
+    Filesystem,
     /// SQLite file — single-node persistence.
     Sqlite,
     /// Redis — multi-node shared cache.

@@ -10,6 +10,7 @@ pub mod middleware;
 pub mod response;
 pub mod sse;
 pub mod start;
+pub mod validator;
 pub mod ws;
 pub use start::{start, start_with_prerender};
 // ── Core API re-exports ──────────────────────────────────────
@@ -46,7 +47,10 @@ pub use deferred::{
     deferred_response, deferred_response_combined,
 };
 // ── ISR ──────────────────────────────────────────────────────
-pub use isr::{IsrCache, IsrCacheState, IsrHandle, __isr_cache_key};
+pub use isr::{CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle, __isr_cache_key};
+// ── Validation ───────────────────────────────────────────────
+pub use validator::Validator;
+pub use context::ReqBuilder;
 
 // ── Internal helpers (used by ws.rs, macros, generated code) ─
 pub(crate) use sse::serialize_or_null;

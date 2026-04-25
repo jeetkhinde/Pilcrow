@@ -4,8 +4,10 @@ use std::time::Duration;
 
 use axum::error_handling::HandleErrorLayer;
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::BoxError;
 use axum::Router;
+use pilcrow_core::config::config::CacheProvider;
 use pilcrow_core::PilcrowConfig;
 use tower::timeout::TimeoutLayer;
 use tower::ServiceBuilder;
@@ -36,11 +38,22 @@ where
     let bind_addr = config.web_bind_addr();
     let http = reqwest::Client::new();
 
-    let isr_cache = Arc::new(IsrCache::new());
+    // Build the ISR cache, optionally with filesystem persistence.
+    let isr_cache = Arc::new(match &config.cache.provider {
+        CacheProvider::Filesystem => {
+            let dir = config.cache.dir.as_deref().unwrap_or(".pilcrow-cache");
+            tracing::info!("ISR cache: filesystem backend at {dir}");
+            IsrCache::with_persistence(dir)
+        }
+        _ => IsrCache::new(),
+    });
+
     prerender_fn(Arc::clone(&isr_cache)).await;
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
     let app = app
+        // Dev inspection endpoint — returns JSON snapshot of the ISR cache.
+        .route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler))
         .layer(axum::Extension(config))
         .layer(axum::Extension(http))
         .layer(axum::Extension(isr_handle))
@@ -66,6 +79,20 @@ where
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("serve");
+}
+
+/// `GET /__pilcrow/isr` — returns a JSON snapshot of the ISR cache.
+///
+/// Useful in development to inspect cache state, TTLs, tags, and revalidation status.
+/// The response is always `application/json`; returns an empty array when the cache
+/// has no entries.
+async fn isr_inspect_handler(
+    axum::Extension(handle): axum::Extension<IsrHandle>,
+) -> axum::response::Response {
+    match handle.__arc() {
+        Some(cache) => axum::Json(cache.snapshot()).into_response(),
+        None => (StatusCode::OK, axum::Json(serde_json::json!([]))).into_response(),
+    }
 }
 
 async fn shutdown_signal() {
