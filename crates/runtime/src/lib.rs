@@ -1,5 +1,6 @@
 // ./src/lib.rs
 
+pub mod adapter;
 pub mod assets;
 pub mod deferred;
 pub mod context;
@@ -12,7 +13,8 @@ pub mod sse;
 pub mod start;
 pub mod validator;
 pub mod ws;
-pub use start::{start, start_with_prerender};
+pub use adapter::{AdapterFuture, PilcrowAdapter, TokioAdapter};
+pub use start::{export, start, start_with_adapter, start_with_prerender};
 // ── Core API re-exports ──────────────────────────────────────
 pub use axum::http::StatusCode;
 pub use axum::response::Response;

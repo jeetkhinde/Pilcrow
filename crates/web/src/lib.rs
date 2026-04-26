@@ -40,7 +40,8 @@ pub use pilcrow_core::{
 
 pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
-pub use runtime::{start, start_with_prerender};
+pub use runtime::{export, start, start_with_adapter, start_with_prerender};
+pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 
 // ── Deferred streaming ───────────────────────────────────────
 pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
@@ -105,6 +106,17 @@ macro_rules! pilcrow_app {
         /// `pub const PRERENDER: bool = true`.
         async fn pilcrow_start(router: ::pilcrow_web::axum::Router) {
             ::pilcrow_web::start_with_prerender(router, |cache| async move {
+                __pilcrow_app::__pilcrow_prerender_all(&cache).await
+            })
+            .await;
+        }
+
+        /// Export all pre-rendered pages as static HTML files to `dir`.
+        ///
+        /// Run with `cargo run -- export <dir>` (the scaffold `main.rs` handles this arg).
+        /// Each page with `pub const PRERENDER: bool = true` is written to `<dir><key>/index.html`.
+        async fn pilcrow_export(dir: &str) {
+            ::pilcrow_web::export(dir, |cache| async move {
                 __pilcrow_app::__pilcrow_prerender_all(&cache).await
             })
             .await;

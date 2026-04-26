@@ -1,5 +1,6 @@
 use std::env;
 
+mod export;
 mod scaffold;
 
 fn main() {
@@ -10,11 +11,17 @@ fn main() {
     }
 
     match args.remove(0).as_str() {
-
         "new" => {
             if let Err(err) = scaffold::handle_new(&args) {
                 eprintln!("scaffold failed: {err}");
-                eprintln!("Usage: pilcrow-cli new <dir>");
+                eprintln!("Usage: pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
+                std::process::exit(1);
+            }
+        }
+        "export" => {
+            if let Err(err) = export::handle_export(&args) {
+                eprintln!("export failed: {err}");
+                eprintln!("Usage: pilcrow-cli export [<dir>]");
                 std::process::exit(1);
             }
         }
@@ -27,5 +34,6 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  pilcrow-cli new <dir>");
+    eprintln!("  pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
+    eprintln!("  pilcrow-cli export [<dir>]");
 }

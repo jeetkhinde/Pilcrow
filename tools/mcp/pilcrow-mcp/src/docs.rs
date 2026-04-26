@@ -457,6 +457,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-adapter",
+            title: "PilcrowAdapter trait and TokioAdapter",
+            path: "crates/runtime/src/adapter.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-lib",
             title: "Routekit library",
             path: "crates/routekit/src/lib.rs",
@@ -544,6 +550,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             id: "sandbox-api-products",
             title: "Sandbox API route",
             path: "sandbox/apps/web/src/api/products.rs",
+            category: KnowledgeCategory::Examples,
+        },
+        DocumentSpec {
+            id: "cli-scaffold",
+            title: "CLI scaffold (new + --with-auth/--with-postgres)",
+            path: "tools/cli/src/scaffold.rs",
+            category: KnowledgeCategory::Examples,
+        },
+        DocumentSpec {
+            id: "cli-export",
+            title: "CLI export command",
+            path: "tools/cli/src/export.rs",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {

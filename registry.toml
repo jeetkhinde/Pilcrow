@@ -1175,3 +1175,155 @@ test_refs = [
 ]
 validation_rules = []
 scaffold_templates = []
+
+[[features]]
+id = "pilcrow-export"
+name = "Static Export (pilcrow export)"
+domain = "pilcrow"
+status = "stable"
+summary = "Export all pre-rendered pages as static HTML files using `cargo run -- export <dir>` or `pilcrow-cli export <dir>`."
+spec = """
+Pages with `pub const PRERENDER: bool = true` are rendered at export time and written to disk as
+`<dir><key>/index.html`. The root key `/` writes to `<dir>/index.html`.
+
+The `pilcrow_app!()` macro injects a `pilcrow_export(dir)` async fn. The scaffold `main.rs`
+template dispatches to it when the first CLI arg is `export`:
+
+    cargo run -- export dist      # writes to ./dist/
+    pilcrow-cli export dist       # runs cargo run -- export dist in the project directory
+
+Dynamic routes with PRERENDER = true must also declare `entries()`.
+"""
+canonical_usage = """
+// src/pages/index.rs
+pub const PRERENDER: bool = true;
+
+pub struct Props { pub title: String }
+
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { title: "Home".to_string() })
+}
+
+// cargo run -- export dist
+// pilcrow-cli export dist
+"""
+constraints = [
+  "Only pages with PRERENDER = true are exported; pages without it are skipped.",
+  "Dynamic routes with PRERENDER must also declare `pub async fn entries() -> Vec<HashMap<String, String>>`.",
+  "Export does not start the HTTP server — it runs prerender_all then writes files and exits.",
+  "The export dir is created if it does not exist.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/start.rs — export fn",
+  "crates/runtime/src/isr.rs — IsrCache::export_entries",
+  "crates/web/src/lib.rs — pilcrow_export in pilcrow_app!()",
+  "tools/cli/src/export.rs",
+  "tools/cli/src/scaffold.rs — main.rs template",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "adapter-trait"
+name = "PilcrowAdapter Trait"
+domain = "pilcrow"
+status = "stable"
+summary = "Pluggable deployment adapter — implement `PilcrowAdapter` to target custom runtimes (Lambda, Cloudflare Workers, etc.)."
+spec = """
+`PilcrowAdapter` is a single-method trait:
+
+    pub trait PilcrowAdapter: Send + 'static {
+        fn serve(self, bind_addr: &str, app: Router) -> AdapterFuture;
+    }
+
+where `AdapterFuture = Pin<Box<dyn Future<Output = ()> + Send>>`.
+
+The adapter receives the fully-wired `Router` (ISR extensions, middleware, timeout, TraceLayer all applied)
+and the bind address from Pilcrow.toml. It is responsible for binding the socket and serving.
+
+Use `start_with_adapter(router, prerender_fn, MyAdapter)` instead of `start(router)`.
+
+The built-in `TokioAdapter` (used by `start()` and `start_with_prerender()`) binds a
+`tokio::net::TcpListener` with graceful shutdown on SIGTERM / Ctrl-C.
+"""
+canonical_usage = """
+use pilcrow_web::{PilcrowAdapter, AdapterFuture};
+use axum::Router;
+
+struct LambdaAdapter;
+
+impl PilcrowAdapter for LambdaAdapter {
+    fn serve(self, _bind_addr: &str, app: Router) -> AdapterFuture {
+        Box::pin(async move {
+            lambda_http::run(app).await.expect("lambda serve");
+        })
+    }
+}
+
+// In main.rs:
+pilcrow_web::start_with_adapter(pilcrow_router(), |_| async {}, LambdaAdapter).await;
+"""
+constraints = [
+  "The adapter receives the fully-wired Router — do not re-apply middleware layers.",
+  "AdapterFuture must be Send + 'static — use Box::pin(async move { ... }).",
+  "start() and start_with_prerender() both use TokioAdapter internally — no behaviour change.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/adapter.rs",
+  "crates/runtime/src/start.rs — start_with_adapter",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "scaffold-auth-postgres"
+name = "Scaffold flags: --with-auth and --with-postgres"
+domain = "pilcrow"
+status = "stable"
+summary = "`pilcrow-cli new <dir> --with-auth --with-postgres` generates auth middleware, .env, and Pilcrow.toml env config."
+spec = """
+Pass one or both flags when creating a new project:
+
+  pilcrow-cli new my-app --with-auth
+  pilcrow-cli new my-app --with-postgres
+  pilcrow-cli new my-app --with-auth --with-postgres
+
+--with-auth generates:
+  - src/middleware.rs with a session cookie auth skeleton
+    (reads `session` cookie, short-circuits /dashboard routes with 401)
+
+--with-postgres generates:
+  - .env with DATABASE_URL=postgres://user:password@localhost/myapp
+  - sqlx dependency in Cargo.toml
+  - [env.private] DATABASE_URL entry in Pilcrow.toml
+"""
+canonical_usage = """
+# Create project with both flags:
+pilcrow-cli new my-app --with-auth --with-postgres
+
+# Generated src/middleware.rs:
+pub async fn middleware(req: Req, next: Next) -> Response {
+    let token = req.cookies.get("session").map(|c| c.value().to_string());
+    match token {
+        Some(_token) => next.run().await,
+        None if req.path.starts_with("/dashboard") => AppError::Unauthorized.into_response(),
+        _ => next.run().await,
+    }
+}
+"""
+constraints = [
+  "The middleware.rs skeleton requires the user to implement token verification (marked with TODO).",
+  "DATABASE_URL in .env must be updated before running cargo run.",
+  ".env is not committed — add it to .gitignore.",
+]
+invalid_examples = []
+source_refs = [
+  "tools/cli/src/scaffold.rs",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []

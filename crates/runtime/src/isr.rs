@@ -238,6 +238,14 @@ impl IsrCache {
         });
     }
 
+    /// Return all cached entries as `(key, html)` pairs for static file export.
+    ///
+    /// Used by [`pilcrow_web::export`] to write static HTML files to disk.
+    pub fn export_entries(&self) -> Vec<(String, String)> {
+        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        inner.map.values().map(|e| (e.key.clone(), e.html.clone())).collect()
+    }
+
     /// Return a snapshot of all current cache entries for inspection.
     ///
     /// Used by the `GET /__pilcrow/isr` dev endpoint.
