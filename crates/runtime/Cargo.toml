@@ -10,7 +10,14 @@ repository = "https://github.com/jeetkhinde/pilcrow"
 [lib]
 name = "runtime"
 path = "src/lib.rs"
+
+[features]
+lambda = ["dep:lambda_http"]
+
 [dependencies]
+lambda_http = { version = "0.13", optional = true }
+http-body-util = "0.1"
+http = "1"
 pilcrow-macros = { path = "../macros" }
 pilcrow-core = { path = "../core" }
 axum = { version = "0.7", features = ["ws"] }
@@ -39,7 +46,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 async-stream = "0.3"
 hyper = "1"
-http-body-util = "0.1"
 serde_json = "1"
 tempfile = "3"
 

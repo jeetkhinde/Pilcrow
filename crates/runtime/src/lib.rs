@@ -1,6 +1,7 @@
 // ./src/lib.rs
 
 pub mod adapter;
+pub mod adapters;
 pub mod assets;
 pub(crate) mod dev;
 pub mod deferred;

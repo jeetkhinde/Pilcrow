@@ -463,6 +463,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-adapters-server",
+            title: "PortEnvAdapter — Fly/Railway/Cloud Run/Render/Vercel adapters",
+            path: "crates/runtime/src/adapters/server.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "runtime-adapters-lambda",
+            title: "LambdaAdapter — AWS Lambda / Vercel Functions / Netlify Functions",
+            path: "crates/runtime/src/adapters/lambda.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "runtime-dev",
             title: "Dev server: live reload, CSS hot swap, build banner",
             path: "crates/runtime/src/dev.rs",

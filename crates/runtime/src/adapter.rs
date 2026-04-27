@@ -32,7 +32,10 @@ pub trait PilcrowAdapter: Send + 'static {
 }
 
 /// Boxed pinned future returned by [`PilcrowAdapter::serve`].
-pub type AdapterFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+///
+/// Does not require `Send` because adapters are always driven from `main()`,
+/// not from a spawned task.
+pub type AdapterFuture = Pin<Box<dyn Future<Output = ()>>>;
 
 /// Default adapter: binds a `tokio::net::TcpListener` with graceful shutdown.
 pub struct TokioAdapter;

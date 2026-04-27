@@ -1286,10 +1286,10 @@ scaffold_templates = []
 
 [[features]]
 id = "adapter-trait"
-name = "PilcrowAdapter Trait"
+name = "PilcrowAdapter Trait + Platform Adapters"
 domain = "pilcrow"
 status = "stable"
-summary = "Pluggable deployment adapter — implement `PilcrowAdapter` to target custom runtimes (Lambda, Cloudflare Workers, etc.)."
+summary = "Pluggable deployment adapter — built-in adapters for Lambda, Fly, Railway, Cloud Run, Render, Vercel, and bare metal."
 spec = """
 `PilcrowAdapter` is a single-method trait:
 
@@ -1297,42 +1297,56 @@ spec = """
         fn serve(self, bind_addr: &str, app: Router) -> AdapterFuture;
     }
 
-where `AdapterFuture = Pin<Box<dyn Future<Output = ()> + Send>>`.
+where `AdapterFuture = Pin<Box<dyn Future<Output = ()>>>` (no Send required — adapters run from main()).
 
 The adapter receives the fully-wired `Router` (ISR extensions, middleware, timeout, TraceLayer all applied)
 and the bind address from Pilcrow.toml. It is responsible for binding the socket and serving.
 
 Use `start_with_adapter(router, prerender_fn, MyAdapter)` instead of `start(router)`.
 
-The built-in `TokioAdapter` (used by `start()` and `start_with_prerender()`) binds a
-`tokio::net::TcpListener` with graceful shutdown on SIGTERM / Ctrl-C.
+## Built-in adapters (all in `pilcrow_web::adapters`)
+
+| Adapter | Platform | Feature flag |
+|---|---|---|
+| `TokioAdapter` | Local / VPS / bare metal | default |
+| `PortEnvAdapter` (aliases: `FlyAdapter`, `RailwayAdapter`, `CloudRunAdapter`, `RenderAdapter`, `VercelAdapter`) | Any platform injecting `PORT` env var | default |
+| `LambdaAdapter` | AWS Lambda, Vercel Functions (Lambda-backed), Netlify | `lambda` |
+
+`PortEnvAdapter` reads `PORT` env var and binds to `0.0.0.0:{PORT}`; falls back to `Pilcrow.toml` address.
+`LambdaAdapter` requires `pilcrow-web = { features = ["lambda"] }` and converts axum bodies to/from lambda_http bodies per invocation.
 """
 canonical_usage = """
+// Fly.io / Railway / Render / Cloud Run (reads PORT env var):
+use pilcrow_web::adapters::FlyAdapter;
+pilcrow_web::start_with_adapter(pilcrow_router(), |_| async {}, FlyAdapter).await;
+
+// AWS Lambda (add features = ["lambda"] to pilcrow-web in Cargo.toml):
+use pilcrow_web::adapters::LambdaAdapter;
+pilcrow_web::start_with_adapter(pilcrow_router(), |_| async {}, LambdaAdapter).await;
+
+// Custom adapter:
 use pilcrow_web::{PilcrowAdapter, AdapterFuture};
-use axum::Router;
-
-struct LambdaAdapter;
-
-impl PilcrowAdapter for LambdaAdapter {
-    fn serve(self, _bind_addr: &str, app: Router) -> AdapterFuture {
-        Box::pin(async move {
-            lambda_http::run(app).await.expect("lambda serve");
-        })
+struct MyAdapter;
+impl PilcrowAdapter for MyAdapter {
+    fn serve(self, bind_addr: &str, app: axum::Router) -> AdapterFuture {
+        Box::pin(async move { /* bind and serve */ })
     }
 }
-
-// In main.rs:
-pilcrow_web::start_with_adapter(pilcrow_router(), |_| async {}, LambdaAdapter).await;
 """
 constraints = [
   "The adapter receives the fully-wired Router — do not re-apply middleware layers.",
-  "AdapterFuture must be Send + 'static — use Box::pin(async move { ... }).",
+  "AdapterFuture does NOT require Send — adapters are always driven from main(), never spawned.",
+  "LambdaAdapter requires features = [\"lambda\"] on pilcrow-web in the app Cargo.toml.",
+  "PortEnvAdapter binds to 0.0.0.0:{PORT} when PORT is set — this is intentional for container platforms.",
   "start() and start_with_prerender() both use TokioAdapter internally — no behaviour change.",
 ]
 invalid_examples = []
 source_refs = [
   "crates/runtime/src/adapter.rs",
+  "crates/runtime/src/adapters/server.rs",
+  "crates/runtime/src/adapters/lambda.rs",
   "crates/runtime/src/start.rs — start_with_adapter",
+  "crates/web/src/lib.rs — adapters module",
 ]
 test_refs = []
 validation_rules = []

@@ -43,6 +43,32 @@ pub use pilcrow_macros::handler;
 pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 
+/// Platform deployment adapters.
+///
+/// Each adapter implements [`PilcrowAdapter`] and is passed to
+/// [`start_with_adapter`] to target a specific hosting platform.
+///
+/// # Available adapters
+///
+/// | Adapter | Platform | Feature flag |
+/// |---|---|---|
+/// | [`TokioAdapter`] | Local / VPS / bare metal | *(default)* |
+/// | [`adapters::PortEnvAdapter`] | Any `PORT`-env platform | *(default)* |
+/// | [`adapters::FlyAdapter`] | Fly.io | *(default)* |
+/// | [`adapters::RailwayAdapter`] | Railway | *(default)* |
+/// | [`adapters::CloudRunAdapter`] | Google Cloud Run | *(default)* |
+/// | [`adapters::RenderAdapter`] | Render | *(default)* |
+/// | [`adapters::VercelAdapter`] | Vercel (long-running) | *(default)* |
+/// | [`adapters::LambdaAdapter`] | AWS Lambda / Vercel Functions / Netlify | `lambda` |
+pub mod adapters {
+    pub use runtime::adapters::{
+        CloudRunAdapter, FlyAdapter, PortEnvAdapter, RailwayAdapter, RenderAdapter, VercelAdapter,
+    };
+
+    #[cfg(feature = "lambda")]
+    pub use runtime::adapters::LambdaAdapter;
+}
+
 // ── Deferred streaming ───────────────────────────────────────
 pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
 

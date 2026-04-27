@@ -5,6 +5,9 @@ edition = "2021"
 description = "Web/SSR integration layer for Pilcrow applications"
 license = "MIT"
 
+[features]
+lambda = ["runtime/lambda"]
+
 [dependencies]
 pilcrow-core = { path = "../core" }
 runtime = { package = "pilcrow-runtime", path = "../runtime" }
