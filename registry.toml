@@ -616,22 +616,81 @@ scaffold_templates = []
 id = "islands"
 name = "Islands"
 domain = "pilcrow"
-status = "planned"
-summary = "Client islands are planned and not supported by the current stable SSR pipeline."
-spec = "Planned feature. Agents may discuss architecture but must not scaffold Island directives or client-only stateful components."
+status = "stable"
+summary = "Server-driven islands via <island> template tag: deferred server-rendered HTML fetched by silcrow with load/visible/idle strategies. Co-located in pages/*/islands/ or shared via [[fragments]]."
+spec = """
+Islands are implemented as of 2026-04-27.
+
+The <island> self-closing tag compiles to a silcrow s-get + s-html deferred fetch:
+  <island src="./counter" strategy="visible" count="42" />
+
+Compiled output per tag:
+  1. Container: <div id="__pi_N" data-pilcrow-island>
+  2. Trigger: <a id="__pi_Nt" s-get="URL" s-html s-target="#__pi_N" s-skip-history style="display:none">
+  3. Strategy script:
+     - load (default) — calls .click() immediately
+     - visible — IntersectionObserver calls .click() when container enters viewport
+     - idle — requestIdleCallback (fallback: setTimeout 200ms) calls .click()
+
+Silcrow handles the s-get fetch and replaces the container div with the HTML response.
+While loading, silcrow adds class="silcrow-loading" aria-busy="true" to the container.
+
+URL resolution for src=:
+  - "./name" or bare "name" → {page_url_base}/islands/{name}
+  - "/absolute/path" → used as-is
+
+Extra attributes (beyond src and strategy) are forwarded as query params.
+Values may contain Askama expressions: count="{{ props.count }}" → ?count=<rendered_value>.
+
+Island files are ordinary fragment files (load(), actions, no layout wrapping).
+The island's load() reads params from req.query.
+
+Co-location (auto-detected, no Pilcrow.toml entry needed):
+  src/pages/dashboard/islands/counter.html  → GET /dashboard/islands/counter
+  src/pages/dashboard/islands/counter.rs    → load(), actions
+
+Shared cross-page islands use [[fragments]] in Pilcrow.toml as before.
+"""
+canonical_usage = """
+In a page template (src/pages/dashboard/index.html):
+  <island src="./counter" strategy="visible" initial="0" />
+  <island src="./user-card" strategy="idle" user-id="{{ props.user_id }}" />
+  <island src="/shared/global-nav" />
+
+Island file (src/pages/dashboard/islands/counter.html):
+  <div>Count: <span :text="count"></span></div>
+
+Island code-behind (src/pages/dashboard/islands/counter.rs):
+  pub struct Props { pub count: i32 }
+  pub async fn load(req: Req) -> AppResult<Props> {
+      let count = req.query.get("initial").unwrap_or("0").parse().unwrap_or(0);
+      Ok(Props { count })
+  }
+"""
 constraints = [
-  "Do not use <Island, client:load, client:idle, client:visible, or s-island in stable SSR pages.",
+  "src attribute must be a static string — Askama expressions in src are not supported.",
+  "strategy must be one of: load, visible, idle. Defaults to load.",
+  "Island HTML files live in pages/*/islands/ (co-located) or in a [[fragments]] dir (shared).",
+  "Island files receive no layout wrapping — they render as raw HTML fragments.",
+  "Dynamic values in extra attrs are passed through verbatim as Askama expressions in the URL.",
 ]
 invalid_examples = [
-  "<Island client:load> — planned, not implemented",
-  "client:idle on any element — planned, not implemented",
+  "<Island client:load> — wrong syntax, was planned API",
+  "client:idle on any element — wrong syntax",
+  "<island src=\"{{ dynamic_path }}\" /> — dynamic src is not supported",
 ]
-source_refs = []
-test_refs = []
+source_refs = [
+  "crates/routekit/src/templating/compiler.rs",
+  "crates/routekit/src/templating/pipeline.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/compiler.rs (island tests)",
+]
 validation_rules = [
-  "Reject Island directives in stable pages.",
+  "Scaffold island files under pages/*/islands/ (co-located) or a configured [[fragments]] dir.",
+  "Island code-behind follows the same rules as pages: async load, AppResult<Props>, Req arg.",
 ]
-scaffold_templates = []
+scaffold_templates = ["island"]
 
 [[features]]
 id = "ssg"

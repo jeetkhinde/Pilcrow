@@ -747,6 +747,228 @@ fn consume_char(src: &str, idx: usize, expected: char) -> Option<usize> {
     }
 }
 
+// ── Island tag transpilation ───────────────────────────────────
+
+/// Transpiles `<island src="..." strategy="..." .../>` tags into
+/// silcrow-powered deferred-fetch HTML.
+///
+/// Each tag compiles to:
+/// - A container `<div id="__pi_N" data-pilcrow-island>` wrapper
+/// - A hidden `<a s-get="..." s-html s-target="..." s-skip-history>` trigger
+/// - A strategy-specific inline `<script>` that clicks the trigger at the right moment
+///
+/// `page_url_base` is the URL directory of the containing page (e.g. `/dashboard`).
+/// Relative `src` values (`./name` or bare `name`) resolve to
+/// `{page_url_base}/islands/{name}`. Absolute `src` values (leading `/`) are used as-is.
+///
+/// All attributes other than `src` and `strategy` are forwarded as URL query parameters.
+/// Values may contain Askama expressions — they are passed through verbatim and rendered
+/// by Askama when the containing page is rendered.
+pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut i = 0usize;
+    let mut counter = 0usize;
+
+    while i < template.len() {
+        if template[i..].starts_with("<island") {
+            let rest = &template[i + 7..];
+            let next = rest.chars().next();
+            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>') {
+                if let Some((html, consumed)) =
+                    parse_island_tag(&template[i..], page_url_base, counter)
+                {
+                    output.push_str(&html);
+                    i += consumed;
+                    counter += 1;
+                    continue;
+                }
+            }
+        }
+        let c = template[i..].chars().next().unwrap();
+        output.push(c);
+        i += c.len_utf8();
+    }
+
+    output
+}
+
+fn parse_island_tag(input: &str, page_url_base: &str, id: usize) -> Option<(String, usize)> {
+    debug_assert!(input.starts_with("<island"));
+
+    let mut idx = 7; // skip "<island"
+    let mut raw_attrs = String::new();
+    let mut quote: Option<char> = None;
+    let mut brace_depth: usize = 0;
+    let mut found_end = false;
+
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        let c_len = c.len_utf8();
+
+        if let Some(q) = quote {
+            raw_attrs.push(c);
+            if c == q {
+                quote = None;
+            }
+            idx += c_len;
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '{' => {
+                brace_depth += 1;
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '}' => {
+                brace_depth = brace_depth.saturating_sub(1);
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '/' if brace_depth == 0 => {
+                idx += c_len;
+                if input[idx..].starts_with('>') {
+                    idx += 1;
+                    found_end = true;
+                    break;
+                }
+                raw_attrs.push('/');
+            }
+            '>' if brace_depth == 0 => {
+                idx += c_len;
+                found_end = true;
+                break;
+            }
+            _ => {
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+        }
+    }
+
+    if !found_end {
+        return None;
+    }
+
+    let src = html_attr_value(&raw_attrs, "src")?;
+    let strategy = html_attr_value(&raw_attrs, "strategy")
+        .unwrap_or_else(|| "load".to_string());
+
+    let url = resolve_island_url(&src, page_url_base);
+
+    // Extra attrs become query params; values are passed verbatim (may be Askama exprs).
+    let mut params: Vec<String> = Vec::new();
+    for (name, val) in parse_island_attrs(&raw_attrs) {
+        if name == "src" || name == "strategy" {
+            continue;
+        }
+        if val.is_empty() {
+            params.push(name);
+        } else {
+            params.push(format!("{name}={val}"));
+        }
+    }
+
+    let full_url = if params.is_empty() {
+        url
+    } else {
+        format!("{url}?{}", params.join("&"))
+    };
+
+    let island_id = format!("__pi_{id}");
+    let trigger_id = format!("__pi_{id}t");
+
+    let trigger = format!(
+        "<a id=\"{}\" s-get=\"{}\" s-html s-target=\"#{}\" s-skip-history style=\"display:none\"></a>",
+        trigger_id, full_url, island_id,
+    );
+
+    let script = match strategy.as_str() {
+        "visible" => format!(
+            "<script>(function(){{var t=document.getElementById('{}');\
+             if(!t)return;\
+             var o=new IntersectionObserver(function(e){{\
+             if(e[0].isIntersecting){{o.disconnect();t.click();}}}});\
+             o.observe(document.getElementById('{}'));\
+             }})();</script>",
+            trigger_id, island_id,
+        ),
+        "idle" => format!(
+            "<script>(function(){{var t=document.getElementById('{}');\
+             if(!t)return;\
+             'requestIdleCallback'in window?\
+             requestIdleCallback(function(){{t.click();}})\
+             :setTimeout(function(){{t.click();}},200);\
+             }})();</script>",
+            trigger_id,
+        ),
+        _ => format!(
+            "<script>document.getElementById('{}').click();</script>",
+            trigger_id,
+        ),
+    };
+
+    let html = format!(
+        "<div id=\"{}\" data-pilcrow-island>{}</div>{}",
+        island_id, trigger, script,
+    );
+
+    Some((html, idx))
+}
+
+/// Resolves an island `src` value to an absolute URL.
+///
+/// - Leading `/` → used as-is (absolute URL)
+/// - `./name` or bare `name` → `{page_url_base}/islands/{name}`
+fn resolve_island_url(src: &str, page_url_base: &str) -> String {
+    if src.starts_with('/') {
+        src.to_string()
+    } else {
+        let name = src.trim_start_matches("./");
+        let base = page_url_base.trim_end_matches('/');
+        format!("{base}/islands/{name}")
+    }
+}
+
+/// Parse all name=value pairs from a raw HTML attribute string.
+/// Handles `"..."`, `'...'`, and `{...}` value forms.
+/// Returns the raw value text (including any `{{ }}` Askama expressions).
+fn parse_island_attrs(attrs: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < attrs.len() {
+        i = skip_ws(attrs, i);
+        if i >= attrs.len() {
+            break;
+        }
+        let (name, next) = scan_html_attr_name(attrs, i);
+        if name.is_empty() {
+            i += 1;
+            continue;
+        }
+        i = skip_ws(attrs, next);
+        if i < attrs.len() && attrs[i..].starts_with('=') {
+            i += 1;
+            i = skip_ws(attrs, i);
+            if let Some((val, end)) = scan_html_attr_val(attrs, i) {
+                result.push((name, val));
+                i = end;
+            } else {
+                result.push((name, String::new()));
+                i = next;
+            }
+        } else {
+            result.push((name, String::new()));
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,5 +1185,88 @@ pub struct Props { pub title: String }
         let parts = transpile_html_module(source).expect("should parse/transpile");
         assert!(parts.rust.contains("pub struct Props"));
         assert_eq!(parts.template, "{{ Card { title: title }|safe }}");
+    }
+
+    #[test]
+    fn island_load_strategy_emits_click_script() {
+        let input = r#"<island src="./counter" />"#;
+        let out = transpile_island_tags(input, "/dashboard");
+        assert!(out.contains("data-pilcrow-island"));
+        assert!(out.contains(r#"s-get="/dashboard/islands/counter""#));
+        assert!(out.contains("s-html"));
+        assert!(out.contains(".click()"));
+        assert!(!out.contains("IntersectionObserver"));
+    }
+
+    #[test]
+    fn island_visible_strategy_emits_intersection_observer() {
+        let input = r#"<island src="./user-card" strategy="visible" />"#;
+        let out = transpile_island_tags(input, "/profile");
+        assert!(out.contains("IntersectionObserver"));
+        assert!(out.contains(r#"s-get="/profile/islands/user-card""#));
+        assert!(!out.contains("requestIdleCallback"));
+    }
+
+    #[test]
+    fn island_idle_strategy_emits_idle_callback() {
+        let input = r#"<island src="./feed" strategy="idle" />"#;
+        let out = transpile_island_tags(input, "/home");
+        assert!(out.contains("requestIdleCallback"));
+        assert!(out.contains(r#"s-get="/home/islands/feed""#));
+        assert!(!out.contains("IntersectionObserver"));
+    }
+
+    #[test]
+    fn island_absolute_src_is_used_as_is() {
+        let input = r#"<island src="/shared/user-card" />"#;
+        let out = transpile_island_tags(input, "/dashboard");
+        assert!(out.contains(r#"s-get="/shared/user-card""#));
+    }
+
+    #[test]
+    fn island_extra_attrs_become_query_params() {
+        let input = r#"<island src="./counter" count="5" label="hello" />"#;
+        let out = transpile_island_tags(input, "/dashboard");
+        assert!(out.contains("count=5"));
+        assert!(out.contains("label=hello"));
+    }
+
+    #[test]
+    fn island_sequential_ids_are_unique() {
+        let input = r#"<island src="./a" /><island src="./b" />"#;
+        let out = transpile_island_tags(input, "/page");
+        assert!(out.contains("__pi_0"));
+        assert!(out.contains("__pi_1"));
+    }
+
+    #[test]
+    fn island_does_not_match_non_island_tags() {
+        let input = "<islander>content</islander>";
+        let out = transpile_island_tags(input, "/page");
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn resolve_island_url_relative_without_dot_slash() {
+        assert_eq!(
+            resolve_island_url("counter", "/dashboard"),
+            "/dashboard/islands/counter"
+        );
+    }
+
+    #[test]
+    fn resolve_island_url_relative_with_dot_slash() {
+        assert_eq!(
+            resolve_island_url("./counter", "/dashboard"),
+            "/dashboard/islands/counter"
+        );
+    }
+
+    #[test]
+    fn resolve_island_url_absolute() {
+        assert_eq!(
+            resolve_island_url("/shared/widget", "/dashboard"),
+            "/shared/widget"
+        );
     }
 }

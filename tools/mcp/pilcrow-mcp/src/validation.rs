@@ -313,16 +313,18 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
     for (idx, line) in code.lines().enumerate() {
         let lnum = idx + 1;
 
+        // Old PascalCase <Island> and client: directives were the planned (never-shipped) API.
+        // The stable API is lowercase <island src="..." strategy="...">.
         for directive in ["<Island", "client:load", "client:idle", "client:visible", "s-island"] {
             if line.contains(directive) {
                 findings.push(finding_with_line(
                     Severity::Error,
-                    "pilcrow-planned-islands",
-                    format!("`{directive}` depends on planned Islands support and is not valid in stable SSR pages."),
+                    "pilcrow-wrong-island-syntax",
+                    format!("`{directive}` is not valid Pilcrow syntax. Use the lowercase <island> tag instead."),
                     path,
                     Some(lnum),
-                    Some("registry.toml: feature islands (planned)"),
-                    Some("Use server-rendered components and Silcrow enhanced forms/navigation for now."),
+                    Some("registry.toml: feature islands (stable)"),
+                    Some("Use `<island src=\"./component\" strategy=\"visible\" />` for co-located islands."),
                 ));
             }
         }
@@ -512,14 +514,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_planned_island_directive() {
+    fn rejects_wrong_island_syntax() {
         let report =
             validate_implementation("<Island client:load />", Some("src/pages/index.html"), None);
         assert!(!report.valid);
         assert!(report
             .findings
             .iter()
-            .any(|finding| finding.rule_id == "pilcrow-planned-islands"));
+            .any(|finding| finding.rule_id == "pilcrow-wrong-island-syntax"));
     }
 
     #[test]
@@ -587,13 +589,13 @@ mod tests {
     }
 
     #[test]
-    fn finding_has_line_number_for_html() {
+    fn finding_has_line_number_for_wrong_island_syntax() {
         let html = "line1\n<Island client:load />\nline3";
         let report = validate_implementation(html, Some("src/pages/index.html"), None);
         let f = report
             .findings
             .iter()
-            .find(|f| f.rule_id == "pilcrow-planned-islands")
+            .find(|f| f.rule_id == "pilcrow-wrong-island-syntax")
             .unwrap();
         assert_eq!(f.line, Some(2));
     }

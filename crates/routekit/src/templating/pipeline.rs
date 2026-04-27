@@ -13,7 +13,7 @@ use crate::templating::codegen::{
     write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
 };
 use crate::templating::compiler::{
-    inject_form_method_attrs, split_html_module, transpile_component_tags,
+    inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,9 +95,34 @@ pub fn compile_to_out_dir_with_config(
     let templates_root = out_dir.join("pilcrow_templates");
     let mut files = preprocess_discovered_sources(src_root, &templates_root, &discovered)?;
 
-    // ── Fragment groups ──────────────────────────────────────────────────────
+    // ── Fragment groups (configured + auto-detected islands/ subdirs) ────────
     let mut fragment_routes: Vec<crate::templating::codegen::GeneratedPageRoute> = Vec::new();
-    for entry in &build_config.fragments {
+
+    // Auto-detect `islands/` subdirectories inside src/pages/ and treat them as
+    // fragment groups. This powers `<island src="./name">` co-location.
+    let pages_dir_path = src_root.join("pages");
+    let auto_island_dirs =
+        discover_auto_island_dirs(&pages_dir_path, &build_config.routing.ignore_directories)?;
+    let auto_fragment_entries: Vec<crate::templating::build_config::FragmentEntry> =
+        auto_island_dirs
+            .iter()
+            .map(|(abs_dir, url_prefix)| {
+                let rel_dir = abs_dir
+                    .strip_prefix(src_root)
+                    .unwrap_or(abs_dir)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                crate::templating::build_config::FragmentEntry {
+                    dir: rel_dir,
+                    url: Some(url_prefix.clone()),
+                }
+            })
+            .collect();
+
+    let all_fragment_entries: Vec<&crate::templating::build_config::FragmentEntry> =
+        build_config.fragments.iter().chain(auto_fragment_entries.iter()).collect();
+
+    for entry in &all_fragment_entries {
         let fragment_dir = src_root.join(&entry.dir);
         if !fragment_dir.exists() {
             continue;
@@ -161,7 +186,9 @@ pub fn compile_to_out_dir_with_config(
                 &mut stack,
                 0,
             )?;
-            let after_components = transpile_component_tags(&expanded);
+            let fragment_base = format!("/{url_prefix}");
+            let after_islands = transpile_island_tags(&expanded, &fragment_base);
+            let after_components = transpile_component_tags(&after_islands);
             let final_template = inject_form_method_attrs(&after_components);
 
             if let Some(parent) = module.template_output_path.parent() {
@@ -370,6 +397,97 @@ pub fn compile_to_out_dir_with_config(
     })
 }
 
+/// Compute the URL directory base for a page, used to resolve relative `<island src>` values.
+///
+/// Strips route-group segments `(name)` from the path. The result is an absolute URL
+/// path like `/dashboard` or `/` for root-level pages.
+fn page_url_base(source_path: &Path, pages_dir: &Path) -> String {
+    let rel = source_path.strip_prefix(pages_dir).unwrap_or(source_path);
+    let dir = rel.parent().unwrap_or(Path::new(""));
+    let segments: Vec<&str> = dir
+        .components()
+        .filter_map(|c| {
+            if let Component::Normal(s) = c {
+                let s = s.to_str()?;
+                if s.starts_with('(') && s.ends_with(')') {
+                    return None; // strip route groups
+                }
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if segments.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", segments.join("/"))
+    }
+}
+
+/// Scan `pages_dir` recursively for `islands/` subdirectories.
+///
+/// Returns `(absolute_path, url_prefix)` pairs where `url_prefix` is like
+/// `dashboard/islands` (no leading/trailing slashes, route-group segments stripped).
+fn discover_auto_island_dirs(
+    pages_dir: &Path,
+    ignored_dirs: &[String],
+) -> io::Result<Vec<(PathBuf, String)>> {
+    let mut result = Vec::new();
+    if pages_dir.exists() {
+        scan_for_island_dirs(pages_dir, pages_dir, ignored_dirs, &mut result)?;
+    }
+    Ok(result)
+}
+
+fn scan_for_island_dirs(
+    dir: &Path,
+    pages_dir: &Path,
+    ignored_dirs: &[String],
+    result: &mut Vec<(PathBuf, String)>,
+) -> io::Result<()> {
+    let read_dir = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return Ok(()),
+    };
+    for entry in read_dir {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if ignored_dirs.iter().any(|i| i == &name) {
+            continue;
+        }
+        if name == "islands" {
+            let rel = path.strip_prefix(pages_dir).unwrap_or(&path);
+            let url_prefix: String = rel
+                .components()
+                .filter_map(|c| {
+                    if let Component::Normal(s) = c {
+                        let s = s.to_str()?;
+                        if s.starts_with('(') && s.ends_with(')') {
+                            return None;
+                        }
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            result.push((path, url_prefix));
+        } else {
+            scan_for_island_dirs(&path, pages_dir, ignored_dirs, result)?;
+        }
+    }
+    Ok(())
+}
+
 /// Canonical directories and files that should trigger rebuilds in Cargo build scripts.
 pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     let src_root = src_root.as_ref();
@@ -530,7 +648,13 @@ fn preprocess_discovered_sources(
             &mut stack,
             0,
         )?;
-        let after_components = transpile_component_tags(&expanded);
+        let url_base = if module.kind == HtmlSourceKind::Page {
+            page_url_base(&module.source_path, &pages_dir)
+        } else {
+            "/".to_string()
+        };
+        let after_islands = transpile_island_tags(&expanded, &url_base);
+        let after_components = transpile_component_tags(&after_islands);
         let final_template = inject_form_method_attrs(&after_components);
 
         if let Some(parent) = module.template_output_path.parent() {

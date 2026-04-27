@@ -571,6 +571,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
+            id: "routekit-compiler-islands",
+            title: "Island tag transpilation (compiler.rs)",
+            path: "crates/routekit/src/templating/compiler.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "routekit-pipeline-islands",
+            title: "Island auto-detection in build pipeline (pipeline.rs)",
+            path: "crates/routekit/src/templating/pipeline.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
             id: "routekit-tests",
             title: "Routekit tests",
             path: "crates/routekit/src/templating/codegen/tests.rs",
