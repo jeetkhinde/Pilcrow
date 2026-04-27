@@ -405,6 +405,19 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
             ));
         }
 
+        // Manual SW registration — Pilcrow injects this automatically when service_worker.enabled = true.
+        if line.contains("serviceWorker.register") || line.contains("serviceWorker.register") {
+            findings.push(finding_with_line(
+                Severity::Warning,
+                "pilcrow-manual-sw-registration",
+                "Manual service worker registration detected. Pilcrow handles this automatically when `[service_worker] enabled = true` is set in Pilcrow.toml.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature service-worker"),
+                Some("Remove the manual register() call and add `[service_worker]\\nenabled = true` to Pilcrow.toml."),
+            ));
+        }
+
         if line.contains("useState(") || line.contains("onclick=") || line.contains("x-data") {
             findings.push(finding_with_line(
                 Severity::Warning,

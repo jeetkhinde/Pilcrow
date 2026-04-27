@@ -12,6 +12,39 @@ pub struct PilcrowConfig {
     pub backend: BackendConfig,
     #[serde(default)]
     pub cache: CacheConfig,
+    #[serde(default)]
+    pub service_worker: ServiceWorkerConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServiceWorkerConfig {
+    /// Whether to register and serve `/sw.js`. Disabled by default.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Caching strategy applied to all non-excluded GET requests.
+    #[serde(default)]
+    pub strategy: SwStrategy,
+    /// Extra URLs to precache on service worker install (silcrow.js is always included).
+    #[serde(default)]
+    pub precache: Vec<String>,
+    /// URL substrings to exclude from service worker interception.
+    /// `/_silcrow/` and `/__pilcrow/` are always excluded.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// URL to serve when a request fails and no cached response exists.
+    pub offline_fallback: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SwStrategy {
+    /// Try network first; fall back to cache on failure. (default)
+    #[default]
+    NetworkFirst,
+    /// Serve from cache immediately; fetch in background only on cache miss.
+    CacheFirst,
+    /// Serve cached response immediately while revalidating in background.
+    StaleWhileRevalidate,
 }
 
 #[derive(Debug, Clone, Deserialize)]

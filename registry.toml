@@ -1603,3 +1603,61 @@ validation_rules = [
   "STREAMING = true is invalid when load() takes PilcrowClient as a parameter.",
 ]
 scaffold_templates = []
+
+[[features]]
+id = "service-worker"
+name = "Service Worker"
+status = "stable"
+since = "0.1.0"
+summary = "Runtime-generated `/sw.js` with configurable caching strategy, precaching, and offline fallback. Disabled in dev mode."
+spec = """
+Configure in `Pilcrow.toml` under `[service_worker]`:
+
+```toml
+[service_worker]
+enabled = true
+strategy = "network-first"   # "network-first" | "cache-first" | "stale-while-revalidate"
+precache = ["/", "/about"]   # URLs cached on SW install (silcrow.js always included)
+exclude = ["/api/"]          # Additional URL substrings to skip (/_silcrow/ and /__pilcrow/ always excluded)
+offline_fallback = "/offline" # Optional: served when network fails and no cache hit
+```
+
+Pilcrow automatically:
+- Serves `GET /sw.js` with `Cache-Control: no-store` (always fresh)
+- Injects `<script>navigator.serviceWorker.register('/sw.js')</script>` before `</body>` in all HTML responses
+- Computes a cache version (CRC32 of strategy + precache list + silcrow.js) — busts automatically on any change
+- Skips `/_silcrow/` and `/__pilcrow/` from SW interception
+- Disables SW in dev mode (`PILCROW_DEV=1`) to avoid stale-cache development friction
+
+**Strategies:**
+- `network-first` (default) — try network, fall back to cache on failure. Best for dynamic pages.
+- `cache-first` — serve from cache immediately, network only on miss. Best for static assets.
+- `stale-while-revalidate` — serve cached instantly, update cache in background. Best for semi-static content.
+"""
+constraints = [
+  "Service worker is never registered in dev mode (PILCROW_DEV=1).",
+  "/_silcrow/ and /__pilcrow/ URL prefixes are always excluded from SW interception.",
+  "/sw.js is served with Cache-Control: no-store so the browser always checks for updates.",
+  "silcrow.js is always added to the precache list (it has a content-hashed URL, safe to cache forever).",
+  "The cache name changes automatically when strategy, precache list, or silcrow.js changes.",
+  "The offline_fallback URL must be reachable and cacheable for fallback to work.",
+]
+canonical_usage = """
+# Pilcrow.toml
+[service_worker]
+enabled = true
+strategy = "network-first"
+precache = ["/", "/about", "/styles.css"]
+offline_fallback = "/offline"
+"""
+source_refs = [
+  "crates/core/src/config/config.rs — ServiceWorkerConfig, SwStrategy",
+  "crates/runtime/src/sw.rs — generate_sw_source(), sw_handler(), sw_inject_layer(), SW_REGISTRATION",
+  "crates/runtime/src/start.rs — /sw.js route + sw_inject_layer wired in start_with_adapter()",
+]
+test_refs = []
+validation_rules = [
+  "service_worker.strategy must be one of: network-first, cache-first, stale-while-revalidate.",
+  "service_worker.enabled = true has no effect in dev mode — SW is always disabled when PILCROW_DEV is set.",
+]
+scaffold_templates = []

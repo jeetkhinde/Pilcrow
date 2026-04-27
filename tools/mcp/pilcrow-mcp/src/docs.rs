@@ -481,6 +481,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-sw",
+            title: "Service worker: generate_sw_source(), sw_handler(), sw_inject_layer()",
+            path: "crates/runtime/src/sw.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "core-config",
+            title: "PilcrowConfig, ServiceWorkerConfig, SwStrategy, CacheConfig",
+            path: "crates/core/src/config/config.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-lib",
             title: "Routekit library",
             path: "crates/routekit/src/lib.rs",

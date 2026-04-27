@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
 use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
 use crate::isr::{IsrCache, IsrHandle};
+use crate::sw::{sw_handler, sw_inject_layer};
 
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
@@ -61,11 +62,17 @@ where
     });
 
     let dev_mode = std::env::var("PILCROW_DEV").is_ok();
+    let sw_enabled = config.service_worker.enabled && !dev_mode;
+    let sw_strategy_dbg = format!("{:?}", config.service_worker.strategy);
 
     prerender_fn(Arc::clone(&isr_cache)).await;
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
     let mut app = app.route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler));
+
+    if sw_enabled {
+        app = app.route("/sw.js", axum::routing::get(sw_handler));
+    }
 
     let dev_state = if dev_mode {
         let state = DevState::new();
@@ -100,6 +107,13 @@ where
         tracing::info!("dev mode: live reload + CSS hot swap active");
         app.layer(axum::Extension(state))
            .layer(axum::middleware::from_fn(dev_inject_layer))
+    } else {
+        app
+    };
+
+    let app = if sw_enabled {
+        tracing::info!("service worker: enabled (strategy: {sw_strategy_dbg})");
+        app.layer(axum::middleware::from_fn(sw_inject_layer))
     } else {
         app
     };
