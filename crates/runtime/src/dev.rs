@@ -161,20 +161,22 @@ pub(crate) fn spawn_css_watcher(tx: broadcast::Sender<DevEvent>, src_dir: PathBu
 
 /// Injected before `</body>` in every `text/html` response in dev mode.
 ///
-/// - The hidden `<div s-sse>` opens the silcrow SSE connection on the `/__pilcrow/dev-reload`
-///   endpoint. silcrow auto-reconnects after a server restart (exponential backoff).
-/// - `silcrow:sse:reload` — first connect sets `c=true` (no-op); every reconnect
-///   after a server restart calls `location.reload()`.
-/// - `silcrow:sse:css-reload` — reinjects the matching `<link>` stylesheet with a
-///   cache-busted `?t=` query, swapping it in without a full page reload.
-///   Matches on filename so it works regardless of the URL path structure.
+/// - The hidden `<div s-sse>` opens the silcrow SSE connection. silcrow reconnects
+///   automatically with exponential backoff after a server restart.
+/// - `silcrow:sse:reload` — first connect sets `c=true` (no-op); reconnect calls `location.reload()`.
+/// - `silcrow:sse:css-reload` — reinjects the matching `<link>` by filename with `?t=` cache-bust.
+/// - `silcrow:live:disconnect` on the element — shows a "building…" banner after 2 s;
+///   `silcrow:live:connect` clears it. These two events act as build-start / build-end signals:
+///   while the server is recompiling the connection is down, and the banner communicates that.
 const DEV_INJECTION: &str = concat!(
     r#"<div id="__pilcrow_dev" s-sse="/__pilcrow/dev-reload" style="display:none"></div>"#,
     "<script>(function(){",
-    "var c=false;",
+    "var c=false,banner=null,timer=null;",
+    // reload on reconnect
     "document.addEventListener('silcrow:sse:reload',function(){",
     "if(c){location.reload();}else{c=true;}",
     "});",
+    // css hot swap — match by filename
     "document.addEventListener('silcrow:sse:css-reload',function(e){",
     "var f=e.detail&&e.detail.path;if(!f)return;",
     "document.querySelectorAll('link[rel=\"stylesheet\"]').forEach(function(l){",
@@ -183,6 +185,26 @@ const DEV_INJECTION: &str = concat!(
     "l.after(n);n.onload=function(){l.remove();};}",
     "});",
     "});",
+    // build status banner via live:connect / live:disconnect on the element
+    "var el=document.getElementById('__pilcrow_dev');",
+    "if(el){",
+    "el.addEventListener('silcrow:live:disconnect',function(){",
+    "timer=setTimeout(function(){",
+    "if(banner)return;",
+    "banner=document.createElement('div');",
+    "Object.assign(banner.style,{position:'fixed',bottom:'1rem',right:'1rem',",
+    "background:'#1a1a1a',color:'#e5e5e5',padding:'0.5rem 1rem',",
+    "borderRadius:'0.375rem',fontFamily:'monospace',fontSize:'0.8125rem',",
+    "zIndex:'9999',boxShadow:'0 2px 8px rgba(0,0,0,0.4)'});",
+    "banner.textContent='pilcrow: building…';",
+    "document.body.appendChild(banner);",
+    "},2000);",
+    "});",
+    "el.addEventListener('silcrow:live:connect',function(){",
+    "clearTimeout(timer);timer=null;",
+    "if(banner){banner.remove();banner=null;}",
+    "});",
+    "}",
     "})();</script>",
 );
 

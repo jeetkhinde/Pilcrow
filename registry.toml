@@ -1327,3 +1327,122 @@ source_refs = [
 test_refs = []
 validation_rules = []
 scaffold_templates = []
+
+[[features]]
+id = "dev-server"
+name = "Dev Server (pilcrow dev)"
+domain = "pilcrow"
+status = "stable"
+summary = "`pilcrow dev` starts the app in dev mode — live reload, CSS hot swap, and build status banner with zero config."
+spec = """
+Run `pilcrow dev` from your project root. The CLI sets `PILCROW_DEV=1` and starts cargo-watch
+(if installed) to restart the server on `.rs` and `.html` changes. CSS changes are excluded
+from restarts and handled in-process instead.
+
+The runtime detects `PILCROW_DEV=1` at startup and:
+  1. Adds `GET /__pilcrow/dev-reload` — SSE endpoint (DevReloadStream + DevState broadcast channel)
+  2. Adds `DevLayer` — Tower middleware that buffers `text/html` responses and injects DEV_INJECTION before `</body>`
+  3. Spawns a notify file watcher on `src/` for CSS changes
+
+If cargo-watch is not installed, `pilcrow dev` still runs `cargo run` with `PILCROW_DEV=1`
+(no automatic file watching, but live reload still works on manual restart).
+"""
+canonical_usage = """
+# Start dev server:
+pilcrow dev
+
+# Install cargo-watch for automatic reloads (recommended):
+cargo install cargo-watch
+"""
+constraints = [
+  "PILCROW_DEV=1 must be set — pilcrow dev does this automatically.",
+  "Dev mode buffers all text/html responses to inject the reload script — not suitable for production.",
+  "The notify CSS watcher watches src/ relative to the current working directory.",
+  "PILCROW_DEV is not checked in non-start code paths (export, test) — safe to leave set.",
+]
+invalid_examples = [
+  "PILCROW_DEV=1 cargo run --release  # do not use dev mode in release builds",
+]
+source_refs = [
+  "crates/runtime/src/dev.rs",
+  "crates/runtime/src/start.rs — dev_mode detection and wiring",
+  "tools/cli/src/dev.rs",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "css-hot-swap"
+name = "CSS Hot Swap"
+domain = "pilcrow"
+status = "stable"
+summary = "CSS file changes are reflected in the browser without a page reload — the matching `<link>` is reinjected with a cache-busted URL."
+spec = """
+Part of dev mode (requires PILCROW_DEV=1). When a `.css` file in `src/` is saved:
+  1. The notify watcher (OS thread) detects the change and broadcasts DevEvent::CssReload{filename}
+  2. All connected SSE clients receive: event: custom / data: {"event":"css-reload","data":{"path":"<filename>"}}
+  3. silcrow dispatches silcrow:sse:css-reload on document with detail = {path: "<filename>"}
+  4. The injected script finds the matching <link rel="stylesheet"> by filename, clones it with
+     a `?t=<timestamp>` cache-bust, inserts it after the original, and removes the original on load
+
+cargo-watch excludes *.css from triggering server restarts (-i "*.css"). CSS changes are handled
+entirely in-process — the server never restarts for a CSS-only change.
+
+Match is by filename only (e.g. "app.css") — URL path structure is not assumed.
+"""
+canonical_usage = """
+# Save any src/**/*.css file while pilcrow dev is running.
+# The browser swaps the stylesheet without reloading the page.
+"""
+constraints = [
+  "Matching is by filename — if you have two files named the same, both <link> elements are swapped.",
+  "The stylesheet must be loaded via a <link rel=\"stylesheet\"> element (not @import or inline <style>).",
+  "CSS files outside src/ are not watched.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/dev.rs — DevEvent::CssReload, spawn_css_watcher, DEV_INJECTION css handler",
+  "tools/cli/src/dev.rs — -i *.css cargo-watch flag",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []
+
+[[features]]
+id = "dev-build-banner"
+name = "Dev Build Status Banner"
+domain = "pilcrow"
+status = "stable"
+summary = "A 'building…' banner appears after 2 s of SSE disconnect (server restarting), clears on reconnect."
+spec = """
+Part of DEV_INJECTION. Uses silcrow:live:disconnect and silcrow:live:connect events on the
+hidden `#__pilcrow_dev` SSE element as build-start / build-end signals:
+
+  silcrow:live:disconnect → 2 s debounce → fixed bottom-right banner: "pilcrow: building…"
+  silcrow:live:connect    → clear timer + remove banner
+
+When a compile error prevents the server from starting, the connection stays down and the banner
+stays visible indefinitely — signalling the user to check the terminal.
+
+When the build succeeds, the server starts → SSE reconnects → banner clears → silcrow:sse:reload
+fires → location.reload().
+
+No server-side changes required — entirely client-driven via silcrow lifecycle events.
+"""
+canonical_usage = """
+# Automatic — visible in the browser when PILCROW_DEV=1 and a file is saved.
+# Banner appears 2s after save, disappears when server is back and page reloads.
+"""
+constraints = [
+  "The 2s debounce prevents flashing on fast builds (< 2s compile time).",
+  "Banner is a minimal fixed-position div with inline styles — no CSS dependency.",
+  "silcrow:live:disconnect fires immediately on connection drop; the 2s delay is client-side.",
+]
+invalid_examples = []
+source_refs = [
+  "crates/runtime/src/dev.rs — DEV_INJECTION silcrow:live:disconnect handler",
+]
+test_refs = []
+validation_rules = []
+scaffold_templates = []
