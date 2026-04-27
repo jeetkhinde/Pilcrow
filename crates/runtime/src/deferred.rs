@@ -318,6 +318,47 @@ pub fn __serialize_deferred<T: Serialize>(value: T) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string())
 }
 
+/// Build a streaming Response for `STREAMING = true` pages.
+///
+/// Sends the shell HTML immediately, then awaits the props JSON future and streams
+/// a single `window.__ps(json)` call that lets silcrow.js patch all page bindings at once.
+/// If the future returns an empty string (load errored or task panicked), no patch is emitted.
+#[doc(hidden)]
+pub fn __streaming_props_response(
+    shell_html: String,
+    props_json_future: impl Future<Output = String> + Send + 'static,
+) -> Response {
+    let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, std::convert::Infallible>>(2);
+
+    tokio::spawn(async move {
+        if tx.send(Ok(bytes::Bytes::from(shell_html))).await.is_err() {
+            return;
+        }
+        let json = props_json_future.await;
+        if !json.is_empty() {
+            let chunk = format!("<script>window.__ps({})</script>", json);
+            let _ = tx.send(Ok(bytes::Bytes::from(chunk))).await;
+        }
+    });
+
+    let stream = ReceiverStream::new(rx);
+    let body = Body::from_stream(stream);
+
+    axum::http::Response::builder()
+        .header("content-type", "text/html; charset=utf-8")
+        .body(body)
+        .expect("valid response")
+}
+
+/// Serialize page Props to a JSON object string for STREAMING patches.
+///
+/// Returns an empty string on serialization failure (treated as "no patch" by
+/// `__streaming_props_response`).
+#[doc(hidden)]
+pub fn __serialize_page_props<T: Serialize>(value: T) -> String {
+    serde_json::to_string(&value).unwrap_or_default()
+}
+
 /// Build a `Stream<Item = DeferredPatch>` from a vec of `(field, future → String)` pairs.
 /// Resolves patches concurrently and yields them in completion order.
 #[doc(hidden)]

@@ -415,6 +415,90 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
     }
 
     #[test]
+    fn streaming_constant_is_stripped_and_recorded_in_page_options() {
+        let frontmatter = r#"
+pub const STREAMING: bool = true;
+pub struct Props { pub title: String }
+pub async fn load(_req: Req) -> AppResult<Props> {
+    Ok(Props { title: "hi".into() })
+}
+"#;
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_about".to_string(),
+            render_symbol: "render_page_about".to_string(),
+            source_path: "/tmp/src/pages/about.html".to_string(),
+            rust_frontmatter: frontmatter.to_string(),
+            template_source: "<h1>:text</h1>".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+        }])
+        .expect("should generate with STREAMING constant");
+
+        // STREAMING must not appear in the emitted source.
+        assert!(!generated.source.contains("STREAMING"), "STREAMING leaked into emitted source");
+
+        // streaming flag must be recorded in page_options.
+        let opts = generated.page_options.get("page_about").expect("page_about in options");
+        assert!(opts.streaming);
+
+        // Props::default() must be derivable (Default injected automatically).
+        assert!(generated.source.contains("derive"), "Default should be injected for streaming");
+    }
+
+    #[test]
+    fn streaming_handler_emits_spawn_and_patch_script() {
+        let page_route = GeneratedPageRoute {
+            pattern: "/products".to_string(),
+            template_path: "/tmp/src/pages/products.html".to_string(),
+            symbol: "page_products".to_string(),
+            render_symbol: "render_page_products".to_string(),
+            param_matchers: HashMap::new(),
+        };
+        let load_sig = LoadSignature {
+            is_async: true,
+            returns_result: true,
+            wants_client: false,
+            wants_req: true,
+        };
+        let mut load_map: HashMap<String, Option<LoadSignature>> = HashMap::new();
+        load_map.insert("page_products".to_string(), Some(load_sig));
+
+        let mut page_opts: HashMap<String, PageOptions> = HashMap::new();
+        page_opts.insert(
+            "page_products".to_string(),
+            PageOptions { streaming: true, ..Default::default() },
+        );
+
+        let source = render_generated_app_module(
+            &[page_route],
+            &[],
+            &load_map,
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            &page_opts,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            false,
+        );
+
+        // Must spawn page load in background.
+        assert!(source.contains("tokio::spawn"), "STREAMING handler must spawn page load");
+        // Must use __streaming_props_response.
+        assert!(source.contains("__streaming_props_response"), "must use streaming response");
+        // Must inject the window.__ps shim.
+        assert!(source.contains("window.__ps"), "must inject streaming shim");
+        // Must serialize page props.
+        assert!(source.contains("__serialize_page_props"), "must serialize props");
+        // Must apply resp_handle.
+        assert!(source.contains("__resp_handle.apply_to"), "must apply response handle");
+    }
+
+    #[test]
     fn emit_action_route_uses_custom_error_module_when_provided() {
         let actions = vec![ActionFn {
             name: "update".to_string(),

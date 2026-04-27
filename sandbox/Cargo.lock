@@ -1282,6 +1282,8 @@ dependencies = [
  "crc32fast",
  "futures-core",
  "headers",
+ "http",
+ "http-body-util",
  "minifier",
  "notify",
  "pilcrow-core",

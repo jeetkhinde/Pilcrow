@@ -428,7 +428,7 @@ fn document_specs() -> Vec<DocumentSpec> {
         },
         DocumentSpec {
             id: "runtime-deferred",
-            title: "Deferred streaming",
+            title: "Deferred streaming and SSR Streaming (__streaming_props_response, __serialize_page_props)",
             path: "crates/runtime/src/deferred.rs",
             category: KnowledgeCategory::RuntimeApi,
         },
@@ -506,7 +506,7 @@ fn document_specs() -> Vec<DocumentSpec> {
         },
         DocumentSpec {
             id: "routekit-page-options",
-            title: "Page options",
+            title: "Page options (TRAILING_SLASH, LAYOUT, REVALIDATE, PRERENDER, STREAMING)",
             path: "crates/routekit/src/templating/page_options.rs",
             category: KnowledgeCategory::Routekit,
         },
@@ -530,7 +530,7 @@ fn document_specs() -> Vec<DocumentSpec> {
         },
         DocumentSpec {
             id: "routekit-app-codegen",
-            title: "Generated app module",
+            title: "Generated app module (ISR, SSG, STREAMING, Deferred handler emitters)",
             path: "crates/routekit/src/templating/codegen/app_module.rs",
             category: KnowledgeCategory::Routekit,
         },

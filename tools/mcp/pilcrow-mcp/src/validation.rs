@@ -136,6 +136,32 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                 Some("Use PRERENDER for full SSG prerendering, or REVALIDATE for stale-while-revalidate ISR. Not both."),
             ));
         }
+
+        // STREAMING conflicts: detect incompatible const combinations at build time.
+        if line.contains("STREAMING") && line.contains("const") {
+            if code.contains("REVALIDATE") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-streaming-isr-conflict",
+                    "STREAMING = true is incompatible with REVALIDATE — the build will panic.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature SSR Streaming"),
+                    Some("Use Deferred<T> for streaming individual fields on an ISR page."),
+                ));
+            }
+            if code.contains("PRERENDER") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-streaming-ssg-conflict",
+                    "STREAMING = true is incompatible with PRERENDER = true — the build will panic.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature SSR Streaming"),
+                    Some("Pre-rendered pages are fully static and cannot use streaming."),
+                ));
+            }
+        }
     }
 
     if kind != Some("api")
@@ -299,6 +325,20 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                                 path,
                                 Some("crates/routekit/src/templating/page_options.rs"),
                                 Some("Use a plain integer, e.g. `pub const REVALIDATE: u64 = 60;`."),
+                            ));
+                        }
+                    }
+                } else if name == "STREAMING" {
+                    // Must be a bool literal, not a string like "true"
+                    if let syn::Expr::Lit(expr_lit) = c.expr.as_ref() {
+                        if matches!(&expr_lit.lit, syn::Lit::Str(_)) {
+                            findings.push(finding(
+                                Severity::Error,
+                                "pilcrow-streaming-wrong-type",
+                                "STREAMING must be a bool literal: `pub const STREAMING: bool = true;` — not a string.".to_string(),
+                                path,
+                                Some("crates/routekit/src/templating/page_options.rs"),
+                                Some("Use `pub const STREAMING: bool = true;` in your .rs code-behind."),
                             ));
                         }
                     }

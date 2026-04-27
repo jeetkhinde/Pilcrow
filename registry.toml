@@ -1519,3 +1519,87 @@ source_refs = [
 test_refs = []
 validation_rules = []
 scaffold_templates = []
+
+[[features]]
+name = "SSR Streaming (STREAMING = true)"
+domain = "pilcrow"
+status = "stable"
+summary = "Pages opt into progressive SSR: layout loads complete first, page load() runs in the background, and the shell renders immediately. Resolved Props are streamed as a single Silcrow.patch() call."
+spec = """
+Declare `pub const STREAMING: bool = true;` in a page's code-behind to enable streaming mode.
+
+Execution flow:
+  1. Layout loads run sequentially (preserving req.locals propagation between layouts and page).
+  2. Page load() is spawned with tokio::spawn immediately after all layout loads complete.
+  3. The shell renders with layout data + default page Props values and is flushed to the client.
+  4. A `window.__ps` shim is injected before </head> in the shell HTML.
+  5. When page load() resolves, Props is serialized to JSON and streamed as:
+       <script>window.__ps({...props_json...})</script>
+     which calls `Silcrow.patch(props, document.body)` to update all reactive bindings.
+
+The `window.__ps` shim:
+  <script>window.__ps=function(v){Silcrow.patch(v,document.body)}</script>
+
+Page templates should use silcrow.js reactive bindings (:text, :value, etc.) for fields that
+should update after the shell renders. Askama {{ field }} interpolations render the default
+value in the shell and are NOT updated by the streaming patch.
+
+Constraints:
+- Props: all page Props fields used in reactive bindings must implement Default.
+  For no-layout pages, #[derive(Default)] is automatically injected on Props.
+  For layout pages, each page field is constructed with Default::default() individually.
+- STREAMING is incompatible with REVALIDATE (ISR) — use Deferred<T> for that case.
+- STREAMING is incompatible with PRERENDER (SSG) — pre-rendered pages are fully static.
+- STREAMING is incompatible with Deferred<T> / DeferredHtml fields — use one mechanism.
+- STREAMING does not support PilcrowClient in page load() — use Deferred<T> instead.
+- STREAMING without load() is a no-op (silently ignored).
+"""
+canonical_usage = """
+// src/pages/products.rs
+pub const STREAMING: bool = true;
+
+pub struct Props {
+    pub title: String,
+    pub items: Vec<Product>,
+}
+
+pub async fn load(_req: Req) -> AppResult<Props> {
+    let items = db::get_products().await?;
+    Ok(Props { title: "Products".into(), items })
+}
+
+// Template uses reactive bindings so the patch updates the DOM:
+// <h1 :text="title"></h1>
+// <template s-for="item in items" :key="item.id">...</template>
+"""
+constraints = [
+  "STREAMING = true is incompatible with REVALIDATE (panics at build time).",
+  "STREAMING = true is incompatible with PRERENDER = true (panics at build time).",
+  "STREAMING = true cannot be combined with Deferred<T> or DeferredHtml fields (panics at build time).",
+  "STREAMING = true does not support PilcrowClient in load() (panics at build time).",
+  "Page template should use :text/:value bindings for fields that change after shell renders.",
+  "Layout loads always run sequentially before the page spawn to preserve req.locals semantics.",
+  "__resp_handle.apply_to() is called on the streaming response — toasts and headers work.",
+]
+invalid_examples = [
+  "pub const STREAMING: bool = true; pub const REVALIDATE: u64 = 60; // incompatible",
+  "pub const STREAMING: bool = true; pub const PRERENDER: bool = true; // incompatible",
+  "pub const STREAMING: bool = true; // with Deferred<T> fields — incompatible",
+]
+source_refs = [
+  "crates/routekit/src/templating/page_options.rs — PageOptions.streaming field",
+  "crates/routekit/src/templating/codegen/instrument.rs — STREAMING const detection + Default injection",
+  "crates/routekit/src/templating/codegen/app_module.rs — emit_streaming_handler()",
+  "crates/runtime/src/deferred.rs — __streaming_props_response(), __serialize_page_props()",
+]
+test_refs = [
+  "crates/routekit/src/templating/codegen/tests.rs — streaming_constant_is_stripped_and_recorded_in_page_options",
+  "crates/routekit/src/templating/codegen/tests.rs — streaming_handler_emits_spawn_and_patch_script",
+]
+validation_rules = [
+  "STREAMING = true is invalid on a page that also declares REVALIDATE.",
+  "STREAMING = true is invalid on a page that also declares PRERENDER = true.",
+  "STREAMING = true is invalid when the page's Props declares Deferred<T> or DeferredHtml fields.",
+  "STREAMING = true is invalid when load() takes PilcrowClient as a parameter.",
+]
+scaffold_templates = []

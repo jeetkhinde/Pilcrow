@@ -18,7 +18,7 @@ pub fn instrument_frontmatter(
     })?;
 
     // Parse and strip framework-reserved `pub const` declarations before other processing.
-    // Handled: TRAILING_SLASH, LAYOUT, REVALIDATE, MAX_STALE, CACHE_TAGS, CACHE_VARY, PRERENDER.
+    // Handled: TRAILING_SLASH, LAYOUT, REVALIDATE, MAX_STALE, CACHE_TAGS, CACHE_VARY, PRERENDER, STREAMING.
     let mut page_options = PageOptions::default();
     let mut const_remove_indices: Vec<usize> = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
@@ -54,6 +54,9 @@ pub fn instrument_frontmatter(
                     const_remove_indices.push(index);
                 } else if c.ident == "PRERENDER" {
                     page_options.ssg.prerender = value_str.trim() == "true";
+                    const_remove_indices.push(index);
+                } else if c.ident == "STREAMING" {
+                    page_options.streaming = value_str.trim() == "true";
                     const_remove_indices.push(index);
                 }
             }
@@ -322,8 +325,9 @@ pub fn instrument_frontmatter(
 
     if extra_fields.is_empty() {
         // Normal path: Props is used directly for template rendering.
-        // Inject Default derive for static pages (no load function).
-        if load_signature.is_none()
+        // Inject Default derive for static pages (no load function) or STREAMING pages
+        // (shell renders with Props::default() before load() resolves).
+        if (load_signature.is_none() || page_options.streaming)
             && !has_manual_default
             && !has_derive_trait(&props_struct.attrs, &["Default"])
         {

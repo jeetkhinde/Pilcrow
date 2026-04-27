@@ -48,6 +48,7 @@ pub use response::response::html;
 pub use deferred::{
     Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch,
     __deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred,
+    __serialize_page_props, __streaming_props_response,
     deferred_response, deferred_response_combined,
 };
 // ── ISR ──────────────────────────────────────────────────────

@@ -39,6 +39,7 @@ pub struct SsgOpts {
 /// pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
 /// pub const REVALIDATE: u64 = 60;            // ISR: cache TTL in seconds
 /// pub const PRERENDER: bool = true;          // SSG: pre-render at server startup
+/// pub const STREAMING: bool = true;          // SSR Streaming: shell renders immediately, page data streamed
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PageOptions {
@@ -46,6 +47,10 @@ pub struct PageOptions {
     pub layout: LayoutOpt,
     pub isr: IsrOpts,
     pub ssg: SsgOpts,
+    /// Whether the page uses SSR Streaming: layout loads run immediately, page `load()` is
+    /// spawned in the background, and the shell renders before data arrives. The resolved
+    /// `Props` are streamed as a single `Silcrow.patch()` call once `load()` completes.
+    pub streaming: bool,
 }
 
 /// Whether this page participates in the automatic layout chain.

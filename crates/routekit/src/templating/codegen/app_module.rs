@@ -235,6 +235,41 @@ pub fn render_generated_app_module(
 
         let isr_opts = isr_config_map.get(&entry.symbol);
         let ssg_opts = ssg_config_map.get(&entry.symbol);
+        let is_streaming = page_options_map
+            .get(&entry.symbol)
+            .map_or(false, |o| o.streaming);
+
+        // Build-time validation for STREAMING.
+        if is_streaming {
+            if isr_opts.map_or(false, |o| o.is_active()) {
+                panic!(
+                    "STREAMING = true is incompatible with REVALIDATE on route '{}' (module `{}`). \
+                     Use Deferred<T> for individual field streaming with ISR caching.",
+                    entry.pattern, entry.symbol
+                );
+            }
+            if ssg_opts.map_or(false, |o| o.prerender) {
+                panic!(
+                    "STREAMING = true is incompatible with PRERENDER = true on route '{}' (module `{}`). \
+                     Pre-rendered pages are static and cannot stream.",
+                    entry.pattern, entry.symbol
+                );
+            }
+            if !deferred_fields.is_empty() || !deferred_html_fields.is_empty() {
+                panic!(
+                    "STREAMING = true on '{}' cannot be combined with Deferred<T>/DeferredHtml fields. \
+                     Use one mechanism: either STREAMING = true or explicit Deferred<T> fields.",
+                    entry.pattern
+                );
+            }
+            if page_load.map_or(false, |s| s.wants_client) {
+                panic!(
+                    "STREAMING = true on '{}' does not support PilcrowClient in load(). \
+                     Use Deferred<T> for client-based data fetching instead.",
+                    entry.pattern
+                );
+            }
+        }
 
         // Build-time validation: PRERENDER on a dynamic route requires entries().
         if ssg_opts.map_or(false, |o| o.prerender) && page_load.is_some() {
@@ -319,6 +354,18 @@ pub fn render_generated_app_module(
             let isr = isr_opts.expect("checked above");
             out.push_str(&emit_isr_handler(
                 isr,
+                mod_name,
+                render_fn,
+                error_mod,
+                loading_mod,
+                page_load.expect("checked above"),
+                &active_chain,
+                chain_info,
+            ));
+        } else if is_streaming && page_load.is_some() {
+            // ── Case 2.5: SSR Streaming — layout loads run, page load() is background-spawned.
+            // Shell renders immediately; resolved Props are streamed as a Silcrow.patch() call.
+            out.push_str(&emit_streaming_handler(
                 mod_name,
                 render_fn,
                 error_mod,
@@ -1478,6 +1525,137 @@ fn emit_ssg_prerender_dynamic_block(
 
     out.push_str("        }\n");
     out.push_str("    }\n");
+    out
+}
+
+// ── SSR Streaming handler (Case 2.5) ─────────────────────────────────────
+
+/// Emit the handler body for a STREAMING page.
+///
+/// Layout loads run sequentially (to preserve `req.locals` propagation semantics).
+/// The page's own `load()` is spawned in the background immediately after layout loads
+/// complete. The shell renders with layout data + default page props and is flushed
+/// to the client right away. When `load()` resolves, the full `Props` is serialized
+/// as JSON and streamed as `<script>window.__ps({...})</script>` — a single
+/// `Silcrow.patch(props, document.body)` call that patches all reactive bindings.
+///
+/// The streaming shim `window.__ps` is injected before `</head>` in the shell HTML.
+fn emit_streaming_handler(
+    mod_name: &str,
+    render_fn: &str,
+    error_mod: Option<&str>,
+    loading_mod: Option<&str>,
+    page_sig: LoadSignature,
+    active_chain: &[(usize, &str, &Vec<String>, LoadSignature)],
+    chain_info: Option<&LayoutFieldsInfo>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+    out.push_str("            let __resp_handle = req.res.clone();\n");
+
+    let any_layout_load = !active_chain.is_empty();
+
+    // Layout loads run first, each getting a clone of req so the original is available
+    // for the page spawn (and so layout-set locals are visible to the page).
+    for (idx, layout_mod, _, lsig) in active_chain {
+        let req_arg = if lsig.wants_req { "req.clone()" } else { "" };
+        let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
+        let awaited = if lsig.is_async {
+            format!("{call_expr}.await")
+        } else {
+            call_expr
+        };
+        let var = format!("layout_data_{idx}");
+        if lsig.returns_result {
+            let _ = writeln!(out, "            let {var} = match {awaited} {{");
+            out.push_str("                Ok(p) => p,\n");
+            out.push_str(&emit_error_branch(error_mod));
+            out.push_str("            };\n");
+        } else {
+            let _ = writeln!(out, "            let {var} = {awaited};");
+        }
+    }
+
+    // Spawn page load() in the background; original req is moved in.
+    let page_req_arg = if page_sig.wants_req { "req" } else { "" };
+    let page_call = format!("__pilcrow_gen::{mod_name}::load({page_req_arg})");
+    let page_inner = if page_sig.is_async {
+        format!("{page_call}.await")
+    } else {
+        page_call
+    };
+    let _ = writeln!(
+        out,
+        "            let __page_handle = ::pilcrow_web::tokio::spawn(async move {{ {page_inner} }});"
+    );
+
+    // Build shell props: layout fields from their loads + default values for page fields.
+    if any_layout_load {
+        let info = chain_info.expect("chain_info present when active_chain is non-empty");
+        let _ = writeln!(
+            out,
+            "            let __shell_props = __pilcrow_gen::{mod_name}::__MergedProps {{"
+        );
+        for (idx, _, field_names, _) in active_chain {
+            let var = format!("layout_data_{idx}");
+            for field in *field_names {
+                let _ = writeln!(out, "                {field}: {var}.{field},");
+            }
+        }
+        for field in &info.page_field_names {
+            let _ = writeln!(out, "                {field}: Default::default(),");
+        }
+        out.push_str("            };\n");
+    } else {
+        let _ = writeln!(
+            out,
+            "            let __shell_props = __pilcrow_gen::{mod_name}::Props::default();"
+        );
+    }
+
+    // Render shell immediately.
+    let _ = writeln!(
+        out,
+        "            let __shell_html = __pilcrow_gen::{mod_name}::{render_fn}(__shell_props).expect(\"template render failed\");"
+    );
+
+    // Append loading skeleton if present (wraps __shell_html variable).
+    if let Some(lmod) = loading_mod {
+        let lrender = format!("render_{lmod}");
+        let _ = writeln!(
+            out,
+            "            let __loading_html = __pilcrow_gen::{lmod}::{lrender}(__pilcrow_gen::{lmod}::Props {{}}).unwrap_or_default();"
+        );
+        out.push_str("            let __shell_html = ::std::format!(\"{}{}{}{}{}\" ,__shell_html, \"<template id=\\\"__pilcrow_loading\\\" hidden>\", __loading_html, \"</template>\", \"\");\n");
+    }
+
+    // Inject streaming shim (`window.__ps`) before </head>.
+    let shim = "<script>window.__ps=function(v){Silcrow.patch(v,document.body)}</script>";
+    let shim_lit = rust_string(shim);
+    let _ = writeln!(out, "            const __STREAMING_SHIM: &str = {shim_lit};");
+    out.push_str("            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n");
+    out.push_str("                let mut __s = String::with_capacity(__shell_html.len() + __STREAMING_SHIM.len());\n");
+    out.push_str("                __s.push_str(&__shell_html[..__pos]);\n");
+    out.push_str("                __s.push_str(__STREAMING_SHIM);\n");
+    out.push_str("                __s.push_str(&__shell_html[__pos..]);\n");
+    out.push_str("                __s\n");
+    out.push_str("            } else {\n");
+    out.push_str("                ::std::format!(\"{}{}\", __STREAMING_SHIM, __shell_html)\n");
+    out.push_str("            };\n");
+
+    // Future that resolves the page Props to JSON once load() completes.
+    out.push_str("            let __page_json_fut = async move {\n");
+    out.push_str("                match __page_handle.await {\n");
+    out.push_str("                    ::std::result::Result::Ok(::std::result::Result::Ok(page_data)) =>\n");
+    out.push_str("                        ::pilcrow_web::__serialize_page_props(page_data),\n");
+    out.push_str("                    _ => ::std::string::String::new(),\n");
+    out.push_str("                }\n");
+    out.push_str("            };\n");
+
+    out.push_str("            let mut __response = ::pilcrow_web::__streaming_props_response(__shell_html, __page_json_fut);\n");
+    out.push_str("            __resp_handle.apply_to(&mut __response);\n");
+    out.push_str("            __response\n");
+
     out
 }
 
