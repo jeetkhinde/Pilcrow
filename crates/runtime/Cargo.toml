@@ -21,6 +21,7 @@ serde_json = "1"
 urlencoding = "2.1"
 serde_urlencoded = "0.7"
 crc32fast = "1"
+notify = "6"
 tracing = "0.1"
 tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["trace"] }

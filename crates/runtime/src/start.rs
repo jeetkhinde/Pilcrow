@@ -14,7 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
-use crate::dev::{dev_inject_layer, dev_reload_handler};
+use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
 use crate::isr::{IsrCache, IsrHandle};
 
 const REQUEST_TIMEOUT_SECS: u64 = 30;
@@ -66,9 +66,18 @@ where
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
     let mut app = app.route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler));
-    if dev_mode {
+
+    let dev_state = if dev_mode {
+        let state = DevState::new();
+        let src_dir = std::env::current_dir()
+            .unwrap_or_default()
+            .join("src");
+        spawn_css_watcher(state.sender(), src_dir);
         app = app.route("/__pilcrow/dev-reload", axum::routing::get(dev_reload_handler));
-    }
+        Some(state)
+    } else {
+        None
+    };
 
     let app = app
         .layer(axum::Extension(config))
@@ -87,9 +96,10 @@ where
         )
         .layer(TraceLayer::new_for_http());
 
-    let app = if dev_mode {
-        tracing::info!("dev mode: live reload active");
-        app.layer(axum::middleware::from_fn(dev_inject_layer))
+    let app = if let Some(state) = dev_state {
+        tracing::info!("dev mode: live reload + CSS hot swap active");
+        app.layer(axum::Extension(state))
+           .layer(axum::middleware::from_fn(dev_inject_layer))
     } else {
         app
     };

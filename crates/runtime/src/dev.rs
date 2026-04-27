@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -6,54 +7,167 @@ use std::time::Duration;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
-// ── SSE stream ─────────────────────────────────────────────────
+// ── Dev events ─────────────────────────────────────────────────
 
-/// Yields a single `custom/reload` event on connect then stays pending forever.
-/// `KeepAlive` injects SSE comment frames to keep the connection alive.
-/// silcrow.js reconnects with exponential backoff when the server restarts —
-/// the next `custom/reload` event signals the browser to call `location.reload()`.
-pub(crate) struct DevReloadStream {
-    sent: bool,
+#[derive(Clone, Debug)]
+pub(crate) enum DevEvent {
+    CssReload { path: String },
 }
 
-impl Stream for DevReloadStream {
-    type Item = Result<Event, Infallible>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if !self.sent {
-            self.sent = true;
-            Poll::Ready(Some(Ok(Event::default()
+impl DevEvent {
+    fn to_sse(self) -> Event {
+        match self {
+            DevEvent::CssReload { path } => Event::default()
                 .event("custom")
-                .data(r#"{"event":"reload","data":{}}"#))))
-        } else {
-            Poll::Pending
+                .data(serde_json::json!({
+                    "event": "css-reload",
+                    "data": { "path": path }
+                }).to_string()),
         }
     }
 }
 
-/// `GET /__pilcrow/dev-reload` — SSE endpoint for live reload in dev mode.
+// ── DevState (shared across SSE connections) ───────────────────
+
+/// Shared dev-mode state. Injected as an axum `Extension` in dev builds.
+/// Each SSE connection subscribes to `tx` to receive live events.
+#[derive(Clone)]
+pub(crate) struct DevState {
+    tx: broadcast::Sender<DevEvent>,
+}
+
+impl DevState {
+    pub(crate) fn new() -> Self {
+        let (tx, _) = broadcast::channel(64);
+        Self { tx }
+    }
+
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<DevEvent> {
+        self.tx.subscribe()
+    }
+
+    pub(crate) fn sender(&self) -> broadcast::Sender<DevEvent> {
+        self.tx.clone()
+    }
+}
+
+// ── SSE stream ─────────────────────────────────────────────────
+
+/// Stream for `GET /__pilcrow/dev-reload`.
 ///
-/// Sends a silcrow `custom/reload` event on every new connection. The injected
-/// client script (`DEV_INJECTION`) listens for `silcrow:sse:reload` and calls
-/// `location.reload()` on reconnect (i.e. after the server restarts).
-pub async fn dev_reload_handler() -> Sse<DevReloadStream> {
-    Sse::new(DevReloadStream { sent: false }).keep_alive(
+/// Yields a `custom/reload` event on first poll (for the reconnect-reload pattern),
+/// then forwards any [`DevEvent`]s broadcast by the CSS file watcher.
+/// `BroadcastStream` / `BroadcastStreamRecvError` lags are silently skipped.
+pub(crate) struct DevSseStream {
+    /// `true` until the initial reconnect-reload event has been yielded.
+    initial: bool,
+    inner: BroadcastStream<DevEvent>,
+}
+
+impl Stream for DevSseStream {
+    type Item = Result<Event, Infallible>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        if this.initial {
+            this.initial = false;
+            return Poll::Ready(Some(Ok(Event::default()
+                .event("custom")
+                .data(r#"{"event":"reload","data":{}}"#))));
+        }
+
+        loop {
+            match Pin::new(&mut this.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(ev))) => return Poll::Ready(Some(Ok(ev.to_sse()))),
+                Poll::Ready(Some(Err(_lagged))) => continue,
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+pub async fn dev_reload_handler(
+    axum::Extension(state): axum::Extension<DevState>,
+) -> Sse<DevSseStream> {
+    Sse::new(DevSseStream {
+        initial: true,
+        inner: BroadcastStream::new(state.subscribe()),
+    })
+    .keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("heartbeat"),
     )
 }
 
+// ── CSS file watcher ───────────────────────────────────────────
+
+/// Spawns a background OS thread that watches `src_dir` for CSS file changes
+/// and broadcasts [`DevEvent::CssReload`] to all connected SSE clients.
+///
+/// Runs as a plain OS thread (not tokio) to avoid async watcher complexity.
+/// The broadcast sender is `Send + Clone` so crossing the thread boundary is safe.
+pub(crate) fn spawn_css_watcher(tx: broadcast::Sender<DevEvent>, src_dir: PathBuf) {
+    std::thread::spawn(move || {
+        use notify::{EventKind, RecursiveMode, Watcher};
+
+        let (sync_tx, sync_rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(sync_tx) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!("dev: CSS watcher init failed: {e}");
+                return;
+            }
+        };
+
+        if let Err(e) = watcher.watch(&src_dir, RecursiveMode::Recursive) {
+            tracing::warn!("dev: CSS watcher watch({}) failed: {e}", src_dir.display());
+            return;
+        }
+
+        tracing::debug!("dev: CSS watcher active on {}", src_dir.display());
+
+        for result in sync_rx {
+            let event = match result {
+                Ok(e) => e,
+                Err(e) => { tracing::warn!("dev: CSS watch error: {e}"); continue; }
+            };
+
+            if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+                continue;
+            }
+
+            for path in &event.paths {
+                if path.extension().map(|e| e == "css").unwrap_or(false) {
+                    let filename = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "styles.css".to_string());
+
+                    tracing::debug!("dev: CSS changed — {filename}");
+                    let _ = tx.send(DevEvent::CssReload { path: filename });
+                }
+            }
+        }
+    });
+}
+
 // ── HTML injection middleware ───────────────────────────────────
 
 /// Injected before `</body>` in every `text/html` response in dev mode.
 ///
-/// - The hidden `<div s-sse>` opens the silcrow SSE connection. silcrow handles
-///   reconnection automatically (exponential backoff 1s → 2s → 4s → … max 30s).
-/// - The script listens for `silcrow:sse:reload` (fired by the custom event type).
-///   `c` tracks whether we were previously connected — first connect is a no-op,
-///   reconnect after server restart triggers `location.reload()`.
+/// - The hidden `<div s-sse>` opens the silcrow SSE connection on the `/__pilcrow/dev-reload`
+///   endpoint. silcrow auto-reconnects after a server restart (exponential backoff).
+/// - `silcrow:sse:reload` — first connect sets `c=true` (no-op); every reconnect
+///   after a server restart calls `location.reload()`.
+/// - `silcrow:sse:css-reload` — reinjects the matching `<link>` stylesheet with a
+///   cache-busted `?t=` query, swapping it in without a full page reload.
+///   Matches on filename so it works regardless of the URL path structure.
 const DEV_INJECTION: &str = concat!(
     r#"<div id="__pilcrow_dev" s-sse="/__pilcrow/dev-reload" style="display:none"></div>"#,
     "<script>(function(){",
@@ -61,11 +175,17 @@ const DEV_INJECTION: &str = concat!(
     "document.addEventListener('silcrow:sse:reload',function(){",
     "if(c){location.reload();}else{c=true;}",
     "});",
+    "document.addEventListener('silcrow:sse:css-reload',function(e){",
+    "var f=e.detail&&e.detail.path;if(!f)return;",
+    "document.querySelectorAll('link[rel=\"stylesheet\"]').forEach(function(l){",
+    "var lf=l.href.split('?')[0].split('/').pop();",
+    "if(lf===f){var n=l.cloneNode();n.href=l.href.split('?')[0]+'?t='+Date.now();",
+    "l.after(n);n.onload=function(){l.remove();};}",
+    "});",
+    "});",
     "})();</script>",
 );
 
-/// Tower middleware that appends [`DEV_INJECTION`] into `text/html` responses.
-/// Non-HTML responses (JSON, SSE streams, assets) are passed through unmodified.
 pub async fn dev_inject_layer(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -96,7 +216,6 @@ pub async fn dev_inject_layer(
         html.push_str(DEV_INJECTION);
     }
 
-    // Content-Length is stale after injection — remove it; transport will handle framing.
     parts.headers.remove(CONTENT_LENGTH);
     axum::response::Response::from_parts(parts, axum::body::Body::from(html))
 }

@@ -10,9 +10,12 @@ pub fn handle_dev(_args: &[String]) -> Result<(), String> {
         .unwrap_or(false);
 
     if has_watch {
-        println!("  pilcrow dev  (cargo-watch — reloads on every save)");
+        println!("  pilcrow dev  (cargo-watch — live reload + CSS hot swap)");
+        // Exclude *.css from triggering a full server restart.
+        // The server's own notify watcher handles CSS changes in-process
+        // and hot-swaps stylesheets without a reload.
         let status = Command::new("cargo")
-            .args(["watch", "-s", "cargo run"])
+            .args(["watch", "-i", "*.css", "-s", "cargo run"])
             .env("PILCROW_DEV", "1")
             .status()
             .map_err(|e| format!("failed to run cargo watch: {e}"))?;
