@@ -14,6 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
+use crate::dev::{dev_inject_layer, dev_reload_handler};
 use crate::isr::{IsrCache, IsrHandle};
 
 const REQUEST_TIMEOUT_SECS: u64 = 30;
@@ -59,11 +60,17 @@ where
         _ => IsrCache::new(),
     });
 
+    let dev_mode = std::env::var("PILCROW_DEV").is_ok();
+
     prerender_fn(Arc::clone(&isr_cache)).await;
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
+    let mut app = app.route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler));
+    if dev_mode {
+        app = app.route("/__pilcrow/dev-reload", axum::routing::get(dev_reload_handler));
+    }
+
     let app = app
-        .route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler))
         .layer(axum::Extension(config))
         .layer(axum::Extension(http))
         .layer(axum::Extension(isr_handle))
@@ -79,6 +86,13 @@ where
                 .layer(TimeoutLayer::new(Duration::from_secs(REQUEST_TIMEOUT_SECS))),
         )
         .layer(TraceLayer::new_for_http());
+
+    let app = if dev_mode {
+        tracing::info!("dev mode: live reload active");
+        app.layer(axum::middleware::from_fn(dev_inject_layer))
+    } else {
+        app
+    };
 
     adapter.serve(&bind_addr, app).await;
 }

@@ -2,6 +2,7 @@
 
 pub mod adapter;
 pub mod assets;
+pub(crate) mod dev;
 pub mod deferred;
 pub mod context;
 pub mod csrf;

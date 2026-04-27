@@ -1,5 +1,6 @@
 use std::env;
 
+mod dev;
 mod export;
 mod scaffold;
 
@@ -15,6 +16,12 @@ fn main() {
             if let Err(err) = scaffold::handle_new(&args) {
                 eprintln!("scaffold failed: {err}");
                 eprintln!("Usage: pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
+                std::process::exit(1);
+            }
+        }
+        "dev" => {
+            if let Err(err) = dev::handle_dev(&args) {
+                eprintln!("dev server failed: {err}");
                 std::process::exit(1);
             }
         }
@@ -35,5 +42,6 @@ fn main() {
 fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
+    eprintln!("  pilcrow-cli dev");
     eprintln!("  pilcrow-cli export [<dir>]");
 }
