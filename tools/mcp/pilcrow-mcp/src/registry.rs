@@ -83,16 +83,44 @@ impl Registry {
     }
 }
 
-pub fn find_project_root(start: impl AsRef<Path>) -> Option<PathBuf> {
-    let mut dir = start.as_ref().to_path_buf();
+fn is_project_root(path: &Path) -> bool {
+    path.join("Cargo.toml").exists()
+        && path.join("crates").is_dir()
+        && path.join("registry.toml").exists()
+}
+
+fn find_project_root_up(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
+    if dir.is_file() {
+        dir.pop();
+    }
     loop {
-        if dir.join("Cargo.toml").exists() && dir.join("crates").is_dir() {
-            return Some(dir);
+        if is_project_root(&dir) {
+            return Some(dir.clone());
         }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+fn find_project_root_from_env() -> Option<PathBuf> {
+    std::env::var("PILCROW_PROJECT_ROOT")
+        .ok()
+        .map(PathBuf::from)
+        .and_then(|path| find_project_root_up(&path))
+}
+
+fn find_project_root_from_exe() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| find_project_root_up(&exe))
+}
+
+pub fn find_project_root(start: impl AsRef<Path>) -> Option<PathBuf> {
+    find_project_root_up(start.as_ref())
+        .or_else(find_project_root_from_env)
+        .or_else(find_project_root_from_exe)
 }
 
 #[cfg(test)]
