@@ -94,6 +94,19 @@ pub struct GeneratedTemplatesModule {
     pub ssg_config_map: HashMap<String, SsgOpts>,
 }
 
+/// Which server hook functions are present in `src/hooks.rs`.
+///
+/// Detected at build time by scanning the file for known `pub async fn` signatures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HookFlags {
+    /// `pub async fn handle(req: Req, next: Next) -> Response` — request/response wrapping.
+    pub has_handle: bool,
+    /// `pub async fn handle_error(error: &HookError, req: &Req) -> Option<Response>` — 5xx interception.
+    pub has_handle_error: bool,
+    /// `pub async fn init()` — server startup initialisation.
+    pub has_init: bool,
+}
+
 /// Result of instrumenting a template's Rust frontmatter.
 pub struct InstrumentedFrontmatter {
     pub source: String,

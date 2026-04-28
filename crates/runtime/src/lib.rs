@@ -24,6 +24,7 @@ pub use start::{export, start, start_with_adapter, start_with_prerender};
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
 pub use context::{FormMap, Locals, Req, Res};
+pub use pilcrow_core::HookError;
 pub use csrf::csrf_middleware;
 pub use middleware::Next;
 pub use generated_routes::{

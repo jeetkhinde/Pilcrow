@@ -427,17 +427,22 @@ fn walk_dir(dir: &Path, base: &Path, files: &mut Vec<PathBuf>, filter: &IgnoreFi
                 continue;
             }
             walk_dir(&path, base, files, filter)?;
-        } else if file_type.is_file() && is_html(&path) {
+        } else if file_type.is_file() && is_markup_file(&path) {
             files.push(path);
         }
     }
     Ok(())
 }
 
-fn is_html(path: &Path) -> bool {
+fn is_markup_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("html"))
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("html")
+                || ext.eq_ignore_ascii_case("rhtml")
+                || ext.eq_ignore_ascii_case("md")
+                || ext.eq_ignore_ascii_case("mdx")
+        })
 }
 
 fn path_to_unix_slashes(path: &Path) -> String {

@@ -22,7 +22,7 @@ pub fn handle_new(args: &[String]) -> Result<(), String> {
 
     println!("created Pilcrow app at {}", root.display());
     if with_auth {
-        println!("  - auth middleware at src/middleware.rs");
+        println!("  - auth hook at src/hooks.rs");
     }
     if with_postgres {
         println!("  - postgres env in .env and Pilcrow.toml");
@@ -189,14 +189,19 @@ pub async fn greet(req: Req) -> ActionResult {
 
     if with_auth {
         fs::write(
-            root.join("src/middleware.rs"),
-            r#"use pilcrow_web::{AppError, Next, Req, Response};
-use axum::response::IntoResponse;
+            root.join("src/hooks.rs"),
+            r#"use pilcrow_web::{AppError, HookError, Next, Req, Response};
+use pilcrow_web::axum::response::IntoResponse;
 
-/// Session authentication middleware.
-/// Reads the `session` cookie, verifies it, and sets the user in `req.locals`.
-/// Protected routes (e.g. /dashboard) return 401 when no valid session is present.
-pub async fn middleware(req: Req, next: Next) -> Response {
+/// Server startup hook — runs once before the server begins accepting connections.
+/// Initialise database pools, caches, and other shared resources here.
+pub async fn init() {
+    // TODO: initialise your database pool and store it in a global or inject via locals.
+}
+
+/// Global request handler — runs for every incoming request.
+/// Set values on `req.locals` to share auth context with downstream load() and action fns.
+pub async fn handle(req: Req, next: Next) -> Response {
     let token = req.cookies.get("session").map(|c| c.value().to_string());
     match token {
         Some(_token) => {
@@ -208,6 +213,13 @@ pub async fn middleware(req: Req, next: Next) -> Response {
         }
         _ => next.run().await,
     }
+}
+
+/// Error hook — called when a route handler returns a 5xx response.
+/// Return Some(response) to render a custom error page. Return None for the default.
+pub async fn handle_error(error: &HookError, _req: &Req) -> Option<Response> {
+    pilcrow_web::tracing::error!(status = error.status, "server error: {}", error.message);
+    None
 }
 "#,
         )?;

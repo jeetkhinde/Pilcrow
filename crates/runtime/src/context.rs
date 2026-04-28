@@ -520,6 +520,48 @@ impl Req {
         }
     }
 
+    /// Construct a read-only `Req` snapshot from request `Parts` for the error handler hook.
+    ///
+    /// Called by the generated `__pilcrow_error_handler` shim before forwarding the request
+    /// to the route handler. The snapshot is passed to the user's `handle_error` hook if a
+    /// 5xx response is observed.
+    ///
+    /// - `form` is always empty (body not available at this point)
+    /// - `params` is empty (path extraction is async)
+    /// - `Locals` and `Res` are **read** from `parts.extensions` so that values set by the
+    ///   `handle` hook are visible inside `handle_error`
+    #[doc(hidden)]
+    pub fn __from_error_parts(parts: &Parts) -> Self {
+        let locals = parts.extensions.get::<Locals>().cloned().unwrap_or_default();
+        let res = parts.extensions.get::<Res>().cloned().unwrap_or_default();
+        let path = parts.uri.path().to_owned();
+        let headers = parts.headers.clone();
+        let is_enhanced = parts.headers.typed_get::<SilcrowTarget>().is_some();
+        let action = extract_action_from_query(parts.uri.query());
+        let query = parse_query_multi(parts.uri.query());
+        let locale = parts
+            .extensions
+            .get::<CurrentLocale>()
+            .map(|c| c.0.clone())
+            .unwrap_or_default();
+        let i18n = parts.extensions.get::<I18nBundles>().cloned();
+        Req {
+            params: HashMap::new(),
+            query,
+            form: FormMap::default(),
+            cookies: CookieJar::new(),
+            headers,
+            path,
+            is_enhanced,
+            locals,
+            res,
+            cache: IsrHandle::default(),
+            locale,
+            i18n,
+            action,
+        }
+    }
+
     /// Translate a message key using the request locale.
     ///
     /// This is the low-level translation primitive. Prefer the generated `t::` functions

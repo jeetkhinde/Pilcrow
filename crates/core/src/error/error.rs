@@ -2,6 +2,25 @@ use thiserror::Error;
 
 pub type AppResult<T> = Result<T, AppError>;
 
+/// Passed to the `handle_error` hook when an uncaught server error (5xx) occurs.
+///
+/// ```rust,ignore
+/// // src/hooks.rs
+/// pub async fn handle_error(error: &HookError, req: &Req) -> Option<Response> {
+///     tracing::error!(status = error.status, "{}", error.message);
+///     None  // let Pilcrow render its default 500 page
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct HookError {
+    /// HTTP status code of the error response (500, 502, 503, etc.).
+    pub status: u16,
+    /// Canonical reason phrase, e.g. `"Internal Server Error"`.
+    pub message: String,
+    /// Optional machine-readable source tag (e.g. the panic message), if captured.
+    pub source: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("not found: {0}")]

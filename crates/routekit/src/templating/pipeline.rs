@@ -8,7 +8,7 @@ use crate::routing::discovery::{
 };
 use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
-    GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, TemplateCodegenInput,
+    GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, HookFlags, TemplateCodegenInput,
     build_generated_fragment_manifest, write_generated_api_routes_module,
     write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
 };
@@ -338,8 +338,8 @@ pub fn compile_to_out_dir_with_config(
         })
         .collect();
 
-    // Detect optional src/middleware.rs — if present, a global axum layer is generated.
-    let has_middleware = src_root.join("middleware.rs").exists();
+    // Detect optional src/hooks.rs and which hooks are defined inside it.
+    let hook_flags = detect_hook_flags(&src_root.join("hooks.rs"));
 
     // Merge page routes and fragment routes for the app module.
     let all_page_routes: Vec<GeneratedPageRoute> = generated_routes
@@ -363,7 +363,7 @@ pub fn compile_to_out_dir_with_config(
         &templates_output.deferred_html_fields_map,
         &templates_output.isr_config_map,
         &templates_output.ssg_config_map,
-        has_middleware,
+        hook_flags,
         src_root,
         out_dir,
     )?;
@@ -497,6 +497,32 @@ fn scan_for_island_dirs(
     Ok(())
 }
 
+/// Scan `src/hooks.rs` for known hook function signatures.
+///
+/// Detection is text-based: we look for `pub async fn <name>(` at the start of a line
+/// (after optional leading whitespace). This matches idiomatic `hooks.rs` files without
+/// pulling in the full syn parser for a simple presence check.
+pub fn detect_hook_flags(hooks_path: &Path) -> HookFlags {
+    let src = match fs::read_to_string(hooks_path) {
+        Ok(s) => s,
+        Err(_) => return HookFlags::default(),
+    };
+    HookFlags {
+        has_handle: src.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("pub async fn handle(") || t.starts_with("pub async fn handle (")
+        }),
+        has_handle_error: src.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("pub async fn handle_error(") || t.starts_with("pub async fn handle_error (")
+        }),
+        has_init: src.lines().any(|l| {
+            let t = l.trim_start();
+            t.starts_with("pub async fn init(") || t.starts_with("pub async fn init (")
+        }),
+    }
+}
+
 /// Canonical directories and files that should trigger rebuilds in Cargo build scripts.
 pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     let src_root = src_root.as_ref();
@@ -505,7 +531,7 @@ pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
         src_root.join("ui"),
         src_root.join("api"),
         src_root.join("params"),
-        src_root.join("middleware.rs"),
+        src_root.join("hooks.rs"),
     ]
 }
 

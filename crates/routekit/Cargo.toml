@@ -24,6 +24,8 @@ toml = "0.8"
 globset = "0.4.18"
 fluent-syntax = "0.11"
 urlencoding = "2.1"
+markdown = "1.0.0-alpha.18"
+serde_yaml = "0.9"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

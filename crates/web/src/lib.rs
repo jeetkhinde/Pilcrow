@@ -35,7 +35,7 @@ pub use runtime::assets;
 
 // ── Domain primitives (from pilcrow-core) ────────────────────
 pub use pilcrow_core::{
-    ApiEnvelope, AppError, AppResult, BackendConfig, Meta, PilcrowConfig, WebConfig,
+    ApiEnvelope, AppError, AppResult, BackendConfig, HookError, Meta, PilcrowConfig, WebConfig,
 };
 
 pub use pilcrow_client::PilcrowClient;
@@ -136,6 +136,7 @@ macro_rules! pilcrow_app {
         /// `pilcrow_web::start(pilcrow_router()).await` when your app has pages with
         /// `pub const PRERENDER: bool = true`.
         async fn pilcrow_start(router: ::pilcrow_web::axum::Router) {
+            __pilcrow_app::__pilcrow_init().await;
             ::pilcrow_web::start_with_prerender(router, |cache| async move {
                 __pilcrow_app::__pilcrow_prerender_all(&cache).await
             })

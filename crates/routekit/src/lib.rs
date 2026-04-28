@@ -125,6 +125,8 @@ impl Route {
         let without_ext = relative
             .strip_suffix(".rhtml")
             .or_else(|| relative.strip_suffix(".html"))
+            .or_else(|| relative.strip_suffix(".md"))
+            .or_else(|| relative.strip_suffix(".mdx"))
             .unwrap_or(relative);
 
         let filename = without_ext.split('/').next_back().unwrap_or("");
