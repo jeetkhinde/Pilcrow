@@ -15,6 +15,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
 use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
+use crate::i18n::{I18nBundles, locale_middleware_impl};
 use crate::isr::{IsrCache, IsrHandle};
 use crate::sw::{sw_handler, sw_inject_layer};
 
@@ -52,6 +53,27 @@ where
     let bind_addr = config.web_bind_addr();
     let http = reqwest::Client::new();
 
+    // Load i18n bundles when [i18n] is configured in Pilcrow.toml.
+    let i18n_bundles: Option<I18nBundles> = if !config.i18n.locales.is_empty() {
+        let locales_dir = std::env::current_dir()
+            .unwrap_or_default()
+            .join("src")
+            .join(&config.i18n.locales_dir);
+        let bundles = I18nBundles::load(
+            &locales_dir,
+            &config.i18n.locales,
+            &config.i18n.default_locale,
+        );
+        tracing::info!(
+            "i18n: {} locale(s) loaded (default: {})",
+            config.i18n.locales.len(),
+            config.i18n.default_locale
+        );
+        Some(bundles)
+    } else {
+        None
+    };
+
     let isr_cache = Arc::new(match &config.cache.provider {
         CacheProvider::Filesystem => {
             let dir = config.cache.dir.as_deref().unwrap_or(".pilcrow-cache");
@@ -86,7 +108,7 @@ where
         None
     };
 
-    let app = app
+    let mut app = app
         .layer(axum::Extension(config))
         .layer(axum::Extension(http))
         .layer(axum::Extension(isr_handle))
@@ -102,6 +124,19 @@ where
                 .layer(TimeoutLayer::new(Duration::from_secs(REQUEST_TIMEOUT_SECS))),
         )
         .layer(TraceLayer::new_for_http());
+
+    // i18n: inject bundles as extension (for handler access via Req.i18n) and add the
+    // locale-prefix rewrite middleware (outermost, so it runs before routing).
+    if let Some(bundles) = i18n_bundles {
+        let b = bundles.clone();
+        app = app
+            .layer(axum::Extension(bundles))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                locale_middleware_impl(req, next, b.clone())
+            }));
+    }
+
+    let app = app;
 
     let app = if let Some(state) = dev_state {
         tracing::info!("dev mode: live reload + CSS hot swap active");

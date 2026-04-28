@@ -14,6 +14,43 @@ pub struct PilcrowConfig {
     pub cache: CacheConfig,
     #[serde(default)]
     pub service_worker: ServiceWorkerConfig,
+    #[serde(default)]
+    pub i18n: I18nConfig,
+}
+
+/// Internationalisation configuration. Opt-in: leave `locales` empty to disable i18n entirely.
+///
+/// ```toml
+/// [i18n]
+/// default_locale = "en"
+/// locales        = ["en", "de", "fr"]
+/// locales_dir    = "locales"   # relative to src/; default is "locales"
+/// ```
+///
+/// - The default locale is served at bare URLs (`/products`).
+/// - All other locales are served with a URL prefix (`/de/products`).
+/// - `.ftl` files are loaded from `src/{locales_dir}/{locale}/*.ftl` at startup.
+#[derive(Debug, Clone, Deserialize)]
+pub struct I18nConfig {
+    /// The locale served at bare URLs (no prefix). Default: `"en"`.
+    #[serde(default = "default_locale_str")]
+    pub default_locale: String,
+    /// All supported locale codes. When empty, i18n is disabled.
+    #[serde(default)]
+    pub locales: Vec<String>,
+    /// Directory containing per-locale `.ftl` files, relative to `src/`. Default: `"locales"`.
+    #[serde(default = "default_locales_dir")]
+    pub locales_dir: String,
+}
+
+impl Default for I18nConfig {
+    fn default() -> Self {
+        Self {
+            default_locale: default_locale_str(),
+            locales: Vec::new(),
+            locales_dir: default_locales_dir(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -213,6 +250,14 @@ fn get_env_u16(key: &str) -> io::Result<Option<u16>> {
         }),
         None => Ok(None),
     }
+}
+
+fn default_locale_str() -> String {
+    "en".to_string()
+}
+
+fn default_locales_dir() -> String {
+    "locales".to_string()
 }
 
 fn default_revalidate_timeout_secs() -> u64 {

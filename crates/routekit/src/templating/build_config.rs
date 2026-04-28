@@ -15,6 +15,46 @@ pub struct PilcrowBuildConfig {
     /// Routing configuration (e.g. directories to ignore).
     #[serde(default)]
     pub routing: RoutingConfig,
+
+    /// i18n configuration — generates typed `t::` translation functions from `.ftl` files.
+    #[serde(default)]
+    pub i18n: I18nBuildConfig,
+}
+
+/// Build-time i18n configuration. Mirrors `I18nConfig` in `pilcrow-core`.
+///
+/// The build pipeline reads FTL files from `src/{locales_dir}/{default_locale}/*.ftl`
+/// and generates a `pub mod t { ... }` with one typed function per message key.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct I18nBuildConfig {
+    /// Default locale code (e.g. `"en"`). FTL files from this locale are used to derive
+    /// the generated `t::` function signatures.
+    #[serde(default = "default_locale_str")]
+    pub default_locale: String,
+    /// All supported locale codes. When empty, an empty `pub mod t {}` is emitted.
+    #[serde(default)]
+    pub locales: Vec<String>,
+    /// Directory containing per-locale `.ftl` files, relative to `src/`. Default: `"locales"`.
+    #[serde(default = "default_locales_dir")]
+    pub locales_dir: String,
+}
+
+impl Default for I18nBuildConfig {
+    fn default() -> Self {
+        Self {
+            default_locale: default_locale_str(),
+            locales: Vec::new(),
+            locales_dir: default_locales_dir(),
+        }
+    }
+}
+
+fn default_locale_str() -> String {
+    "en".to_string()
+}
+
+fn default_locales_dir() -> String {
+    "locales".to_string()
 }
 
 /// Routing configuration.

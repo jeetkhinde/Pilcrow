@@ -487,8 +487,20 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-i18n",
+            title: "i18n: I18nBundles, locale_middleware_impl, FmtHelper",
+            path: "crates/runtime/src/i18n.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "routekit-i18n-codegen",
+            title: "i18n codegen: FTL parser → pub mod t typed translation helpers",
+            path: "crates/routekit/src/templating/i18n_codegen.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
             id: "core-config",
-            title: "PilcrowConfig, ServiceWorkerConfig, SwStrategy, CacheConfig",
+            title: "PilcrowConfig, I18nConfig, ServiceWorkerConfig, SwStrategy, CacheConfig",
             path: "crates/core/src/config/config.rs",
             category: KnowledgeCategory::RuntimeApi,
         },

@@ -50,6 +50,12 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
         manifest_dir.join("Pilcrow.toml").display()
     );
 
+    // Watch the locales directory when i18n is configured.
+    if !build_config.i18n.locales.is_empty() {
+        let locales_dir = src_root.join(&build_config.i18n.locales_dir);
+        println!("cargo:rerun-if-changed={}", locales_dir.display());
+    }
+
     Ok(())
 }
 

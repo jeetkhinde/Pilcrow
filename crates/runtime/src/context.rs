@@ -16,6 +16,7 @@ use headers::HeaderMapExt;
 use pilcrow_core::AppError;
 use serde::Serialize;
 
+use crate::i18n::{CurrentLocale, FmtHelper, I18nBundles};
 use crate::isr::IsrHandle;
 use crate::response::headers::*;
 use crate::response::response::{ActionResult, BaseResponse, FormErrors, ToastLevel};
@@ -393,9 +394,17 @@ pub struct Req {
     /// ISR cache handle. Use `req.cache.revalidate(path)` or
     /// `req.cache.revalidate_tag(tag)` to bust the cache from within an action.
     pub cache: IsrHandle,
+    /// The detected locale for this request (e.g. `"en"`, `"de"`).
+    ///
+    /// Populated by the i18n middleware from the URL prefix. When i18n is not
+    /// configured, this is an empty string. Use `t::key(&req, ...)` (generated typed
+    /// helpers) or `req.__t("key", &[("arg", &val)])` for direct translation.
+    pub locale: String,
     /// The named action, parsed from `?/<name>`. `None` when the URL has no
     /// action marker (default POST / GET). See [`Req::action`].
     action: Option<String>,
+    /// Pre-loaded Fluent bundles. `None` when i18n is not configured.
+    i18n: Option<I18nBundles>,
 }
 
 impl Req {
@@ -505,8 +514,38 @@ impl Req {
             locals: common.locals,
             res: common.res,
             cache: common.cache,
+            locale: common.locale,
+            i18n: common.i18n,
             action: common.action,
         }
+    }
+
+    /// Translate a message key using the request locale.
+    ///
+    /// This is the low-level translation primitive. Prefer the generated `t::` functions
+    /// (e.g. `t::greeting(&req, &user.name)`) which are compile-time-safe and typed.
+    ///
+    /// Returns the key verbatim when i18n is not configured or the key is missing.
+    ///
+    /// ```rust,ignore
+    /// let msg = req.__t("greeting", &[("name", &user.name)]);
+    /// ```
+    #[doc(hidden)]
+    pub fn __t(&self, key: &str, args: &[(&str, &str)]) -> String {
+        match &self.i18n {
+            Some(bundles) => bundles.translate(&self.locale, key, args),
+            None => key.to_string(),
+        }
+    }
+
+    /// Return a locale-aware formatting helper for this request.
+    ///
+    /// ```rust,ignore
+    /// let formatted = req.fmt().number(1_234_567); // "1,234,567" (en) or "1.234.567" (de)
+    /// let price    = req.fmt().float(19.99, 2);
+    /// ```
+    pub fn fmt(&self) -> FmtHelper<'_> {
+        FmtHelper { locale: &self.locale }
     }
 
     /// Return a builder for constructing a synthetic `Req` in unit tests.
@@ -547,6 +586,8 @@ impl Req {
             locals,
             res: Res::default(),
             cache: IsrHandle::default(),
+            locale: String::new(),
+            i18n: None,
             action: None,
         }
     }
@@ -563,6 +604,7 @@ pub struct ReqBuilder {
     headers: HeaderMap,
     path: String,
     is_enhanced: bool,
+    locale: String,
 }
 
 impl ReqBuilder {
@@ -575,7 +617,14 @@ impl ReqBuilder {
             headers: HeaderMap::new(),
             path: "/".to_string(),
             is_enhanced: false,
+            locale: String::new(),
         }
+    }
+
+    /// Set the locale for this test request (e.g. `"de"` to test German translations).
+    pub fn locale(mut self, locale: &str) -> Self {
+        self.locale = locale.to_string();
+        self
     }
 
     /// Set a URL path param (e.g. `:id`).
@@ -627,6 +676,8 @@ impl ReqBuilder {
             locals: Locals::default(),
             res: Res::default(),
             cache: IsrHandle::default(),
+            locale: self.locale,
+            i18n: None,
             action: None,
         }
     }
@@ -644,6 +695,8 @@ struct CommonParts {
     locals: Locals,
     res: Res,
     cache: IsrHandle,
+    locale: String,
+    i18n: Option<I18nBundles>,
     action: Option<String>,
 }
 
@@ -698,7 +751,17 @@ async fn extract_common_parts<S: Send + Sync>(
         .cloned()
         .unwrap_or_default();
 
-    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, cache, action }
+    // Locale — set by the i18n locale-rewrite middleware; empty when i18n is not configured.
+    let locale = parts
+        .extensions
+        .get::<CurrentLocale>()
+        .map(|c| c.0.clone())
+        .unwrap_or_default();
+
+    // i18n bundles — injected by start() when [i18n] is configured.
+    let i18n = parts.extensions.get::<I18nBundles>().cloned();
+
+    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, cache, locale, i18n, action }
 }
 
 #[async_trait]
@@ -735,6 +798,8 @@ impl<S: Send + Sync> FromRequest<S> for Req {
             locals: common.locals,
             res: common.res,
             cache: common.cache,
+            locale: common.locale,
+            i18n: common.i18n,
             action: common.action,
         })
     }

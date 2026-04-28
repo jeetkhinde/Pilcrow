@@ -9,6 +9,7 @@ pub mod deferred;
 pub mod context;
 pub mod csrf;
 pub mod generated_routes;
+pub mod i18n;
 pub mod isr;
 pub mod middleware;
 pub mod response;
@@ -57,6 +58,8 @@ pub use isr::{CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle, __isr_cach
 // ── Validation ───────────────────────────────────────────────
 pub use validator::Validator;
 pub use context::ReqBuilder;
+// ── i18n ─────────────────────────────────────────────────────
+pub use i18n::{FmtHelper, I18nBundles};
 
 // ── Internal helpers (used by ws.rs, macros, generated code) ─
 pub(crate) use sse::serialize_or_null;

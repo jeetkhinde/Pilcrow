@@ -379,6 +379,13 @@ pub fn compile_to_out_dir_with_config(
     let env_src = crate::templating::env_codegen::render_generated_env_module(&build_config.env);
     fs::write(out_dir.join("generated_env.rs"), env_src.as_bytes())?;
 
+    // Write i18n typed translation helpers: `pub mod t { pub fn greeting(req, name) -> String }`
+    let i18n_src = crate::templating::i18n_codegen::render_generated_i18n_module(
+        &build_config.i18n,
+        src_root,
+    );
+    fs::write(out_dir.join("generated_i18n.rs"), i18n_src.as_bytes())?;
+
     files.sort_by(|a, b| {
         a.template_output_path
             .cmp(&b.template_output_path)

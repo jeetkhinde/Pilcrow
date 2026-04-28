@@ -74,6 +74,8 @@ pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, defe
 
 // ── ISR (Incremental Static Regeneration) ────────────────────
 pub use runtime::{IsrCache, IsrCacheState, IsrHandle};
+// ── i18n ─────────────────────────────────────────────────────
+pub use runtime::{FmtHelper, I18nBundles};
 
 // ── Doc-hidden re-exports for generated code ────────────────
 #[doc(hidden)]
@@ -120,6 +122,9 @@ macro_rules! pilcrow_app {
 
         // Typed env structs: `env::Private::load()?` → `env::Private { database_url: .. }`
         include!(concat!(env!("OUT_DIR"), "/generated_env.rs"));
+
+        // Typed i18n helpers: `t::greeting(&req, &name)` → `String`
+        include!(concat!(env!("OUT_DIR"), "/generated_i18n.rs"));
 
         fn pilcrow_router() -> ::pilcrow_web::axum::Router {
             __pilcrow_app::build_router()

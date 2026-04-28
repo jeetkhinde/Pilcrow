@@ -18,3 +18,8 @@ dir = "widgets"
 
 [routing]
 ignore_directories = ["Cards"]
+
+[i18n]
+default_locale = "en"
+locales        = ["en", "de"]
+locales_dir    = "locales"
