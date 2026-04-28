@@ -649,6 +649,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Tests,
         },
         DocumentSpec {
+            id: "routekit-markdown",
+            title: "Markdown transpiler: GFM .md/.mdx → Askama HTML (markdown.rs)",
+            path: "crates/routekit/src/templating/markdown.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
             id: "runtime-context-tests",
             title: "Runtime context tests",
             path: "crates/runtime/tests/context.rs",
