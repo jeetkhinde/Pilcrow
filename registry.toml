@@ -1730,3 +1730,75 @@ validation_rules = [
   "FTL files must be placed in src/{locales_dir}/{locale}/*.ftl.",
 ]
 scaffold_templates = ["i18n"]
+
+[[features]]
+id = "image-optimization"
+name = "Image Optimization"
+domain = "pilcrow"
+status = "stable"
+summary = "Serve optimized images via `/_image?src=&w=&q=&f=` with disk cache, concurrency control, and `<pilcrow:image>` template tag transpilation."
+spec = """
+Enable in Pilcrow.toml:
+
+```toml
+[images]
+enabled     = true
+cache_dir   = ".pilcrow-image-cache"
+domains     = []              # allowed remote domains; empty = local-only
+max_width   = 3840
+max_height  = 2160
+quality     = 80
+formats     = ["webp", "jpeg"]
+concurrency = 4
+```
+
+Use in templates:
+
+```html
+<pilcrow:image src="/public/hero.jpg" width="1200" alt="Hero" />
+<!-- transpiles to -->
+<img src="/_image?src=%2Fpublic%2Fhero.jpg&w=1200" alt="Hero" width="1200" loading="lazy" decoding="async">
+```
+
+Query parameters:
+- `src` — URL-encoded source path (required)
+- `w` — output width in pixels
+- `h` — output height in pixels
+- `q` — quality override (1-100)
+- `f` — format: `webp`, `jpeg`, `png`, or `auto` (picks from `formats` list)
+
+The endpoint caches transforms to disk (hash-sharded by 2-char prefix).
+Cache files are served with `Cache-Control: public, max-age=31536000, immutable`.
+CPU transforms run in `spawn_blocking` behind a `Semaphore(concurrency)` to prevent overload.
+"""
+canonical_usage = """
+# Pilcrow.toml
+[images]
+enabled = true
+quality = 80
+formats = ["webp", "jpeg"]
+
+# src/pages/index.html
+<pilcrow:image src="/public/product.jpg" width="600" alt="Product" class="product-img" />
+"""
+constraints = [
+  "images.enabled must be true to mount the /_image endpoint.",
+  "Remote URLs in src are blocked unless the domain is listed in images.domains.",
+  "Dynamic Askama expressions ({{ ... }}) inside src are passed verbatim to avoid double-encoding.",
+  "Cache is disk-based; ensure cache_dir is writable at runtime.",
+]
+source_refs = [
+  "crates/core/src/config/config.rs — ImageConfig",
+  "crates/runtime/src/image/handler.rs — ImageState, image_handler",
+  "crates/runtime/src/image/processor.rs — transform, cache_path, OutputFormat",
+  "crates/routekit/src/templating/compiler.rs — transpile_pilcrow_tags, parse_pilcrow_image_tag",
+  "crates/runtime/src/start.rs — /_image route wiring",
+]
+test_refs = [
+  "crates/routekit/src/templating/compiler.rs — pilcrow_image_* tests (7 tests)",
+]
+validation_rules = [
+  "images.enabled = true is required to activate the /_image route.",
+  "images.domains must be a list of hostnames (no protocol prefix).",
+]
+scaffold_templates = []

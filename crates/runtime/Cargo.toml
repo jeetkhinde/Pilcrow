@@ -35,10 +35,15 @@ tower-http = { version = "0.6", features = ["trace"] }
 axum-extra = { version = "0.9.6", features = ["cookie", "typed-header"] }
 headers = "0.4"
 bytes = "1"
-tokio = { version = "1", features = ["sync", "rt", "signal"] }
+tokio = { version = "1", features = ["sync", "rt", "signal", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 fluent-bundle = "0.15"
 unic-langid = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp", "png", "gif"] }
+sha2 = "0.10"
+hex = "0.4"
+url = "2"
+anyhow = "1"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "rustls-tls",

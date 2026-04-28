@@ -499,8 +499,20 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Routekit,
         },
         DocumentSpec {
+            id: "runtime-image",
+            title: "Image optimization: ImageState, image_handler, /_image endpoint",
+            path: "crates/runtime/src/image/handler.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "runtime-image-processor",
+            title: "Image processor: transform, cache_path, OutputFormat, resize",
+            path: "crates/runtime/src/image/processor.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "core-config",
-            title: "PilcrowConfig, I18nConfig, ServiceWorkerConfig, SwStrategy, CacheConfig",
+            title: "PilcrowConfig, I18nConfig, ImageConfig, ServiceWorkerConfig, SwStrategy, CacheConfig",
             path: "crates/core/src/config/config.rs",
             category: KnowledgeCategory::RuntimeApi,
         },

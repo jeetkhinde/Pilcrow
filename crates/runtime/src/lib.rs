@@ -10,6 +10,7 @@ pub mod context;
 pub mod csrf;
 pub mod generated_routes;
 pub mod i18n;
+pub mod image;
 pub mod isr;
 pub mod middleware;
 pub mod response;

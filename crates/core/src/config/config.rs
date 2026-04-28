@@ -16,6 +16,68 @@ pub struct PilcrowConfig {
     pub service_worker: ServiceWorkerConfig,
     #[serde(default)]
     pub i18n: I18nConfig,
+    #[serde(default)]
+    pub images: ImageConfig,
+}
+
+/// Image optimisation configuration. Disabled by default (`enabled = false`).
+///
+/// ```toml
+/// [images]
+/// enabled     = true
+/// cache_dir   = ".pilcrow-image-cache"
+/// domains     = []              # allowed remote domains; empty = local-only
+/// max_width   = 3840
+/// max_height  = 2160
+/// quality     = 75
+/// formats     = ["webp", "jpeg"]   # preference order for format=auto
+/// concurrency = 4              # max simultaneous transforms
+/// ```
+///
+/// Use `<pilcrow:image src="..." width=N alt="..." />` in templates.
+/// The framework serves optimised images at `GET /_image?src=...&w=...&f=...`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageConfig {
+    /// Whether to serve the `/_image` optimisation endpoint. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Disk directory for cached optimised images. Default: `".pilcrow-image-cache"`.
+    #[serde(default = "default_image_cache_dir")]
+    pub cache_dir: String,
+    /// Remote hostnames allowed as `src` values (e.g. `["images.cdn.com"]`).
+    /// Empty list = local images only (safer default).
+    #[serde(default)]
+    pub domains: Vec<String>,
+    /// Maximum allowed output width in pixels. Default: 3840.
+    #[serde(default = "default_max_image_dimension")]
+    pub max_width: u32,
+    /// Maximum allowed output height in pixels. Default: 2160.
+    #[serde(default = "default_max_image_dimension")]
+    pub max_height: u32,
+    /// Default JPEG/WebP quality (1–100). Default: 75.
+    #[serde(default = "default_image_quality")]
+    pub quality: u8,
+    /// Output format preference order when `f=auto`. Default: `["webp", "jpeg"]`.
+    #[serde(default = "default_image_formats")]
+    pub formats: Vec<String>,
+    /// Maximum concurrent image transforms (CPU-bound). Default: 4.
+    #[serde(default = "default_image_concurrency")]
+    pub concurrency: usize,
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cache_dir: default_image_cache_dir(),
+            domains: Vec::new(),
+            max_width: default_max_image_dimension(),
+            max_height: default_max_image_dimension(),
+            quality: default_image_quality(),
+            formats: default_image_formats(),
+            concurrency: default_image_concurrency(),
+        }
+    }
 }
 
 /// Internationalisation configuration. Opt-in: leave `locales` empty to disable i18n entirely.
@@ -282,5 +344,25 @@ fn default_backend_host() -> String {
 
 fn default_backend_port() -> u16 {
     4000
+}
+
+fn default_image_cache_dir() -> String {
+    ".pilcrow-image-cache".to_string()
+}
+
+fn default_max_image_dimension() -> u32 {
+    3840
+}
+
+fn default_image_quality() -> u8 {
+    75
+}
+
+fn default_image_formats() -> Vec<String> {
+    vec!["webp".to_string(), "jpeg".to_string()]
+}
+
+fn default_image_concurrency() -> usize {
+    4
 }
 

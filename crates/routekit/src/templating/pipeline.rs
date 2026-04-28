@@ -14,6 +14,7 @@ use crate::templating::codegen::{
 };
 use crate::templating::compiler::{
     inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
+    transpile_pilcrow_tags,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,7 +190,8 @@ pub fn compile_to_out_dir_with_config(
             let fragment_base = format!("/{url_prefix}");
             let after_islands = transpile_island_tags(&expanded, &fragment_base);
             let after_components = transpile_component_tags(&after_islands);
-            let final_template = inject_form_method_attrs(&after_components);
+            let after_pilcrow = transpile_pilcrow_tags(&after_components);
+            let final_template = inject_form_method_attrs(&after_pilcrow);
 
             if let Some(parent) = module.template_output_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -662,7 +664,8 @@ fn preprocess_discovered_sources(
         };
         let after_islands = transpile_island_tags(&expanded, &url_base);
         let after_components = transpile_component_tags(&after_islands);
-        let final_template = inject_form_method_attrs(&after_components);
+        let after_pilcrow = transpile_pilcrow_tags(&after_components);
+        let final_template = inject_form_method_attrs(&after_pilcrow);
 
         if let Some(parent) = module.template_output_path.parent() {
             fs::create_dir_all(parent)?;

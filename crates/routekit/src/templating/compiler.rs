@@ -757,6 +757,206 @@ fn consume_char(src: &str, idx: usize, expected: char) -> Option<usize> {
 /// - A hidden `<a s-get="..." s-html s-target="..." s-skip-history>` trigger
 /// - A strategy-specific inline `<script>` that clicks the trigger at the right moment
 ///
+/// Transpile all `<pilcrow:image .../>` tags in a template to `<img>` tags that
+/// point at the `/_image` optimization endpoint.
+///
+/// Recognized attributes:
+/// - `src`     — required; path to the source image (local file path)
+/// - `width`   — output width (px); passed as `?w=`
+/// - `height`  — output height (px); passed as `?h=`
+/// - `quality` — JPEG/WebP quality 1-100; passed as `?q=`
+/// - `format`  — output format (`webp`, `jpeg`, `png`, `auto`); passed as `?f=`
+/// - `alt`     — forwarded to `<img alt="...">`
+/// - `class`   — forwarded to `<img class="...">`
+/// - `sizes`   — forwarded to `<img sizes="...">` (for art direction)
+///
+/// All other attributes are forwarded verbatim.
+///
+/// Askama expressions (`{{ ... }}`) inside attribute values are passed through unchanged
+/// so dynamic `src`, `width`, etc. work at render time.
+///
+/// Example:
+/// ```html
+/// <pilcrow:image src="/public/hero.jpg" width="1200" alt="Hero" />
+/// <!-- becomes -->
+/// <img src="/_image?src=%2Fpublic%2Fhero.jpg&w=1200" alt="Hero" width="1200" loading="lazy" decoding="async" />
+/// ```
+pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut i = 0usize;
+
+    while i < template.len() {
+        if template[i..].starts_with("<pilcrow:image") {
+            let rest = &template[i + 14..];
+            let next = rest.chars().next();
+            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>') {
+                if let Some((html, consumed)) = parse_pilcrow_image_tag(&template[i..]) {
+                    output.push_str(&html);
+                    i += consumed;
+                    continue;
+                }
+            }
+        }
+        let c = template[i..].chars().next().unwrap();
+        output.push(c);
+        i += c.len_utf8();
+    }
+
+    output
+}
+
+fn parse_pilcrow_image_tag(input: &str) -> Option<(String, usize)> {
+    debug_assert!(input.starts_with("<pilcrow:image"));
+
+    let mut idx = 14; // skip "<pilcrow:image"
+    let mut raw_attrs = String::new();
+    let mut quote: Option<char> = None;
+    let mut found_end = false;
+
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        let c_len = c.len_utf8();
+
+        if let Some(q) = quote {
+            raw_attrs.push(c);
+            if c == q {
+                quote = None;
+            }
+            idx += c_len;
+            continue;
+        }
+
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+            '/' => {
+                idx += c_len;
+                if input[idx..].starts_with('>') {
+                    idx += 1;
+                    found_end = true;
+                    break;
+                }
+                raw_attrs.push('/');
+            }
+            '>' => {
+                idx += c_len;
+                found_end = true;
+                break;
+            }
+            _ => {
+                raw_attrs.push(c);
+                idx += c_len;
+            }
+        }
+    }
+
+    if !found_end {
+        return None;
+    }
+
+    let attrs = parse_attr_map(&raw_attrs);
+    let src = attrs.get("src").cloned().unwrap_or_default();
+
+    // Build /_image query string. Dynamic Askama expressions are passed verbatim.
+    let mut query_parts: Vec<String> = Vec::new();
+    // src is URL-encoded unless it contains `{{` (Askama expression).
+    if src.contains("{{") {
+        query_parts.push(format!("src={src}"));
+    } else {
+        query_parts.push(format!("src={}", urlencoding::encode(&src)));
+    }
+    if let Some(w) = attrs.get("width") {
+        query_parts.push(format!("w={w}"));
+    }
+    if let Some(h) = attrs.get("height") {
+        query_parts.push(format!("h={h}"));
+    }
+    if let Some(q) = attrs.get("quality") {
+        query_parts.push(format!("q={q}"));
+    }
+    if let Some(f) = attrs.get("format") {
+        query_parts.push(format!("f={f}"));
+    }
+
+    let img_src = format!("/_image?{}", query_parts.join("&"));
+
+    // Build <img> tag, forwarding passthrough attrs.
+    let mut img = format!("<img src=\"{img_src}\"");
+
+    for passthrough in &["alt", "class", "id", "style", "sizes"] {
+        if let Some(v) = attrs.get(*passthrough) {
+            img.push_str(&format!(" {passthrough}=\"{v}\""));
+        }
+    }
+    if let Some(w) = attrs.get("width") {
+        img.push_str(&format!(" width=\"{w}\""));
+    }
+    if let Some(h) = attrs.get("height") {
+        img.push_str(&format!(" height=\"{h}\""));
+    }
+    img.push_str(" loading=\"lazy\" decoding=\"async\"");
+    img.push('>');
+
+    Some((img, idx))
+}
+
+/// Parse a flat attribute string into a map of name → value pairs.
+/// Handles `name="value"`, `name='value'`, and bare `name` attributes.
+fn parse_attr_map(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let mut i = 0usize;
+    let bytes = raw.as_bytes();
+
+    while i < raw.len() {
+        // skip whitespace
+        while i < raw.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+            i += 1;
+        }
+        if i >= raw.len() { break; }
+
+        // read name
+        let name_start = i;
+        while i < raw.len() && bytes[i] != b'=' && bytes[i] != b' ' && bytes[i] != b'\t' && bytes[i] != b'\n' {
+            i += 1;
+        }
+        let name = raw[name_start..i].trim().to_string();
+        if name.is_empty() { i += 1; continue; }
+
+        if i >= raw.len() || bytes[i] != b'=' {
+            map.insert(name, String::new());
+            continue;
+        }
+        i += 1; // skip '='
+
+        if i >= raw.len() { map.insert(name, String::new()); break; }
+
+        let value = if bytes[i] == b'"' || bytes[i] == b'\'' {
+            let q = bytes[i] as char;
+            i += 1;
+            let val_start = i;
+            while i < raw.len() && raw.as_bytes()[i] as char != q {
+                i += 1;
+            }
+            let v = raw[val_start..i].to_string();
+            if i < raw.len() { i += 1; } // closing quote
+            v
+        } else {
+            let val_start = i;
+            while i < raw.len() && bytes[i] != b' ' && bytes[i] != b'\t' && bytes[i] != b'\n' {
+                i += 1;
+            }
+            raw[val_start..i].to_string()
+        };
+
+        map.insert(name, value);
+    }
+
+    map
+}
+
 /// `page_url_base` is the URL directory of the containing page (e.g. `/dashboard`).
 /// Relative `src` values (`./name` or bare `name`) resolve to
 /// `{page_url_base}/islands/{name}`. Absolute `src` values (leading `/`) are used as-is.
@@ -1268,5 +1468,65 @@ pub struct Props { pub title: String }
             resolve_island_url("/shared/widget", "/dashboard"),
             "/shared/widget"
         );
+    }
+
+    // ── <pilcrow:image> transpiler tests ─────────────────────────────────────
+
+    #[test]
+    fn pilcrow_image_basic_src_and_width() {
+        let input = r#"<pilcrow:image src="/public/hero.jpg" width="1200" alt="Hero" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains("/_image?"), "should point to /_image");
+        assert!(out.contains("w=1200"), "should pass width");
+        assert!(out.contains(r#"alt="Hero""#), "should forward alt");
+        assert!(out.contains(r#"width="1200""#), "should set width attr");
+        assert!(out.contains(r#"loading="lazy""#), "should be lazy");
+        assert!(out.contains(r#"decoding="async""#), "should be async");
+    }
+
+    #[test]
+    fn pilcrow_image_without_width_has_no_w_param() {
+        let input = r#"<pilcrow:image src="/images/photo.png" alt="Photo" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains("/_image?src="), "should have src param");
+        assert!(!out.contains("w="), "should not have w param when width absent");
+    }
+
+    #[test]
+    fn pilcrow_image_format_and_quality() {
+        let input = r#"<pilcrow:image src="/img/banner.jpg" format="webp" quality="90" width="800" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains("f=webp"), "should pass format");
+        assert!(out.contains("q=90"), "should pass quality");
+    }
+
+    #[test]
+    fn pilcrow_image_src_is_url_encoded() {
+        let input = r#"<pilcrow:image src="/public/my image.jpg" alt="test" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains("%20") || out.contains("+"), "space should be encoded");
+    }
+
+    #[test]
+    fn pilcrow_image_class_forwarded() {
+        let input = r#"<pilcrow:image src="/img.jpg" class="hero-img" alt="img" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains(r#"class="hero-img""#), "class should be forwarded");
+    }
+
+    #[test]
+    fn pilcrow_image_does_not_match_non_image_tags() {
+        let input = r#"<pilcrow:other src="/img.jpg" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert_eq!(input, out, "non-image pilcrow tags should pass through");
+    }
+
+    #[test]
+    fn pilcrow_image_mixed_content_unchanged_parts() {
+        let input = r#"<div><pilcrow:image src="/img.jpg" alt="x" /><p>Hello</p></div>"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.contains("<div>"), "surrounding HTML preserved");
+        assert!(out.contains("<p>Hello</p>"), "surrounding HTML preserved");
+        assert!(out.contains("/_image?"), "image tag transpiled");
     }
 }

@@ -23,3 +23,13 @@ ignore_directories = ["Cards"]
 default_locale = "en"
 locales        = ["en", "de"]
 locales_dir    = "locales"
+
+[images]
+enabled     = true
+cache_dir   = ".pilcrow-image-cache"
+domains     = []
+max_width   = 3840
+max_height  = 2160
+quality     = 80
+formats     = ["webp", "jpeg"]
+concurrency = 4

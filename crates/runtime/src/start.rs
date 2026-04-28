@@ -16,6 +16,7 @@ use tower_http::trace::TraceLayer;
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
 use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
 use crate::i18n::{I18nBundles, locale_middleware_impl};
+use crate::image::handler::{ImageState, image_handler};
 use crate::isr::{IsrCache, IsrHandle};
 use crate::sw::{sw_handler, sw_inject_layer};
 
@@ -94,6 +95,18 @@ where
 
     if sw_enabled {
         app = app.route("/sw.js", axum::routing::get(sw_handler));
+    }
+
+    if config.images.enabled {
+        let image_state = ImageState {
+            config: Arc::new(config.images.clone()),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(config.images.concurrency)),
+        };
+        app = app.route(
+            "/_image",
+            axum::routing::get(image_handler).with_state(image_state),
+        );
+        tracing::info!("image optimization: enabled (cache: {})", config.images.cache_dir);
     }
 
     let dev_state = if dev_mode {
