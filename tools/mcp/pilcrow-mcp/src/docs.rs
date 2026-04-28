@@ -619,16 +619,22 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
-            id: "routekit-compiler-islands",
-            title: "Island tag transpilation (compiler.rs)",
+            id: "routekit-compiler-pilcrow-tags",
+            title: "Pilcrow tag transpilation: <pilcrow:image>, <pilcrow:head> stripping, island tags (compiler.rs)",
             path: "crates/routekit/src/templating/compiler.rs",
             category: KnowledgeCategory::Routekit,
         },
         DocumentSpec {
-            id: "routekit-pipeline-islands",
-            title: "Island auto-detection in build pipeline (pipeline.rs)",
+            id: "routekit-pipeline-templating",
+            title: "Build pipeline: slot expansion, <pilcrow:head> hoisting, island detection, layout chain (pipeline.rs)",
             path: "crates/routekit/src/templating/pipeline.rs",
             category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "sandbox-products-page",
+            title: "Sandbox products page (multi-tag <pilcrow:head> example)",
+            path: "sandbox/apps/web/src/pages/products/index.html",
+            category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "routekit-tests",

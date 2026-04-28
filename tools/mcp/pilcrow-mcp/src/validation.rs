@@ -353,6 +353,19 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
     for (idx, line) in code.lines().enumerate() {
         let lnum = idx + 1;
 
+        // SvelteKit <svelte:head> is not valid Pilcrow syntax.
+        if line.contains("<svelte:head") {
+            findings.push(finding_with_line(
+                Severity::Error,
+                "pilcrow-svelte-head-syntax",
+                "`<svelte:head>` is SvelteKit syntax. Use `<pilcrow:head>...</pilcrow:head>` instead.".to_string(),
+                path,
+                Some(lnum),
+                Some("registry.toml: feature head-meta (stable)"),
+                Some("Wrap your <title>, <meta>, and <link> tags in <pilcrow:head>...</pilcrow:head>. The layout must have <slot name=\"pilcrow_head\"> to receive them."),
+            ));
+        }
+
         // Old PascalCase <Island> and client: directives were the planned (never-shipped) API.
         // The stable API is lowercase <island src="..." strategy="...">.
         for directive in ["<Island", "client:load", "client:idle", "client:visible", "s-island"] {

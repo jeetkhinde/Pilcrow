@@ -1805,7 +1805,8 @@ scaffold_templates = []
 
 [[features]]
 id = "head-meta"
-domain = "templating"
+name = "Head/Meta Management"
+domain = "pilcrow"
 status = "stable"
 summary = "Per-page <head> metadata via <pilcrow:head> block tag: title, meta, og tags, links, and arbitrary head content are hoisted into the layout's pilcrow_head slot."
 spec = """

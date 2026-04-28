@@ -338,8 +338,8 @@ fn island_directive_in_template_rejected() {
         report
             .findings
             .iter()
-            .any(|f| f.rule_id == "pilcrow-planned-islands"),
-        "expected pilcrow-planned-islands for <Island> tag"
+            .any(|f| f.rule_id == "pilcrow-wrong-island-syntax"),
+        "expected pilcrow-wrong-island-syntax for <Island> tag"
     );
 }
 
@@ -352,8 +352,8 @@ fn client_idle_directive_in_template_rejected() {
         report
             .findings
             .iter()
-            .any(|f| f.rule_id == "pilcrow-planned-islands"),
-        "expected pilcrow-planned-islands for client:idle"
+            .any(|f| f.rule_id == "pilcrow-wrong-island-syntax"),
+        "expected pilcrow-wrong-island-syntax for client:idle"
     );
 }
 
@@ -391,7 +391,7 @@ fn island_finding_has_line_number() {
     let finding = report
         .findings
         .iter()
-        .find(|f| f.rule_id == "pilcrow-planned-islands")
+        .find(|f| f.rule_id == "pilcrow-wrong-island-syntax")
         .expect("expected island finding");
     assert_eq!(finding.line, Some(2), "expected line 2 for the Island tag");
 }
