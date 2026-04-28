@@ -16,6 +16,7 @@ use crate::templating::compiler::{
     inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
     transpile_pilcrow_tags,
 };
+use crate::templating::markdown::transpile_markdown;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
@@ -714,6 +715,12 @@ fn preprocess_discovered_sources(
     Ok(out)
 }
 
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("mdx"))
+}
+
 fn load_source_group(
     src_root: &Path,
     kind: HtmlSourceKind,
@@ -724,12 +731,21 @@ fn load_source_group(
 ) -> io::Result<()> {
     for source_path in source_files {
         let source = fs::read_to_string(source_path)?;
-        let parts = split_html_module(&source).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to parse {}: {err}", source_path.display()),
-            )
-        })?;
+        let parts = if is_markdown_path(source_path) {
+            transpile_markdown(&source).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to compile markdown {}: {err}", source_path.display()),
+                )
+            })?
+        } else {
+            split_html_module(&source).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to parse {}: {err}", source_path.display()),
+                )
+            })?
+        };
 
         // Error and not-found pages have framework-injected Props.
         // Their frontmatter (if any) may only contain `import` statements.
@@ -786,7 +802,11 @@ fn load_source_group(
         };
 
         let relative = source_path.strip_prefix(source_root).unwrap_or(source_path);
-        let template_output_path = out_root.join(relative);
+        let template_output_path = if is_markdown_path(source_path) {
+            out_root.join(relative.with_extension("html"))
+        } else {
+            out_root.join(relative)
+        };
         let module_name = build_module_name(kind, relative);
         let render_symbol = format!("render_{module_name}");
 
@@ -829,12 +849,21 @@ fn load_fragment_source_group(
 ) -> io::Result<()> {
     for source_path in source_files {
         let source = fs::read_to_string(source_path)?;
-        let parts = split_html_module(&source).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to parse {}: {err}", source_path.display()),
-            )
-        })?;
+        let parts = if is_markdown_path(source_path) {
+            transpile_markdown(&source).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to compile markdown {}: {err}", source_path.display()),
+                )
+            })?
+        } else {
+            split_html_module(&source).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to parse {}: {err}", source_path.display()),
+                )
+            })?
+        };
 
         let codebehind_path = source_path.with_extension("rs");
         let (cleaned_frontmatter, imports) = if codebehind_path.exists() {
@@ -864,7 +893,11 @@ fn load_fragment_source_group(
         let relative_in_dir = source_path
             .strip_prefix(fragment_dir)
             .unwrap_or(source_path);
-        let template_output_path = out_root.join(relative_in_dir);
+        let template_output_path = if is_markdown_path(source_path) {
+            out_root.join(relative_in_dir.with_extension("html"))
+        } else {
+            out_root.join(relative_in_dir)
+        };
         // Module name: `frag_{url_prefix}_{snake_relative}` — pass prefixed path to build_module_name.
         let prefixed_relative = Path::new(url_prefix).join(relative_in_dir);
         let module_name = build_module_name(HtmlSourceKind::Fragment, &prefixed_relative);
@@ -988,7 +1021,11 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
         HtmlSourceKind::Fragment => {
             // `relative` is already prefixed with the url_prefix, e.g. `widgets/user-card.html`.
             let relative = relative.to_string_lossy().replace('\\', "/");
-            let without_ext = relative.strip_suffix(".html").unwrap_or(&relative);
+            let without_ext = relative
+                .strip_suffix(".html")
+                .or_else(|| relative.strip_suffix(".md"))
+                .or_else(|| relative.strip_suffix(".mdx"))
+                .unwrap_or(&relative);
             let mut symbol = String::new();
             let mut prev_under = false;
             for ch in without_ext.chars() {
@@ -1034,7 +1071,11 @@ fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
     };
 
     let relative = relative.to_string_lossy().replace('\\', "/");
-    let without_ext = relative.strip_suffix(".html").unwrap_or(&relative);
+    let without_ext = relative
+        .strip_suffix(".html")
+        .or_else(|| relative.strip_suffix(".md"))
+        .or_else(|| relative.strip_suffix(".mdx"))
+        .unwrap_or(&relative);
 
     // Strip layout-group segments `(group)` so they don't pollute module names.
     // e.g. `(app)/settings/profile` → `settings/profile`
@@ -2861,6 +2902,68 @@ pub async fn load(_req: Req) -> Props { Props {} }"#,
         let err = compile_to_out_dir(&src, &out).expect_err("non-Result load should fail");
         let msg = err.to_string();
         assert!(msg.contains("must return `AppResult<Props>`"), "got: {msg}");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_processes_markdown_page() {
+        let root = mk_temp_root("markdown_page");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/posts/hello.md"),
+            "# Hello World\n\nThis is a **markdown** page.\n",
+        );
+
+        let result = compile_to_out_dir(&src, &out).expect("pipeline should compile markdown");
+
+        assert!(
+            result.generated_routes.iter().any(|r| r.pattern == "/posts/hello"),
+            "expected route /posts/hello, got: {:?}",
+            result.generated_routes.iter().map(|r| &r.pattern).collect::<Vec<_>>()
+        );
+
+        let tpl_path = out.join("pilcrow_templates/pages/posts/hello.html");
+        assert!(tpl_path.exists(), "transpiled template should exist as .html");
+        let rendered = fs::read_to_string(&tpl_path).expect("read transpiled markdown template");
+        assert!(rendered.contains("<h1>Hello World</h1>"), "H1 should be rendered: {rendered}");
+        assert!(rendered.contains("<strong>markdown</strong>"), "bold should be rendered: {rendered}");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_markdown_with_codebehind() {
+        let root = mk_temp_root("markdown_codebehind");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/blog.md"),
+            "# My Blog\n\nWelcome to {{ title }}.\n",
+        );
+        write_file(
+            &src.join("pages/blog.rs"),
+            "pub struct Props {\n    pub title: String,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Pilcrow Blog\".to_string() })\n}\n",
+        );
+
+        let result = compile_to_out_dir(&src, &out).expect("pipeline should compile markdown with code-behind");
+
+        assert!(
+            result.generated_routes.iter().any(|r| r.pattern == "/blog"),
+            "expected route /blog"
+        );
+
+        let tpl_path = out.join("pilcrow_templates/pages/blog.html");
+        assert!(tpl_path.exists(), "transpiled template should exist as .html");
+        let rendered = fs::read_to_string(&tpl_path).expect("read transpiled markdown template");
+        assert!(rendered.contains("<h1>My Blog</h1>"), "H1 should be rendered: {rendered}");
+
+        let page = result.preprocessed_files.iter().find(|f| f.module_name == "page_blog")
+            .expect("page_blog module should exist");
+        assert!(page.rust_frontmatter.contains("pub struct Props"), "code-behind Props should be present");
 
         cleanup(&root);
     }

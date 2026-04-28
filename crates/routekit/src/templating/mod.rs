@@ -4,6 +4,7 @@ pub mod compiler;
 pub mod env_codegen;
 pub mod i18n_codegen;
 pub mod layout;
+pub mod markdown;
 pub mod page_options;
 pub mod pipeline;
 pub mod routes_codegen;

@@ -1864,3 +1864,47 @@ validation_rules = [
   "Layouts that want per-page head control must declare <slot name=\"pilcrow_head\">.",
 ]
 scaffold_templates = []
+
+[feature.markdown_pages]
+name = "Markdown Pages"
+status = "stable"
+spec = """
+`.md` and `.mdx` files placed anywhere in `src/pages/` or a configured fragment directory
+become routes using the same conventions as `.html` files.
+
+- `src/pages/posts/hello.md` → `GET /posts/hello`
+- `src/widgets/intro.md` → `GET /widgets/intro`
+- GitHub Flavored Markdown (GFM) is compiled to HTML at build time via `markdown-rs`.
+- YAML frontmatter (between `---` delimiters at the top of the file) is stripped from
+  the rendered output and currently discarded. Use a code-behind `.rs` file to set page
+  options (`PRERENDER`, `LAYOUT`, `TRAILING_SLASH`) or define `load()` / actions.
+- Code-behind `.rs` files work identically to HTML pages: `hello.md` pairs with `hello.rs`.
+- Route groups, param matchers, and layout wrapping all apply to `.md` files exactly as
+  they do to `.html` files.
+- MDX component expansion (JSX tags inside markdown) is not yet supported; JSX tags are
+  preserved in the rendered HTML but will not be recognised by the component transpiler.
+"""
+canonical_usage = """
+<!-- src/pages/posts/hello.md -->
+# Hello World
+
+This is a **markdown** page with a [link](/about).
+"""
+constraints = [
+  "YAML frontmatter is stripped and discarded; page options must be declared in a code-behind `.rs` file.",
+  "MDX JSX tags are preserved in output but not transpiled to Askama components.",
+  "If both `about.html` and `about.md` exist in the same directory, the resulting module names collide — avoid this.",
+]
+source_refs = [
+  "crates/routekit/src/templating/markdown.rs — transpile_markdown()",
+  "crates/routekit/src/templating/pipeline.rs — is_markdown_path(), load_source_group(), load_fragment_source_group()",
+  "crates/routekit/src/routing/discovery.rs — is_markup_file() (includes .md/.mdx)",
+  "crates/routekit/src/lib.rs:125-129 — route extension stripping for .md/.mdx",
+  "crates/routekit/Cargo.toml — markdown = \"1.0.0-alpha.18\" dependency",
+]
+test_refs = [
+  "crates/routekit/src/templating/pipeline.rs — compile_pipeline_processes_markdown_page",
+  "crates/routekit/src/templating/pipeline.rs — compile_pipeline_markdown_with_codebehind",
+]
+validation_rules = []
+scaffold_templates = []
