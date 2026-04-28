@@ -1802,3 +1802,64 @@ validation_rules = [
   "images.domains must be a list of hostnames (no protocol prefix).",
 ]
 scaffold_templates = []
+
+[[features]]
+id = "head-meta"
+domain = "templating"
+status = "stable"
+summary = "Per-page <head> metadata via <pilcrow:head> block tag: title, meta, og tags, links, and arbitrary head content are hoisted into the layout's pilcrow_head slot."
+spec = """
+<pilcrow:head> is a paired block tag placed in a page template whose inner content
+is hoisted into the layout's <slot name=\"pilcrow_head\"> at build time.
+
+Inner content can be any valid HTML: <title>, <meta>, <link>, <style>, <script>, etc.
+
+Transpilation: collect_slot_assignments recognises <pilcrow:head> as a built-in
+named slot assignment for \"pilcrow_head\". The slot wrapper is stripped; inner
+content replaces the slot in the layout.
+
+If the layout has no <slot name=\"pilcrow_head\">, the content is silently dropped.
+If the page has no <pilcrow:head>, the slot uses its fallback content.
+
+For pages with LAYOUT=\"none\" or no layout chain, <pilcrow:head> is stripped by
+transpile_pilcrow_tags — head content is not emitted to the final template.
+
+Askama expressions work inside <pilcrow:head>:
+  <pilcrow:head><title>{{ product.name }} — Shop</title></pilcrow:head>
+"""
+canonical_usage = """
+<!-- _layout.html -->
+<head>
+  <meta charset=\"utf-8\" />
+  <slot name=\"pilcrow_head\"><title>My Site</title></slot>
+</head>
+
+<!-- pages/products/[id].html -->
+<pilcrow:head>
+  <title>{{ product.name }} — My Shop</title>
+  <meta name=\"description\" content=\"Buy {{ product.name }}\" />
+  <meta property=\"og:title\" content=\"{{ product.name }}\" />
+  <meta property=\"og:image\" content=\"{{ product.image_url }}\" />
+</pilcrow:head>
+<h1>{{ product.name }}</h1>
+"""
+constraints = [
+  "<pilcrow:head> inner content is hoisted verbatim; Askama expressions are evaluated at render time.",
+  "Multiple <pilcrow:head> blocks per page are merged into the pilcrow_head slot.",
+  "Pages with LAYOUT=\"none\" have their <pilcrow:head> stripped (no layout = no head slot).",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs — collect_slot_assignments, render_slot_fragment_node",
+  "crates/routekit/src/templating/compiler.rs — transpile_pilcrow_tags, strip_pilcrow_head_block",
+  "sandbox/apps/web/src/pages/_layout.html — slot name=\"pilcrow_head\" example",
+  "sandbox/apps/web/src/pages/products/index.html — multi-tag pilcrow:head usage",
+]
+test_refs = [
+  "crates/routekit/src/templating/pipeline.rs — compile_pipeline_pilcrow_head_* (3 tests)",
+  "crates/routekit/src/templating/compiler.rs — pilcrow_head_* (4 tests)",
+]
+validation_rules = [
+  "<pilcrow:head> must have a matching </pilcrow:head> closing tag.",
+  "Layouts that want per-page head control must declare <slot name=\"pilcrow_head\">.",
+]
+scaffold_templates = []

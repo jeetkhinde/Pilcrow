@@ -1426,7 +1426,14 @@ fn collect_slot_assignments(inner: &str) -> SlotAssignments {
 
     while idx < inner.len() {
         if let Some(node) = parse_html_node_at(inner, idx) {
-            if let Some(slot_name) = extract_slot_name(&node.attrs) {
+            // <pilcrow:head> is a built-in named slot: its inner content targets "pilcrow_head"
+            let effective_slot = if node.name.eq_ignore_ascii_case("pilcrow:head") {
+                Some("pilcrow_head".to_string())
+            } else {
+                extract_slot_name(&node.attrs)
+            };
+
+            if let Some(slot_name) = effective_slot {
                 let let_bindings = extract_slot_let_bindings(&node.attrs);
                 let content = render_slot_fragment_node(inner, &node);
                 let fragment = SlotFragment {
@@ -1471,7 +1478,9 @@ fn collect_slot_assignments(inner: &str) -> SlotAssignments {
 }
 
 fn render_slot_fragment_node(source: &str, node: &HtmlNode) -> String {
-    if node.name.eq_ignore_ascii_case("Fragment") {
+    if node.name.eq_ignore_ascii_case("Fragment")
+        || node.name.eq_ignore_ascii_case("pilcrow:head")
+    {
         return node
             .inner
             .map(|(start, end)| source[start..end].to_string())
@@ -3204,5 +3213,100 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
         );
 
         cleanup(&root);
+    }
+
+    // ── <pilcrow:head> slot expansion ────────────────────────────────────────
+
+    #[test]
+    fn compile_pipeline_pilcrow_head_hoisted_into_layout_slot() {
+        let root = mk_temp_root("pilcrow_head_slot");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<html><head><slot name="pilcrow_head"><title>Default</title></slot></head><body><slot /></body></html>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+---
+<pilcrow:head>
+<title>My Page</title>
+<meta name="description" content="Great page" />
+</pilcrow:head>
+<h1>Hello</h1>"#,
+        );
+
+        let _result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
+        let page_template = out.join("pilcrow_templates/pages/index.html");
+        let rendered = fs::read_to_string(page_template).expect("read transpiled page");
+
+        assert!(rendered.contains("<title>My Page</title>"), "custom title hoisted");
+        assert!(
+            rendered.contains(r#"<meta name="description" content="Great page" />"#),
+            "meta tag hoisted"
+        );
+        assert!(!rendered.contains("Default"), "fallback title replaced");
+        assert!(rendered.contains("<h1>Hello</h1>"), "page body in default slot");
+        assert!(!rendered.contains("pilcrow:head"), "pilcrow:head tag consumed");
+    }
+
+    #[test]
+    fn compile_pipeline_pilcrow_head_fallback_when_absent() {
+        let root = mk_temp_root("pilcrow_head_fallback");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<html><head><slot name="pilcrow_head"><title>Site Title</title></slot></head><body><slot /></body></html>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+---
+<h1>No custom head</h1>"#,
+        );
+
+        let _result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
+        let page_template = out.join("pilcrow_templates/pages/index.html");
+        let rendered = fs::read_to_string(page_template).expect("read transpiled page");
+
+        assert!(rendered.contains("<title>Site Title</title>"), "fallback title used");
+        assert!(rendered.contains("<h1>No custom head</h1>"), "page body present");
+    }
+
+    #[test]
+    fn compile_pipeline_pilcrow_head_stripped_on_page_without_layout() {
+        let root = mk_temp_root("pilcrow_head_no_layout");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+pub const LAYOUT: &str = "none";
+---
+<pilcrow:head><title>Gone</title></pilcrow:head>
+<p>Body only</p>"#,
+        );
+
+        let _result = compile_to_out_dir(&src, &out).expect("pipeline should compile");
+        let page_template = out.join("pilcrow_templates/pages/index.html");
+        let rendered = fs::read_to_string(page_template).expect("read transpiled page");
+
+        assert!(!rendered.contains("pilcrow:head"), "pilcrow:head stripped");
+        assert!(!rendered.contains("<title>Gone</title>"), "head content stripped");
+        assert!(rendered.contains("<p>Body only</p>"), "body preserved");
     }
 }

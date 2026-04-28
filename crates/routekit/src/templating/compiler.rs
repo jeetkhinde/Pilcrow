@@ -797,12 +797,44 @@ pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
                 }
             }
         }
+        // Strip <pilcrow:head> blocks that survived layout slot expansion
+        // (pages with LAYOUT="none" or no _layout.html in the chain).
+        if template[i..].starts_with("<pilcrow:head") {
+            let rest = &template[i + 13..];
+            let next = rest.chars().next();
+            if matches!(next, Some(c) if c.is_whitespace() || c == '>') {
+                if let Some(consumed) = strip_pilcrow_head_block(&template[i..]) {
+                    i += consumed;
+                    continue;
+                }
+            }
+        }
         let c = template[i..].chars().next().unwrap();
         output.push(c);
         i += c.len_utf8();
     }
 
     output
+}
+
+/// Consume a `<pilcrow:head>...</pilcrow:head>` block and return the total bytes consumed.
+/// Returns `None` if the block is malformed (no closing tag).
+fn strip_pilcrow_head_block(input: &str) -> Option<usize> {
+    debug_assert!(input.starts_with("<pilcrow:head"));
+
+    // Scan past the opening tag.
+    let mut idx = 13; // len("<pilcrow:head")
+    while idx < input.len() {
+        let c = input[idx..].chars().next()?;
+        idx += c.len_utf8();
+        if c == '>' {
+            break;
+        }
+    }
+
+    // Find the matching close tag.
+    let close = "</pilcrow:head>";
+    input[idx..].find(close).map(|off| idx + off + close.len())
 }
 
 fn parse_pilcrow_image_tag(input: &str) -> Option<(String, usize)> {
@@ -1528,5 +1560,48 @@ pub struct Props { pub title: String }
         assert!(out.contains("<div>"), "surrounding HTML preserved");
         assert!(out.contains("<p>Hello</p>"), "surrounding HTML preserved");
         assert!(out.contains("/_image?"), "image tag transpiled");
+    }
+
+    // ── <pilcrow:head> orphan stripping ──────────────────────────────────────
+
+    #[test]
+    fn pilcrow_head_stripped_when_no_layout() {
+        let input = "<pilcrow:head><title>My Page</title></pilcrow:head><h1>Body</h1>";
+        let out = transpile_pilcrow_tags(input);
+        assert!(!out.contains("<pilcrow:head>"), "pilcrow:head should be removed");
+        assert!(!out.contains("<title>"), "head content should be stripped");
+        assert!(out.contains("<h1>Body</h1>"), "body content preserved");
+    }
+
+    #[test]
+    fn pilcrow_head_stripped_with_multiple_meta_tags() {
+        let input = concat!(
+            "<pilcrow:head>",
+            "<title>Shop</title>",
+            r#"<meta name="description" content="Browse products" />"#,
+            r#"<meta property="og:title" content="Shop" />"#,
+            "</pilcrow:head>",
+            "<p>Content</p>",
+        );
+        let out = transpile_pilcrow_tags(input);
+        assert!(!out.contains("<pilcrow:head>"), "pilcrow:head tag removed");
+        assert!(!out.contains("<title>"), "title stripped");
+        assert!(!out.contains("<meta"), "meta tags stripped");
+        assert!(out.contains("<p>Content</p>"), "body content preserved");
+    }
+
+    #[test]
+    fn pilcrow_head_with_whitespace_after_tag_name_stripped() {
+        let input = "<pilcrow:head>\n  <title>T</title>\n</pilcrow:head>\n<p>X</p>";
+        let out = transpile_pilcrow_tags(input);
+        assert!(!out.contains("pilcrow:head"), "tag removed");
+        assert!(out.contains("<p>X</p>"), "body preserved");
+    }
+
+    #[test]
+    fn pilcrow_head_does_not_match_pilcrow_image() {
+        let input = r#"<pilcrow:image src="/img.jpg" alt="x" />"#;
+        let out = transpile_pilcrow_tags(input);
+        assert!(out.starts_with("<img"), "image tag still processed");
     }
 }
