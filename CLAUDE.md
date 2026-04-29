@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## MCP is the source of truth (AI-first policy)
+
+Pilcrow is AI-first. Treat `tools/mcp/pilcrow-mcp` as the authoritative interface for:
+- feature status and canonical usage (`registry.toml`),
+- implementation evidence (`source_refs` + test refs),
+- examples and use-case retrieval (sandbox + tests),
+- docs answers for coding agents.
+
+When shipping or changing a feature, update **all** of:
+1. Runtime/routekit/web implementation,
+2. `registry.toml` feature contract (spec, canonical_usage, constraints, invalid_examples, refs),
+3. MCP knowledge coverage (`tools/mcp/pilcrow-mcp/src/docs.rs` document specs and searchability),
+4. At least one executable example or test reference that MCP can cite.
+
+Goal: agents should not rely on memory or ad-hoc docs; they should be able to answer from MCP evidence first.
+
 ## What is Pilcrow
 
 Pilcrow is a Rust full-stack web framework inspired by SvelteKit/Astro. It uses:

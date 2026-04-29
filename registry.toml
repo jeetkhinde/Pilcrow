@@ -221,6 +221,36 @@ validation_rules = [
 scaffold_templates = ["route", "silcrow-form"]
 
 [[features]]
+id = "server-hooks"
+name = "Server Hooks"
+domain = "pilcrow"
+status = "stable"
+summary = "Optional src/hooks.rs lifecycle hooks for global request handling, 5xx error shaping, and one-time startup init."
+spec = "When src/hooks.rs exists, Pilcrow detects and wires any of these async functions: `handle(req: Req, next: Next) -> Response`, `handle_error(error: &HookError, req: &Req) -> Option<Response>`, and `init()`. `handle` runs before route handlers, `handle_error` can replace 5xx responses, and `init` runs once before serving."
+canonical_usage = "Create src/hooks.rs with: `pub async fn handle(req: Req, next: Next) -> Response { req.locals.set(\"trace-id\"); next.run().await }`, `pub async fn handle_error(error: &HookError, req: &Req) -> Option<Response> { tracing::error!(\"{}\", error.message); None }`, and `pub async fn init() { tracing::info!(\"startup\"); }`."
+constraints = [
+  "Hook file must be src/hooks.rs at the app root.",
+  "Hook function signatures must match exactly (async, argument types, return type).",
+  "handle() should call next.run().await unless intentionally short-circuiting.",
+  "Use req.locals in hooks for cross-cutting request state shared with load()/actions.",
+]
+invalid_examples = [
+  "fn handle(req: Req, next: Next) -> Response — missing async",
+  "pub async fn handle_error(error: HookError, req: Req) -> Response — wrong references and return type",
+  "Placing hooks in src/middleware.rs expecting automatic lifecycle wiring",
+]
+source_refs = [
+  "crates/routekit/src/templating/pipeline.rs — hook detection",
+  "crates/routekit/src/templating/codegen/app_module.rs — generated hook shims and middleware wiring",
+  "sandbox/apps/web/src/hooks.rs",
+]
+test_refs = ["crates/routekit/src/templating/pipeline.rs — detect_hook_flags tests"]
+validation_rules = [
+  "Prefer src/hooks.rs for global auth/session/request-id logic over duplicating in each load()/action.",
+]
+scaffold_templates = ["middleware"]
+
+[[features]]
 id = "silcrow-navigation"
 name = "Silcrow Enhanced Navigation"
 domain = "silcrow"

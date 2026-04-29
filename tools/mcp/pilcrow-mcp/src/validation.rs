@@ -164,6 +164,25 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
         }
     }
 
+    // ISR safety: if REVALIDATE is enabled and handler code reads request-scoped values,
+    // recommend CACHE_VARY to avoid cross-context cache reuse.
+    if code.contains("REVALIDATE")
+        && !code.contains("CACHE_VARY")
+        && (code.contains("req.cookies")
+            || code.contains("req.headers")
+            || code.contains("req.locale")
+            || code.contains("req.locals"))
+    {
+        findings.push(finding(
+            Severity::Warning,
+            "pilcrow-isr-missing-cache-vary",
+            "REVALIDATE is set and request-scoped values are used, but CACHE_VARY is not declared. This can cause cache key collisions across users/locales.".to_string(),
+            path,
+            Some("registry.toml: feature incremental-ssr"),
+            Some("Add `pub const CACHE_VARY: &[&str] = &[\"session\", \"accept-language\"];` (or relevant keys) in the page code-behind."),
+        ));
+    }
+
     if kind != Some("api")
         && (code.contains("Router::new().route(") || code.contains(".route("))
         && !code.contains("pub fn router()")
@@ -741,6 +760,45 @@ mod tests {
         assert!(
             !report.findings.iter().any(|f| f.rule_id == "pilcrow-typed-routes-suggestion"),
             "unexpected suggestion for root path: {:?}", report.findings
+        );
+    }
+
+    #[test]
+    fn warns_when_revalidate_uses_request_scoped_values_without_cache_vary() {
+        let report = validate_implementation(
+            r#"
+pub const REVALIDATE: u64 = 60;
+pub async fn load(req: Req) -> AppResult<Props> {
+    let locale = req.headers.get("accept-language");
+    Ok(Props {})
+}
+"#,
+            Some("src/pages/products/index.rs"),
+            None,
+        );
+        assert!(
+            report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
+            "expected pilcrow-isr-missing-cache-vary, got: {:?}", report.findings
+        );
+    }
+
+    #[test]
+    fn no_warning_when_cache_vary_is_declared() {
+        let report = validate_implementation(
+            r#"
+pub const REVALIDATE: u64 = 60;
+pub const CACHE_VARY: &[&str] = &["accept-language"];
+pub async fn load(req: Req) -> AppResult<Props> {
+    let _locale = req.headers.get("accept-language");
+    Ok(Props {})
+}
+"#,
+            Some("src/pages/products/index.rs"),
+            None,
+        );
+        assert!(
+            !report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
+            "unexpected pilcrow-isr-missing-cache-vary: {:?}", report.findings
         );
     }
 }
