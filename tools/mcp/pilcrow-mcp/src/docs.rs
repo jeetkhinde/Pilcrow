@@ -409,6 +409,30 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Docs,
         },
         DocumentSpec {
+            id: "docs-production-dx-gaps",
+            title: "Production-grade and agent-first DX gaps",
+            path: "docs/production-and-dx-gaps.md",
+            category: KnowledgeCategory::Docs,
+        },
+        DocumentSpec {
+            id: "docs-sveltekit-comparison",
+            title: "Pilcrow vs SvelteKit improvements",
+            path: "docs/sveltekit-comparison-improvements.md",
+            category: KnowledgeCategory::Docs,
+        },
+        DocumentSpec {
+            id: "docs-nextjs-comparison",
+            title: "Pilcrow vs Next.js improvements",
+            path: "docs/nextjs-comparison-improvements.md",
+            category: KnowledgeCategory::Docs,
+        },
+        DocumentSpec {
+            id: "docs-architect-priorities",
+            title: "Architect priority roadmap (DX + DRY)",
+            path: "docs/architect-priority-improvements.md",
+            category: KnowledgeCategory::Docs,
+        },
+        DocumentSpec {
             id: "web-facade",
             title: "pilcrow-web facade",
             path: "crates/web/src/lib.rs",
@@ -631,7 +655,7 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Routekit,
         },
         DocumentSpec {
-            id: "sandbox-products-page",
+            id: "sandbox-products-page-head-meta",
             title: "Sandbox products page (multi-tag <pilcrow:head> example)",
             path: "sandbox/apps/web/src/pages/products/index.html",
             category: KnowledgeCategory::Examples,
@@ -712,5 +736,20 @@ mod tests {
         let registry = Registry::load_from_project(&root).unwrap();
         let answer = kb.answer_question(&registry, "How does s-boost patch the DOM?");
         assert!(answer.silcrow_delegation.is_some());
+    }
+
+    #[test]
+    fn document_specs_are_unique_and_paths_exist() {
+        let root = root();
+        let specs = document_specs();
+        let mut ids = std::collections::HashSet::new();
+        for spec in &specs {
+            assert!(ids.insert(spec.id), "duplicate document id: {}", spec.id);
+            assert!(
+                root.join(spec.path).exists(),
+                "document path does not exist: {}",
+                spec.path
+            );
+        }
     }
 }
