@@ -13,19 +13,12 @@
 
 ## Critical priority
 
-### 1) MCP/registry discoverability debt for shipped features
-**Problem:** Features that already exist (hooks, typed routes/env, CSRF, ISR inspection/export paths) are not consistently surfaced as "canonical" in MCP guidance, so users/agents still generate manual/duplicated patterns.
+### Completed recently (removed from active queue)
+- ✅ MCP/registry discoverability for hooks/CSRF was implemented.
+- ✅ Feature-suggestion keyword matching now recognizes hook lifecycle and CSRF/security prompts.
 
-**Why critical:** This is a multiplier on every generated app and every AI-assisted edit. Missing discoverability creates recurring wrong implementations despite existing primitives.
+### 1) ISR cache key correctness under variation (active)
 
-**Improvements:**
-- Add/expand `canonical_usage` in `registry.toml` for hooks-first request lifecycle, typed route helpers, typed env loading, CSRF setup, and ISR inspect/export workflows.
-- Add feature aliases/synonyms in MCP search for natural queries ("server hooks", "global error hook", "form actions", "cache tags").
-- Add a single migration map section (Astro/SvelteKit/Next style concept -> Pilcrow primitive).
-
-**DX/DRY impact:** Removes repetitive hand-rolled auth/session/env glue and string-literal routing.
-
-### 2) ISR cache key correctness under variation
 **Problem:** Any mismatch between cache key derivation and request variation dimensions (headers/cookies/user locale/session) risks stale or cross-context content.
 
 **Why critical:** This is a production correctness/safety class issue, not just ergonomics.
@@ -98,12 +91,11 @@
 
 ## Recommended execution order
 
-1. **Critical-1 discoverability pass (MCP + registry + canonical docs).**
-2. **Critical-2 cache-key correctness + tests.**
-3. **High-3 action/form typed ergonomics.**
-4. **High-4 hook-first starter templates + docs.**
-5. **High-5 observability UX surfaces.**
-6. Medium items in parallel by ownership.
+1. **Critical active: cache-key diagnostics + tests.**
+2. **High-3 action/form typed ergonomics.**
+3. **High-4 hook-first starter templates + docs.**
+4. **High-5 observability UX surfaces.**
+5. Medium items in parallel by ownership.
 
 ---
 
