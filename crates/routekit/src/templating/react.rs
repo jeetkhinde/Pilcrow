@@ -120,7 +120,8 @@ fn parse_react_tag(
     let entry_placeholder = format!("{REACT_ENTRY_PLACEHOLDER_PREFIX}{id}__");
     let css_placeholder = format!("{REACT_CSS_PLACEHOLDER_PREFIX}{id}__");
     let mut html = format!(
-        "<div data-pilcrow-react data-src=\"{}\" data-strategy=\"{}\" data-css=\"{}\"",
+        "<div data-pilcrow-react data-id=\"{}\" data-src=\"{}\" data-strategy=\"{}\" data-css=\"{}\"",
+        html_escape_attr(&id),
         html_escape_attr(&entry_placeholder),
         html_escape_attr(&strategy),
         html_escape_attr(&css_placeholder),
@@ -140,7 +141,7 @@ fn parse_react_tag(
             ));
         }
     }
-    html.push_str("></div><script type=\"module\" src=\"/_pilcrow/react-islands.js\"></script>");
+    html.push_str("></div><script type=\"module\" src=\"{{ pilcrow_web::assets::assets::react_islands_js_path() }}\"></script>");
 
     Ok((html, consumed, ReactIslandRef { id, source_path }))
 }
@@ -181,7 +182,10 @@ pub fn build_react_assets(
     let mut inputs = BTreeMap::new();
     for source in sources_by_id.values() {
         let entry_path = entries_dir.join(format!("{}.tsx", source.id));
-        fs::write(&entry_path, render_entry_wrapper(&source.source_path))?;
+        fs::write(
+            &entry_path,
+            render_entry_wrapper(&source.id, &source.source_path),
+        )?;
         inputs.insert(source.id.clone(), entry_path);
     }
 
@@ -305,8 +309,9 @@ fn run_vite(manifest_dir: &Path, config_path: &Path) -> io::Result<()> {
     }
 }
 
-fn render_entry_wrapper(source_path: &Path) -> String {
+fn render_entry_wrapper(id: &str, source_path: &Path) -> String {
     let src = source_path.to_string_lossy().replace('\\', "/");
+    let id_json = serde_json::to_string(id).unwrap();
     format!(
         r#"import React from "react";
 import {{ createRoot }} from "react-dom/client";
@@ -321,6 +326,9 @@ export function mount(el, props) {{
   el.__pilcrowReactRoot = root;
   root.render(React.createElement(Component, props));
 }}
+
+window.__pilcrowReactMounts = window.__pilcrowReactMounts || {{}};
+window.__pilcrowReactMounts[{id_json}] = mount;
 "#
     )
 }
@@ -340,7 +348,19 @@ fn render_vite_config(inputs: &BTreeMap<String, PathBuf>, dist_dir: &Path) -> St
         .join("\n");
 
     format!(
-        r#"export default {{
+        r#"import {{ createRequire }} from "node:module";
+
+const require = createRequire(process.cwd() + "/package.json");
+
+export default {{
+  root: process.cwd(),
+  resolve: {{
+    alias: [
+      {{ find: /^react$/, replacement: require.resolve("react") }},
+      {{ find: /^react-dom\/client$/, replacement: require.resolve("react-dom/client") }},
+      {{ find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") }}
+    ]
+  }},
   esbuild: {{ jsx: "automatic" }},
   build: {{
     outDir: {},

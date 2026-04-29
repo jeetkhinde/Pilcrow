@@ -25,6 +25,10 @@ pub fn silcrow_js_path() -> String {
     let hash = crc32fast::hash(SILCROW_JS.as_bytes());
     format!("/_silcrow/silcrow.{hash:08x}.js")
 }
+pub fn react_islands_js_path() -> String {
+    let hash = crc32fast::hash(REACT_ISLANDS_JS.as_bytes());
+    format!("/_pilcrow/react-islands.{hash:08x}.js")
+}
 pub fn script_tag() -> String {
     format!(r#"<script src="{}" defer></script>"#, silcrow_js_path())
 }
@@ -37,7 +41,7 @@ pub async fn serve_react_islands_js() -> Response {
                 header::CONTENT_TYPE,
                 "application/javascript; charset=utf-8",
             ),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         REACT_ISLANDS_JS,
     )

@@ -5,6 +5,8 @@ core/public/
 sandbox/public/
 target/
 public/
+sandbox/apps/web/node_modules
+
 
 # Cargo lock file (for libraries)
 /Cargo.lock

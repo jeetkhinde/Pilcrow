@@ -43,8 +43,11 @@
     if (!src) return;
     try {
       const mod = await import(src);
-      if (typeof mod.mount === "function") {
-        mod.mount(el, readProps(el));
+      const id = el.getAttribute("data-id");
+      const registered = id && window.__pilcrowReactMounts && window.__pilcrowReactMounts[id];
+      const mountFn = typeof mod.mount === "function" ? mod.mount : registered;
+      if (typeof mountFn === "function") {
+        mountFn(el, readProps(el));
       } else {
         console.warn("[pilcrow-react] module has no mount() export", src);
       }

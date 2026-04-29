@@ -14,7 +14,9 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
-use crate::assets::assets::{serve_react_islands_js, serve_silcrow_js, silcrow_js_path};
+use crate::assets::assets::{
+    react_islands_js_path, serve_react_islands_js, serve_silcrow_js, silcrow_js_path,
+};
 use crate::dev::{dev_inject_layer, dev_reload_handler, spawn_css_watcher, DevState};
 use crate::i18n::{locale_middleware_impl, I18nBundles};
 use crate::image::handler::{image_handler, ImageState};
@@ -93,11 +95,12 @@ where
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
     let silcrow_path = silcrow_js_path();
+    let react_islands_path = react_islands_js_path();
     let mut app = app
         .route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler))
         .route(&silcrow_path, axum::routing::get(serve_silcrow_js))
         .route(
-            "/_pilcrow/react-islands.js",
+            &react_islands_path,
             axum::routing::get(serve_react_islands_js),
         );
 
