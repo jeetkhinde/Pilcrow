@@ -1,5 +1,5 @@
 // Silcrow.js — Hypermedia Runtime
-// Built: 2026-04-17T00:15:25.033Z
+// Built: 2026-04-29T22:21:16.473Z
 (function(){
 "use strict";
 // /debug.js
@@ -882,8 +882,6 @@ function connectSseHub(hub) {
     } else {
       hub.subscribers.forEach(function (el) {invalidate(el);});
     }
-    // Evict all cached GET responses so the next s-get re-fetches from the server.
-    bustCacheOnMutation();
   });
 
   es.addEventListener("navigate", function (e) {
@@ -1321,11 +1319,8 @@ function resolveVerb(el) {
         }
       }
       try {
-        // Resolve against current page URL so relative verbs like `?/create`
-        // or `./sub` attach to the current path. Absolute paths (e.g. `/about`)
-        // still discard the path component of the base, as per WHATWG URL rules.
         return {
-          url: new URL(raw, location.href).href,
+          url: new URL(raw, location.origin).href,
           method: VERB_ATTRS[i].slice(2).toUpperCase()
         };
       } catch (e) {
@@ -1413,24 +1408,18 @@ function bustCacheOnMutation() {
 function processSideEffectHeaders(sideEffects, primaryTarget) {
   if (!sideEffects) return;
 
-  // Order: patch → invalidate → navigate → sse.
-  // Multiple patch/invalidate calls on the server accumulate into a JSON
-  // array; apply each entry in call order.
+  // Order: patch → invalidate → navigate → sse
   if (sideEffects.patch) {
     try {
-      const entries = JSON.parse(sideEffects.patch);
-      if (Array.isArray(entries)) {
-        for (const payload of entries) {
-          if (
-            payload &&
-            typeof payload === "object" &&
-            payload.target &&
-            Object.prototype.hasOwnProperty.call(payload, "data")
-          ) {
-            const el = document.querySelector(payload.target);
-            if (el) patch(payload.data, el);
-          }
-        }
+      const payload = JSON.parse(sideEffects.patch);
+      if (
+        payload &&
+        typeof payload === "object" &&
+        payload.target &&
+        Object.prototype.hasOwnProperty.call(payload, "data")
+      ) {
+        const el = document.querySelector(payload.target);
+        if (el) patch(payload.data, el);
       }
     } catch (e) {
       warn("Failed to process silcrow-patch header: " + e.message);
@@ -1438,20 +1427,8 @@ function processSideEffectHeaders(sideEffects, primaryTarget) {
   }
 
   if (sideEffects.invalidate) {
-    try {
-      const selectors = JSON.parse(sideEffects.invalidate);
-      if (Array.isArray(selectors)) {
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el) invalidate(el);
-        }
-        // Evict all cached GET responses — the server has signalled staleness
-        // and any cached URL feeding a binding would serve stale content next.
-        bustCacheOnMutation();
-      }
-    } catch (e) {
-      warn("Failed to process silcrow-invalidate header: " + e.message);
-    }
+    const el = document.querySelector(sideEffects.invalidate);
+    if (el) invalidate(el);
   }
 
   if (sideEffects.navigate) {
@@ -1664,9 +1641,7 @@ async function navigate(url, options = {}) {
       contentType = response.headers.get("Content-Type") || "";
 
       const cacheControl = response.headers.get("silcrow-cache");
-      if (method === "GET" && cacheControl === "no-cache") {
-        responseCache.delete(fullUrl);
-      } else if (method === "GET" && !redirected) {
+      if (method === "GET" && !redirected && cacheControl !== "no-cache") {
         cacheSet(fullUrl, {text, contentType, ts: Date.now()});
       }
 
