@@ -2,6 +2,7 @@ use std::env;
 
 mod dev;
 mod export;
+mod routes;
 mod scaffold;
 
 fn main() {
@@ -15,7 +16,7 @@ fn main() {
         "new" => {
             if let Err(err) = scaffold::handle_new(&args) {
                 eprintln!("scaffold failed: {err}");
-                eprintln!("Usage: pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
+                eprintln!("Usage: pilcrow new <dir> [--with-auth] [--with-postgres]");
                 std::process::exit(1);
             }
         }
@@ -28,7 +29,14 @@ fn main() {
         "export" => {
             if let Err(err) = export::handle_export(&args) {
                 eprintln!("export failed: {err}");
-                eprintln!("Usage: pilcrow-cli export [<dir>]");
+                eprintln!("Usage: pilcrow export [<dir>]");
+                std::process::exit(1);
+            }
+        }
+        "routes" => {
+            if let Err(err) = routes::handle_routes(&args) {
+                eprintln!("routes failed: {err}");
+                eprintln!("Usage: pilcrow routes [<app-dir>]");
                 std::process::exit(1);
             }
         }
@@ -41,7 +49,8 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  pilcrow-cli new <dir> [--with-auth] [--with-postgres]");
-    eprintln!("  pilcrow-cli dev");
-    eprintln!("  pilcrow-cli export [<dir>]");
+    eprintln!("  pilcrow new <dir> [--with-auth] [--with-postgres]");
+    eprintln!("  pilcrow dev");
+    eprintln!("  pilcrow export [<dir>]");
+    eprintln!("  pilcrow routes [<app-dir>]");
 }

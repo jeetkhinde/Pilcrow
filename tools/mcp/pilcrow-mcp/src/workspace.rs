@@ -93,10 +93,18 @@ pub struct ResolvedProject {
     pub app_root: PathBuf,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 struct PilcrowConfig {
     #[serde(default)]
     fragments: Vec<FragmentConfig>,
+    #[serde(default)]
+    routing: RoutingConfig,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct RoutingConfig {
+    #[serde(default)]
+    ignore_directories: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -169,7 +177,13 @@ pub fn scan_project(
     let pilcrow_config = pilcrow_source
         .as_deref()
         .and_then(|source| toml::from_str::<PilcrowConfig>(source).ok())
-        .unwrap_or(PilcrowConfig { fragments: vec![] });
+        .unwrap_or_default();
+    let ignored_dirs = pilcrow_config
+        .routing
+        .ignore_directories
+        .iter()
+        .map(|dir| normalize_path(dir))
+        .collect::<Vec<_>>();
 
     let fragments = pilcrow_config
         .fragments
@@ -191,7 +205,7 @@ pub fn scan_project(
         None
     };
 
-    let route_html_files = list_matching(&pages, |path| {
+    let route_html_files = list_matching_ignoring(&pages, &ignored_dirs, |path| {
         has_ext(path, "html")
             && !is_special_page(path, "_layout")
             && !is_special_page(path, "_loading")
@@ -211,9 +225,13 @@ pub fn scan_project(
         pilcrow_toml,
         crate_versions: crate_versions(&resolved.project_root, &resolved.manifest_path)?,
         routes: route_html_files,
-        layouts: list_matching(&pages, |path| is_special_page(path, "_layout"))?,
-        loading_skeletons: list_matching(&pages, |path| is_special_page(path, "_loading"))?,
-        not_found_pages: list_matching(&pages, |path| {
+        layouts: list_matching_ignoring(&pages, &ignored_dirs, |path| {
+            is_special_page(path, "_layout")
+        })?,
+        loading_skeletons: list_matching_ignoring(&pages, &ignored_dirs, |path| {
+            is_special_page(path, "_loading")
+        })?,
+        not_found_pages: list_matching_ignoring(&pages, &ignored_dirs, |path| {
             is_special_page(path, "_not_found") || is_special_page(path, "not-found")
         })?,
         ui_components: list_matching(&src.join("ui"), |path| has_ext(path, "html"))?,
@@ -677,11 +695,19 @@ fn find_target_dir(manifest_dir: &Path) -> PathBuf {
 }
 
 fn list_matching(dir: &Path, predicate: impl Fn(&Path) -> bool + Copy) -> Result<Vec<FileInfo>> {
+    list_matching_ignoring(dir, &[], predicate)
+}
+
+fn list_matching_ignoring(
+    dir: &Path,
+    ignored_dirs: &[String],
+    predicate: impl Fn(&Path) -> bool + Copy,
+) -> Result<Vec<FileInfo>> {
     let mut files = Vec::new();
     if !dir.exists() {
         return Ok(files);
     }
-    collect_matching(dir, dir, predicate, &mut files)?;
+    collect_matching(dir, dir, ignored_dirs, predicate, &mut files)?;
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
 }
@@ -689,6 +715,7 @@ fn list_matching(dir: &Path, predicate: impl Fn(&Path) -> bool + Copy) -> Result
 fn collect_matching(
     base: &Path,
     dir: &Path,
+    ignored_dirs: &[String],
     predicate: impl Fn(&Path) -> bool + Copy,
     files: &mut Vec<FileInfo>,
 ) -> Result<()> {
@@ -697,7 +724,10 @@ fn collect_matching(
         let path = entry.path();
         let metadata = entry.metadata()?;
         if metadata.is_dir() {
-            collect_matching(base, &path, predicate, files)?;
+            if is_ignored_dir(base, &path, ignored_dirs) {
+                continue;
+            }
+            collect_matching(base, &path, ignored_dirs, predicate, files)?;
         } else if predicate(&path) {
             files.push(FileInfo {
                 path: path
@@ -710,6 +740,14 @@ fn collect_matching(
         }
     }
     Ok(())
+}
+
+fn is_ignored_dir(base: &Path, path: &Path, ignored_dirs: &[String]) -> bool {
+    let rel = path.strip_prefix(base).unwrap_or(path);
+    let rel = normalize_path(&rel.to_string_lossy());
+    ignored_dirs
+        .iter()
+        .any(|ignored| rel == *ignored || rel.starts_with(&format!("{ignored}/")))
 }
 
 fn file_info(base: &Path, path: &Path) -> Result<FileInfo> {

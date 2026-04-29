@@ -57,7 +57,7 @@ Current architecture in one sentence: Pilcrow scans `src/pages`, `src/ui`, `src/
 
 ### DX
 
-- CLI is too thin. `dev` shells out to `cargo watch` and `cargo run`.
+- CLI is intentionally thin. `dev` shells out to `cargo watch` and `cargo run`, which keeps the workflow aligned with common Rust tooling.
 - Build errors are often panics or generated-code errors, not source-mapped diagnostics.
 - Hot reload is partial: CSS hot swap plus cargo-watch restart.
 - Boilerplate is acceptable for Rust, too heavy versus SvelteKit/Astro.
@@ -189,15 +189,15 @@ Why it matters: pages without runtime or strict CSP break deferred streaming.
 
 Suggested fix: inject nonce-aware shims and support external runtime script mode.
 
-### 12. Dev server depends on external cargo-watch
+### 12. Dev workflow should standardize on Rust-native tooling
 
 File: `tools/cli/src/dev.rs`
 
-Problem: dev server depends on external `cargo-watch`.
+Problem: the audit originally treated external `cargo-watch` as a weakness, but using the normal Cargo ecosystem is the right default for Pilcrow.
 
-Why it matters: weak first-run DX.
+Why it matters: developers should not need to learn a Pilcrow-specific watcher when `cargo watch` already works well and is familiar across Rust projects.
 
-Suggested fix: embed watcher in CLI and present structured compile/runtime errors.
+Suggested fix: keep `pilcrow dev` as a thin, well-documented wrapper over `cargo watch`; add repo-level `just` recipes for contributors; reserve `xtask` for future workflows that need real Rust logic.
 
 ## Phase 4: Production Readiness Checklist
 
@@ -215,7 +215,7 @@ Suggested fix: embed watcher in CLI and present structured compile/runtime error
 
 ### Should Have
 
-- Built-in dev watcher.
+- Standardized contributor commands with `just`; keep app dev powered by `cargo watch`.
 - Better CLI: `pilcrow check`, `pilcrow routes`, `pilcrow doctor`, `pilcrow build`.
 - Route manifest inspection.
 - Bundle/runtime size budget for `silcrow.js`.
@@ -231,6 +231,17 @@ Suggested fix: embed watcher in CLI and present structured compile/runtime error
 
 
 ## Phase 5: DX Improvements
+
+Preferred cache policy syntax:
+
+Keep the existing Rust-constant style. It is simple, type-checked, grep-friendly, and consistent with the current code-behind pattern.
+
+```rust
+pub const REVALIDATE: u64 = 60;
+pub const CACHE_TAGS: &[&str] = &["products"];
+```
+
+Do not replace this with a procedural attribute unless there is a future need for richer compile-time validation that constants cannot provide.
 
 Before:
 
@@ -258,29 +269,23 @@ pub async fn load(ctx: Page) -> AppResult<Props> {
 Decision: no `#[page("/products/[id:int]")]` for normal pages. Routekit remains file/folder based; the path is the source of truth. Dynamic route params are generated as a page-local `Params` type plus a page-local `Page` alias, matching the existing `Props` convention and avoiding duplicated route declarations.
 
 
-Before:
-
-```rust
-pub const REVALIDATE: u64 = 60;
-pub const CACHE_TAGS: &[&str] = &["products"];
-```
-
-After:
-
-```rust
-#[cache(revalidate = 60, tags = ["products"])]
-pub async fn load(req: Req) -> AppResult<Props> {
-    // ...
-}
-```
+Decision: no `#[cache(...)]` attribute for normal cache policy. Routekit should continue discovering `REVALIDATE` and `CACHE_TAGS` constants from code-behind files.
 
 CLI improvements:
 
-- `pilcrow dev`: no external `cargo-watch`.
+- `pilcrow dev`: thin wrapper around `cargo watch`, with clear install guidance when missing.
 - `pilcrow check`: run routekit compile plus diagnostics without full app build.
 - `pilcrow routes`: print route tree, layouts, cache policy, actions.
 - `pilcrow explain /products/[id]`: show generated handler sources and matched files.
 - `pilcrow doctor`: MCP-backed project diagnosis.
+
+Contributor command runner decision:
+
+- Adopt `just` for the Pilcrow repository itself. It is cross-platform enough for Rust contributors, easy to read, supports environment variables and multi-step workflows, and avoids hiding normal Cargo commands.
+- Do not require `just` for generated Pilcrow apps. Scaffolded apps should work with `cargo run`, `cargo watch`, and `pilcrow dev`.
+- Do not use Cargo aliases as the primary workflow layer. They are useful for short local conveniences but too limited for multi-crate commands, separate manifests, and environment setup.
+- Do not use `make` as the primary workflow layer. It is ubiquitous on Unix, but less pleasant on Windows and less idiomatic for modern Rust projects.
+- Do not add `xtask` yet. Use it later if Pilcrow needs substantial custom automation that benefits from Rust types and shared code.
 
 ## Phase 6: Architecture Recommendations
 
@@ -348,7 +353,7 @@ The framework must be excellent without AI; AI should make it faster to use.
 
 - Async-safe ISR cache with atomic filesystem backend.
 - Real Redis backend or remove Redis config.
-- Built-in dev watcher.
+- `just`-based contributor workflow and polished `pilcrow dev` cargo-watch wrapper.
 - End-to-end sandbox tests through HTTP.
 - CSP-compatible deferred streaming.
 - Documentation site generated from markdown plus MCP resources.

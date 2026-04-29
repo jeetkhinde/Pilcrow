@@ -71,6 +71,28 @@ fn route_graph_static_routes() {
 }
 
 #[test]
+fn route_graph_respects_ignored_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = minimal_app(&dir, "app");
+    fs::create_dir_all(app.join("src/pages/Cards")).unwrap();
+    fs::write(
+        app.join("Pilcrow.toml"),
+        "[routing]\nignore_directories = [\"Cards\"]\n",
+    )
+    .unwrap();
+    fs::write(app.join("src/pages/index.html"), "<h1>Home</h1>").unwrap();
+    fs::write(app.join("src/pages/Cards/Card.html"), "<h1>Card</h1>").unwrap();
+
+    let ctx = scan(&dir, "app");
+    let files: Vec<&str> = ctx.routes.iter().map(|route| route.path.as_str()).collect();
+    assert!(files.contains(&"index.html"), "missing index route");
+    assert!(
+        !files.contains(&"Cards/Card.html"),
+        "ignored directory leaked into route scan: {files:?}"
+    );
+}
+
+#[test]
 fn route_graph_dynamic_route() {
     let dir = tempfile::tempdir().unwrap();
     let app = minimal_app(&dir, "app");

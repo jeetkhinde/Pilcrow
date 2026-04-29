@@ -1206,7 +1206,7 @@ id = "pilcrow-export"
 name = "Static Export (pilcrow export)"
 domain = "pilcrow"
 status = "stable"
-summary = "Export all pre-rendered pages as static HTML files using `cargo run -- export <dir>` or `pilcrow-cli export <dir>`."
+summary = "Export all pre-rendered pages as static HTML files using `cargo run -- export <dir>` or `pilcrow export <dir>`."
 spec = """
 Pages with `pub const PRERENDER: bool = true` are rendered at export time and written to disk as
 `<dir><key>/index.html`. The root key `/` writes to `<dir>/index.html`.
@@ -1215,7 +1215,7 @@ The `pilcrow_app!()` macro injects a `pilcrow_export(dir)` async fn. The scaffol
 template dispatches to it when the first CLI arg is `export`:
 
     cargo run -- export dist      # writes to ./dist/
-    pilcrow-cli export dist       # runs cargo run -- export dist in the project directory
+    pilcrow export dist           # runs cargo run -- export dist in the project directory
 
 Dynamic routes with PRERENDER = true must also declare `entries()`.
 """
@@ -1230,7 +1230,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
 }
 
 // cargo run -- export dist
-// pilcrow-cli export dist
+// pilcrow export dist
 """
 constraints = [
   "Only pages with PRERENDER = true are exported; pages without it are skipped.",
@@ -1323,13 +1323,13 @@ id = "scaffold-auth-postgres"
 name = "Scaffold flags: --with-auth and --with-postgres"
 domain = "pilcrow"
 status = "stable"
-summary = "`pilcrow-cli new <dir> --with-auth --with-postgres` generates auth middleware, .env, and Pilcrow.toml env config."
+summary = "`pilcrow new <dir> --with-auth --with-postgres` generates auth middleware, .env, and Pilcrow.toml env config."
 spec = """
 Pass one or both flags when creating a new project:
 
-  pilcrow-cli new my-app --with-auth
-  pilcrow-cli new my-app --with-postgres
-  pilcrow-cli new my-app --with-auth --with-postgres
+  pilcrow new my-app --with-auth
+  pilcrow new my-app --with-postgres
+  pilcrow new my-app --with-auth --with-postgres
 
 --with-auth generates:
   - src/middleware.rs with a session cookie auth skeleton
@@ -1342,7 +1342,7 @@ Pass one or both flags when creating a new project:
 """
 canonical_usage = """
 # Create project with both flags:
-pilcrow-cli new my-app --with-auth --with-postgres
+pilcrow new my-app --with-auth --with-postgres
 
 # Generated src/middleware.rs:
 pub async fn middleware(req: Req, next: Next) -> Response {
