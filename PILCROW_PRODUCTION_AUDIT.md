@@ -229,6 +229,7 @@ Suggested fix: embed watcher in CLI and present structured compile/runtime error
 - Visual route inspector.
 - AI-generated migration/fix suggestions via MCP.
 
+
 ## Phase 5: DX Improvements
 
 Before:
@@ -243,11 +244,19 @@ pub async fn load(req: Req) -> AppResult<Props> {
 After:
 
 ```rust
-#[page("/products/[id:int]")]
-pub async fn load(ctx: Page<ProductParams>) -> Result<Props> {
+// Route path is still owned by the filesystem:
+// src/pages/products/[id:int].html
+//
+// Routekit generates:
+// pub struct Params { pub id: i64 }
+// pub type Page = pilcrow_web::Page<Params>;
+pub async fn load(ctx: Page) -> AppResult<Props> {
     Ok(Props { id: ctx.params.id })
 }
 ```
+
+Decision: no `#[page("/products/[id:int]")]` for normal pages. Routekit remains file/folder based; the path is the source of truth. Dynamic route params are generated as a page-local `Params` type plus a page-local `Page` alias, matching the existing `Props` convention and avoiding duplicated route declarations.
+
 
 Before:
 

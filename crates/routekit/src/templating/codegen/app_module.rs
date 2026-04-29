@@ -220,10 +220,15 @@ pub fn render_generated_app_module(
         let page_wants_client = page_load.map_or(false, |s| s.wants_client);
         let needs_client = any_layout_client || page_wants_client;
 
-        let any_layout_req = active_chain.iter().any(|(_, _, _, sig)| sig.wants_req);
-        let page_wants_req = page_load.map_or(false, |s| s.wants_req);
+        let any_layout_req = active_chain.iter().any(|(_, _, _, sig)| sig.consumes_req());
+        let page_wants_req = page_load.map_or(false, |s| s.consumes_req());
         let has_param_matchers = !entry.param_matchers.is_empty();
-        let needs_req = any_layout_req || page_wants_req || has_param_matchers;
+        let has_typed_param_guards = entry
+            .route_params
+            .iter()
+            .any(|param| matches!(param.rust_type.as_str(), "i64" | "u64"));
+        let needs_req =
+            any_layout_req || page_wants_req || has_param_matchers || has_typed_param_guards;
 
         // PilcrowClient is FromRequestParts and must come before Req (FromRequest).
         let closure_args = match (needs_req, needs_client) {
@@ -302,8 +307,22 @@ pub fn render_generated_app_module(
         out.push_str("            async move {\n");
 
         // ── Param matcher guards ────────────────────────────────────────────────
-        if has_param_matchers {
+        if has_param_matchers || has_typed_param_guards {
             out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+            for param in entry
+                .route_params
+                .iter()
+                .filter(|param| matches!(param.rust_type.as_str(), "i64" | "u64"))
+            {
+                let name = &param.name;
+                let ty = &param.rust_type;
+                let _ = writeln!(
+                    out,
+                    "            if req.params.get(\"{name}\").is_some_and(|__v| __v.parse::<{ty}>().is_err()) {{"
+                );
+                out.push_str("                return (::pilcrow_web::StatusCode::NOT_FOUND, \"not found\").into_response();\n");
+                out.push_str("            }\n");
+            }
             let mut sorted_matchers: Vec<(&String, &String)> =
                 entry.param_matchers.iter().collect();
             sorted_matchers.sort_by_key(|(k, _)| k.as_str());
@@ -399,7 +418,7 @@ pub fn render_generated_app_module(
 
             let layout_req_consumers = active_chain
                 .iter()
-                .filter(|(_, _, _, s)| s.wants_req)
+                .filter(|(_, _, _, s)| s.consumes_req())
                 .count();
             let mut req_clones_left = if needs_req {
                 let total = layout_req_consumers + if page_wants_req { 1 } else { 0 };
@@ -454,15 +473,20 @@ pub fn render_generated_app_module(
 
             // ── Page load ────────────────────────────────────────────────────────
             if let Some(psig) = page_load {
-                let req_arg = if psig.wants_req {
-                    if req_clones_left > 0 {
+                let req_arg = if psig.consumes_req() {
+                    let raw = if req_clones_left > 0 {
                         req_clones_left -= 1;
                         "req.clone()"
                     } else {
                         "req"
+                    };
+                    if psig.wants_page {
+                        format!("::pilcrow_web::Page::from_req({raw})")
+                    } else {
+                        raw.to_string()
                     }
                 } else {
-                    ""
+                    String::new()
                 };
                 let client_arg = if psig.wants_client {
                     if client_clones_left > 0 {
@@ -474,7 +498,7 @@ pub fn render_generated_app_module(
                 } else {
                     ""
                 };
-                let page_call_args = match (req_arg, client_arg) {
+                let page_call_args = match (req_arg.as_str(), client_arg) {
                     ("", "") => String::new(),
                     (r, "") => r.to_string(),
                     ("", cl) => cl.to_string(),
@@ -808,9 +832,7 @@ pub fn render_generated_app_module(
         out.push_str("    next: ::pilcrow_web::axum::middleware::Next,\n");
         out.push_str(") -> ::pilcrow_web::axum::response::Response {\n");
         out.push_str("    let (parts, body) = req.into_parts();\n");
-        out.push_str(
-            "    let err_req = ::pilcrow_web::Req::__from_error_parts(&parts);\n",
-        );
+        out.push_str("    let err_req = ::pilcrow_web::Req::__from_error_parts(&parts);\n");
         out.push_str(
             "    let forwarded = ::pilcrow_web::axum::extract::Request::from_parts(parts, body);\n",
         );
@@ -916,9 +938,15 @@ fn emit_isr_handler(
     out.push_str("                            let __synth_locals = req.locals.clone();\n");
     out.push_str("                            ::pilcrow_web::tokio::spawn(async move {\n");
     // Synthetic req used ONLY in the background task.
-    out.push_str("                                let __synth_req = ::pilcrow_web::Req::__synthetic(\n");
-    out.push_str("                                    __synth_path, __synth_params, __synth_query,\n");
-    out.push_str("                                    __synth_headers, __synth_cookies, __synth_locals,\n");
+    out.push_str(
+        "                                let __synth_req = ::pilcrow_web::Req::__synthetic(\n",
+    );
+    out.push_str(
+        "                                    __synth_path, __synth_params, __synth_query,\n",
+    );
+    out.push_str(
+        "                                    __synth_headers, __synth_cookies, __synth_locals,\n",
+    );
     out.push_str("                                );\n");
     // Emit the revalidation body inside the spawn task.
     out.push_str(&emit_isr_revalidation_body(
@@ -943,10 +971,10 @@ fn emit_isr_handler(
     let any_layout_load = !active_chain.is_empty();
     let layout_req_consumers = active_chain
         .iter()
-        .filter(|(_, _, _, s)| s.wants_req)
+        .filter(|(_, _, _, s)| s.consumes_req())
         .count();
-    let mut req_clones_left = if any_layout_load || page_sig.wants_req {
-        let total = layout_req_consumers + if page_sig.wants_req { 1 } else { 0 };
+    let mut req_clones_left = if any_layout_load || page_sig.consumes_req() {
+        let total = layout_req_consumers + if page_sig.consumes_req() { 1 } else { 0 };
         total.saturating_sub(1)
     } else {
         0
@@ -956,11 +984,12 @@ fn emit_isr_handler(
         .iter()
         .filter(|(_, _, _, s)| s.wants_client)
         .count();
-    let mut client_clones_left = if layout_client_consumers + if page_sig.wants_client { 1 } else { 0 } > 0 {
-        (layout_client_consumers + if page_sig.wants_client { 1 } else { 0 }).saturating_sub(1)
-    } else {
-        0
-    };
+    let mut client_clones_left =
+        if layout_client_consumers + if page_sig.wants_client { 1 } else { 0 } > 0 {
+            (layout_client_consumers + if page_sig.wants_client { 1 } else { 0 }).saturating_sub(1)
+        } else {
+            0
+        };
 
     for (idx, layout_mod, _, lsig) in active_chain {
         let req_arg = if lsig.wants_req {
@@ -1007,14 +1036,19 @@ fn emit_isr_handler(
     }
 
     // Page load.
-    let req_arg = if page_sig.wants_req {
-        if req_clones_left > 0 {
+    let req_arg = if page_sig.consumes_req() {
+        let raw = if req_clones_left > 0 {
             "req.clone()"
         } else {
             "req"
+        };
+        if page_sig.wants_page {
+            format!("::pilcrow_web::Page::from_req({raw})")
+        } else {
+            raw.to_string()
         }
     } else {
-        ""
+        String::new()
     };
     let client_arg = if page_sig.wants_client {
         if client_clones_left > 0 {
@@ -1025,7 +1059,7 @@ fn emit_isr_handler(
     } else {
         ""
     };
-    let page_call_args = match (req_arg, client_arg) {
+    let page_call_args = match (req_arg.as_str(), client_arg) {
         ("", "") => String::new(),
         (r, "") => r.to_string(),
         ("", cl) => cl.to_string(),
@@ -1078,7 +1112,9 @@ fn emit_isr_handler(
     out.push_str("            let __post_bypass = __resp_handle.__is_bypass_cache();\n");
     out.push_str("            if let (::std::option::Option::Some(ref __cache), false) = (&__isr_arc, __post_bypass) {\n");
     out.push_str("                let __tags: ::std::vec::Vec<String> = __ISR_TAGS.iter().map(|s| s.to_string()).collect();\n");
-    out.push_str("                __cache.store(&__isr_key, html.clone(), __ISR_TTL, __tags).await;\n");
+    out.push_str(
+        "                __cache.store(&__isr_key, html.clone(), __ISR_TTL, __tags).await;\n",
+    );
     out.push_str("            }\n");
 
     // Apply response side-effects and return.
@@ -1107,7 +1143,11 @@ fn emit_isr_revalidation_body(
 
     // Layout loads — always clone __synth_req since it's a background task.
     for (idx, layout_mod, _, lsig) in active_chain {
-        let req_arg = if lsig.wants_req { "__synth_req.clone()" } else { "" };
+        let req_arg = if lsig.wants_req {
+            "__synth_req.clone()"
+        } else {
+            ""
+        };
         let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
         let awaited = if lsig.is_async {
             format!("{call_expr}.await")
@@ -1118,12 +1158,21 @@ fn emit_isr_revalidation_body(
         if lsig.returns_result {
             let _ = writeln!(out, "                                    let {var} = {awaited}.map_err(|e| e.to_string())?;");
         } else {
-            let _ = writeln!(out, "                                    let {var} = {awaited};");
+            let _ = writeln!(
+                out,
+                "                                    let {var} = {awaited};"
+            );
         }
     }
 
     // Page load.
-    let page_req_arg = if page_sig.wants_req { "__synth_req" } else { "" };
+    let page_req_arg = if page_sig.wants_page {
+        "::pilcrow_web::Page::from_req(__synth_req)".to_string()
+    } else if page_sig.wants_req {
+        "__synth_req".to_string()
+    } else {
+        String::new()
+    };
     let page_call = format!("__pilcrow_gen::{mod_name}::load({page_req_arg})");
     let page_awaited = if page_sig.is_async {
         format!("{page_call}.await")
@@ -1133,7 +1182,10 @@ fn emit_isr_revalidation_body(
     if page_sig.returns_result {
         let _ = writeln!(out, "                                    let page_data = {page_awaited}.map_err(|e| e.to_string())?;");
     } else {
-        let _ = writeln!(out, "                                    let page_data = {page_awaited};");
+        let _ = writeln!(
+            out,
+            "                                    let page_data = {page_awaited};"
+        );
     }
 
     // Construct props.
@@ -1146,11 +1198,17 @@ fn emit_isr_revalidation_body(
         for (idx, _, field_names, _) in active_chain {
             let var = format!("layout_data_{idx}");
             for field in *field_names {
-                let _ = writeln!(out, "                                        {field}: {var}.{field},");
+                let _ = writeln!(
+                    out,
+                    "                                        {field}: {var}.{field},"
+                );
             }
         }
         for field in &info.page_field_names {
-            let _ = writeln!(out, "                                        {field}: page_data.{field},");
+            let _ = writeln!(
+                out,
+                "                                        {field}: page_data.{field},"
+            );
         }
         out.push_str("                                    };\n");
     } else {
@@ -1167,7 +1225,9 @@ fn emit_isr_revalidation_body(
 
     // Handle result.
     out.push_str("                                match __reval_result {\n");
-    out.push_str("                                    ::std::result::Result::Ok(fresh_html) => {\n");
+    out.push_str(
+        "                                    ::std::result::Result::Ok(fresh_html) => {\n",
+    );
     out.push_str("                                        let __tags: ::std::vec::Vec<String> = __ISR_TAGS.iter().map(|s| s.to_string()).collect();\n");
     out.push_str("                                        __cache2.store(&__key2, fresh_html, __ISR_TTL, __tags).await;\n");
     out.push_str("                                    }\n");
@@ -1259,9 +1319,12 @@ fn emit_ssg_handler(
     out.push_str("            let __resp_handle = req.res.clone();\n");
 
     let any_layout_load = !active_chain.is_empty();
-    let layout_req_consumers = active_chain.iter().filter(|(_, _, _, s)| s.wants_req).count();
+    let layout_req_consumers = active_chain
+        .iter()
+        .filter(|(_, _, _, s)| s.consumes_req())
+        .count();
     let mut req_clones_left = {
-        let total = layout_req_consumers + if page_sig.wants_req { 1 } else { 0 };
+        let total = layout_req_consumers + if page_sig.consumes_req() { 1 } else { 0 };
         total.saturating_sub(1)
     };
 
@@ -1278,7 +1341,11 @@ fn emit_ssg_handler(
             ""
         };
         let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
-        let awaited = if lsig.is_async { format!("{call_expr}.await") } else { call_expr };
+        let awaited = if lsig.is_async {
+            format!("{call_expr}.await")
+        } else {
+            call_expr
+        };
         let var = format!("layout_data_{idx}");
         if lsig.returns_result {
             let _ = writeln!(out, "            let {var} = match {awaited} {{");
@@ -1291,13 +1358,26 @@ fn emit_ssg_handler(
     }
 
     // Page load.
-    let req_arg = if page_sig.wants_req {
-        if req_clones_left > 0 { "req.clone()" } else { "req" }
+    let req_arg = if page_sig.consumes_req() {
+        let raw = if req_clones_left > 0 {
+            "req.clone()"
+        } else {
+            "req"
+        };
+        if page_sig.wants_page {
+            format!("::pilcrow_web::Page::from_req({raw})")
+        } else {
+            raw.to_string()
+        }
     } else {
-        ""
+        String::new()
     };
     let call_expr = format!("__pilcrow_gen::{mod_name}::load({req_arg})");
-    let awaited = if page_sig.is_async { format!("{call_expr}.await") } else { call_expr };
+    let awaited = if page_sig.is_async {
+        format!("{call_expr}.await")
+    } else {
+        call_expr
+    };
     if page_sig.returns_result {
         let _ = writeln!(out, "            let page_data = match {awaited} {{");
         out.push_str("                Ok(p) => p,\n");
@@ -1310,7 +1390,10 @@ fn emit_ssg_handler(
     // Construct props.
     if any_layout_load {
         let info = chain_info.expect("chain_info present when active_chain is non-empty");
-        let _ = writeln!(out, "            let props = __pilcrow_gen::{mod_name}::__MergedProps {{");
+        let _ = writeln!(
+            out,
+            "            let props = __pilcrow_gen::{mod_name}::__MergedProps {{"
+        );
         for (idx, _, field_names, _) in active_chain {
             let var = format!("layout_data_{idx}");
             for field in *field_names {
@@ -1333,7 +1416,9 @@ fn emit_ssg_handler(
 
     // Cache the rendered HTML with u64::MAX TTL (never expires naturally).
     out.push_str("            if let Some(ref __cache) = __isr_arc {\n");
-    out.push_str("                __cache.store(&__ssg_key, html.clone(), u64::MAX, vec![]).await;\n");
+    out.push_str(
+        "                __cache.store(&__ssg_key, html.clone(), u64::MAX, vec![]).await;\n",
+    );
     out.push_str("            }\n");
 
     out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
@@ -1358,14 +1443,14 @@ fn emit_prerender_all(
 ) -> String {
     let mut out = String::new();
     out.push_str("\n#[allow(dead_code)]\n");
-    out.push_str(
-        "pub async fn __pilcrow_prerender_all(cache: &::pilcrow_web::IsrCache) {\n",
-    );
+    out.push_str("pub async fn __pilcrow_prerender_all(cache: &::pilcrow_web::IsrCache) {\n");
 
     let mut has_any = false;
 
     for entry in page_entries {
-        let Some(ssg_opts) = ssg_config_map.get(&entry.symbol) else { continue };
+        let Some(ssg_opts) = ssg_config_map.get(&entry.symbol) else {
+            continue;
+        };
         if !ssg_opts.prerender {
             continue;
         }
@@ -1407,7 +1492,8 @@ fn emit_prerender_all(
             let tags = if isr.cache_tags.is_empty() {
                 "vec![]".to_string()
             } else {
-                let items: Vec<String> = isr.cache_tags.iter().map(|t| format!("\"{t}\"")).collect();
+                let items: Vec<String> =
+                    isr.cache_tags.iter().map(|t| format!("\"{t}\"")).collect();
                 format!("vec![{}]", items.join(", "))
             };
             (format!("{ttl}u64"), tags)
@@ -1629,7 +1715,13 @@ fn emit_streaming_handler(
     }
 
     // Spawn page load() in the background; original req is moved in.
-    let page_req_arg = if page_sig.wants_req { "req" } else { "" };
+    let page_req_arg = if page_sig.wants_page {
+        "::pilcrow_web::Page::from_req(req)".to_string()
+    } else if page_sig.wants_req {
+        "req".to_string()
+    } else {
+        String::new()
+    };
     let page_call = format!("__pilcrow_gen::{mod_name}::load({page_req_arg})");
     let page_inner = if page_sig.is_async {
         format!("{page_call}.await")
@@ -1684,8 +1776,13 @@ fn emit_streaming_handler(
     // Inject streaming shim (`window.__ps`) before </head>.
     let shim = "<script>window.__ps=function(v){Silcrow.patch(v,document.body)}</script>";
     let shim_lit = rust_string(shim);
-    let _ = writeln!(out, "            const __STREAMING_SHIM: &str = {shim_lit};");
-    out.push_str("            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n");
+    let _ = writeln!(
+        out,
+        "            const __STREAMING_SHIM: &str = {shim_lit};"
+    );
+    out.push_str(
+        "            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n",
+    );
     out.push_str("                let mut __s = String::with_capacity(__shell_html.len() + __STREAMING_SHIM.len());\n");
     out.push_str("                __s.push_str(&__shell_html[..__pos]);\n");
     out.push_str("                __s.push_str(__STREAMING_SHIM);\n");
@@ -1698,7 +1795,9 @@ fn emit_streaming_handler(
     // Future that resolves the page Props to JSON once load() completes.
     out.push_str("            let __page_json_fut = async move {\n");
     out.push_str("                match __page_handle.await {\n");
-    out.push_str("                    ::std::result::Result::Ok(::std::result::Result::Ok(page_data)) =>\n");
+    out.push_str(
+        "                    ::std::result::Result::Ok(::std::result::Result::Ok(page_data)) =>\n",
+    );
     out.push_str("                        ::pilcrow_web::__serialize_page_props(page_data),\n");
     out.push_str("                    _ => ::std::string::String::new(),\n");
     out.push_str("                }\n");
@@ -1732,7 +1831,11 @@ fn emit_ssg_load_render_store(
     // Determine the indentation based on the call context.
     // Static blocks are at 8-space indent; dynamic blocks are at 12-space (inside for loop).
     // We detect this by checking whether key_expr starts with '&' (dynamic path variable).
-    let indent = if key_expr.starts_with('&') { "            " } else { "        " };
+    let indent = if key_expr.starts_with('&') {
+        "            "
+    } else {
+        "        "
+    };
 
     let mut out = String::new();
     let any_layout_load = !active_chain.is_empty();
@@ -1744,9 +1847,17 @@ fn emit_ssg_load_render_store(
 
     // Layout loads — always clone the req since this is a startup task.
     for (idx, layout_mod, _, lsig) in active_chain {
-        let req_arg = if lsig.wants_req { format!("{req_var}.clone()") } else { String::new() };
+        let req_arg = if lsig.wants_req {
+            format!("{req_var}.clone()")
+        } else {
+            String::new()
+        };
         let call_expr = format!("__pilcrow_gen::{layout_mod}::load({req_arg})");
-        let awaited = if lsig.is_async { format!("{call_expr}.await") } else { call_expr };
+        let awaited = if lsig.is_async {
+            format!("{call_expr}.await")
+        } else {
+            call_expr
+        };
         let var = format!("layout_data_{idx}");
         if lsig.returns_result {
             let _ = writeln!(
@@ -1759,9 +1870,19 @@ fn emit_ssg_load_render_store(
     }
 
     // Page load.
-    let req_arg = if page_sig.wants_req { req_var.to_string() } else { String::new() };
+    let req_arg = if page_sig.wants_page {
+        format!("::pilcrow_web::Page::from_req({req_var})")
+    } else if page_sig.wants_req {
+        req_var.to_string()
+    } else {
+        String::new()
+    };
     let call_expr = format!("__pilcrow_gen::{mod_name}::load({req_arg})");
-    let awaited = if page_sig.is_async { format!("{call_expr}.await") } else { call_expr };
+    let awaited = if page_sig.is_async {
+        format!("{call_expr}.await")
+    } else {
+        call_expr
+    };
     if page_sig.returns_result {
         let _ = writeln!(
             out,

@@ -1,13 +1,13 @@
 /// Integration and unit tests for `Locals`, `FormMap`, and `Req`.
 use axum::{
-    Router,
     body::Body,
     http::{Request, StatusCode},
     routing::{get, post},
+    Router,
 };
 use http_body_util::BodyExt;
 use pilcrow_core::AppError;
-use runtime::{FormMap, Locals, Req, form_errors};
+use runtime::{form_errors, FormMap, Locals, Req};
 use tower::ServiceExt;
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -34,9 +34,7 @@ fn fail_app() -> Router {
     Router::new().route(
         "/",
         // req.fail() always returns Ok(_) — safe to unwrap.
-        post(|req: Req| async move {
-            req.fail(form_errors().error("email", "Required")).unwrap()
-        }),
+        post(|req: Req| async move { req.fail(form_errors().error("email", "Required")).unwrap() }),
     )
 }
 
@@ -58,7 +56,10 @@ fn locals_get_absent_is_none() {
 #[test]
 fn locals_require_absent_is_unauthorized() {
     let locals = Locals::default();
-    assert!(matches!(locals.require::<u32>(), Err(AppError::Unauthorized)));
+    assert!(matches!(
+        locals.require::<u32>(),
+        Err(AppError::Unauthorized)
+    ));
 }
 
 #[test]
@@ -310,7 +311,12 @@ async fn req_fail_enhanced_returns_json_errors() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("application/json"), "expected json, got: {ct}");
 
     let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
@@ -357,7 +363,9 @@ async fn req_take_form_flash_reads_and_clears_cookie() {
     use runtime::form_errors;
 
     // Encode a FormErrors value the same way req.fail() does.
-    let errors = form_errors().error("name", "Required").value("name", "alice");
+    let errors = form_errors()
+        .error("name", "Required")
+        .value("name", "alice");
     let json = serde_json::to_string(&errors).unwrap();
     let encoded = urlencoding::encode(&json).into_owned();
     let cookie_header = format!("silcrow_form_flash={encoded}");

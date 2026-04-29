@@ -218,8 +218,8 @@ pub fn instrument_frontmatter(
         ));
     }
 
-    // Pages and layouts must use the canonical load() signature so that
-    // req.res modifiers (toasts, headers, cookies) are always applied.
+    // Pages and layouts must use a canonical load() signature so that
+    // response modifiers (toasts, headers, cookies) are always applied.
     if let Some(ref sig) = load_signature {
         if source_path.contains("/pages/") {
             if !sig.is_async {
@@ -227,7 +227,7 @@ pub fn instrument_frontmatter(
                     io::ErrorKind::InvalidData,
                     format!(
                         "`load()` in `{source_path}` must be declared `async`.\n\
-                         Required signature: pub async fn load(req: Req) -> AppResult<Props>"
+                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
                     ),
                 ));
             }
@@ -236,16 +236,16 @@ pub fn instrument_frontmatter(
                     io::ErrorKind::InvalidData,
                     format!(
                         "`load()` in `{source_path}` must return `AppResult<Props>`.\n\
-                         Required signature: pub async fn load(req: Req) -> AppResult<Props>"
+                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
                     ),
                 ));
             }
-            if !sig.wants_req {
+            if !sig.wants_req && !sig.wants_page {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "`load()` in `{source_path}` must take `req: Req` as a parameter.\n\
-                         Required signature: pub async fn load(req: Req) -> AppResult<Props>"
+                        "`load()` in `{source_path}` must take `req: Req` or `ctx: Page` as a parameter.\n\
+                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
                     ),
                 ));
             }
@@ -424,11 +424,22 @@ pub fn detect_load_signature(sig: &syn::Signature) -> LoadSignature {
         }
     });
 
+    let wants_page = sig.inputs.iter().any(|arg| {
+        if let syn::FnArg::Typed(pat) = arg {
+            type_last_ident(&pat.ty)
+                .map(|ident| ident == "Page")
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    });
+
     LoadSignature {
         is_async,
         returns_result,
         wants_client,
         wants_req,
+        wants_page,
     }
 }
 

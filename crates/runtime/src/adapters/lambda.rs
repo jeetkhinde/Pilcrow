@@ -51,8 +51,7 @@ impl PilcrowAdapter for LambdaAdapter {
                         LambdaBody::Text(s) => Bytes::from(s.into_bytes()),
                         LambdaBody::Binary(b) => Bytes::from(b),
                     };
-                    let http_req =
-                        http::Request::from_parts(parts, AxumBody::from(body_bytes));
+                    let http_req = http::Request::from_parts(parts, AxumBody::from(body_bytes));
 
                     let resp = app
                         .oneshot(http_req)

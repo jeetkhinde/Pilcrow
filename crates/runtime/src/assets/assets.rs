@@ -1,6 +1,6 @@
 // ./crates/pilcrow/src/assets.rs
 
-use axum::http::{StatusCode, header};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 pub const SILCROW_JS: &str = include_str!("../../assets/silcrow.js");

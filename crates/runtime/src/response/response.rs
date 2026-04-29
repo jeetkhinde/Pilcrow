@@ -1,8 +1,8 @@
 use crate::response::headers::*;
 use axum::{
-    Json,
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Json,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use cookie::time::Duration;
@@ -113,9 +113,8 @@ impl BaseResponse {
             })
             .unwrap_or_default();
         map.insert(event_name.to_string(), serde_json::json!({}));
-        self.headers.typed_insert(SilcrowTrigger(
-            serde_json::Value::Object(map).to_string(),
-        ));
+        self.headers
+            .typed_insert(SilcrowTrigger(serde_json::Value::Object(map).to_string()));
     }
 
     /// Override the swap target selector via `silcrow-retarget`.
@@ -138,9 +137,8 @@ impl BaseResponse {
             .and_then(|h| serde_json::from_str::<Vec<serde_json::Value>>(&h.0).ok())
             .unwrap_or_default();
         list.push(serde_json::json!({ "data": data, "target": selector }));
-        self.headers.typed_insert(SilcrowPatch(
-            serde_json::Value::Array(list).to_string(),
-        ));
+        self.headers
+            .typed_insert(SilcrowPatch(serde_json::Value::Array(list).to_string()));
     }
 
     /// Invalidate a DOM target's binding cache via `silcrow-invalidate`.
@@ -159,20 +157,17 @@ impl BaseResponse {
 
     /// Trigger a client-side navigation via `silcrow-navigate`.
     pub fn set_client_navigate(&mut self, path: &str) {
-        self.headers
-            .typed_insert(SilcrowNavigate(path.to_string()));
+        self.headers.typed_insert(SilcrowNavigate(path.to_string()));
     }
 
     /// Open an SSE connection on the client via `silcrow-sse`.
     pub fn set_sse(&mut self, path: &str) {
-        self.headers
-            .typed_insert(SilcrowSse(path.to_string()));
+        self.headers.typed_insert(SilcrowSse(path.to_string()));
     }
 
     /// Open a WebSocket connection on the client via `silcrow-ws`.
     pub fn set_ws(&mut self, path: &str) {
-        self.headers
-            .typed_insert(SilcrowWs(path.to_string()));
+        self.headers.typed_insert(SilcrowWs(path.to_string()));
     }
 
     // ── Apply accumulated modifications ──────────────────────────
@@ -401,7 +396,10 @@ impl FormErrors {
     pub fn error(mut self, field: impl Into<String>, message: impl Into<String>) -> Self {
         let field = field.into();
         let message = message.into();
-        self.error_list.push(FormErrorItem { field: field.clone(), message: message.clone() });
+        self.error_list.push(FormErrorItem {
+            field: field.clone(),
+            message: message.clone(),
+        });
         self.errors.insert(field, message);
         self.has_errors = true;
         self
@@ -494,4 +492,3 @@ impl ResponseExt for NavigateResponse {
         &mut self.base
     }
 }
-

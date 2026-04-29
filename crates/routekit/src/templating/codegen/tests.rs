@@ -25,11 +25,9 @@ mod tests {
         assert!(patterns.contains(&"/about"));
         assert!(patterns.contains(&"/posts/:id"));
         assert!(entries.iter().any(|e| e.symbol == "page_posts_id"));
-        assert!(
-            entries
-                .iter()
-                .any(|e| e.render_symbol == "render_page_posts_id")
-        );
+        assert!(entries
+            .iter()
+            .any(|e| e.render_symbol == "render_page_posts_id"));
 
         cleanup(&root);
     }
@@ -41,6 +39,7 @@ mod tests {
             template_path: "/tmp/src/pages/about.html".to_string(),
             symbol: "page_about".to_string(),
             render_symbol: "render_page_about".to_string(),
+            route_params: vec![],
             param_matchers: HashMap::new(),
         }];
 
@@ -63,8 +62,8 @@ mod tests {
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("pages/blog/[slug].html"), "<h1>Blog</h1>");
 
-        let entries =
-            write_generated_routes_module(&src, &out_file, &[]).expect("should write generated file");
+        let entries = write_generated_routes_module(&src, &out_file, &[])
+            .expect("should write generated file");
         assert_eq!(entries.len(), 2);
         assert!(out_file.exists());
 
@@ -86,6 +85,7 @@ mod tests {
             template_source: "<h1>{{ title }}</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("template module should generate");
 
@@ -108,6 +108,7 @@ mod tests {
             template_source: "<h1>Home</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("synthesized Props should compile");
 
@@ -116,6 +117,33 @@ mod tests {
         assert!(generated.source.contains("template (source"));
         // Static page (no load fn) → entry is None.
         assert_eq!(generated.load_map.get("page_index"), Some(&None));
+    }
+
+    #[test]
+    fn render_generated_templates_module_emits_page_params_alias() {
+        let generated = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_products_id".to_string(),
+            render_symbol: "render_page_products_id".to_string(),
+            source_path: "/tmp/src/pages/products/[id:int].html".to_string(),
+            rust_frontmatter: "pub struct Props { pub id: i64 }\npub async fn load(ctx: Page) -> AppResult<Props> { Ok(Props { id: ctx.params.id }) }".to_string(),
+            template_source: "<h1>{{ id }}</h1>".to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+            route_params: vec![GeneratedRouteParam {
+                name: "id".to_string(),
+                rust_type: "i64".to_string(),
+                optional: false,
+                catch_all: false,
+            }],
+        }])
+        .expect("typed page params should generate");
+
+        assert!(generated.source.contains("pub struct Params"));
+        assert!(generated.source.contains("pub id: i64"));
+        assert!(generated
+            .source
+            .contains("pub type Page = ::pilcrow_web::Page<Params>"));
+        assert!(generated.source.contains("parse::<i64>"));
     }
 
     #[test]
@@ -128,14 +156,14 @@ mod tests {
             template_source: "<h1>Home</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect_err("duplicate props should fail");
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(
-            err.to_string()
-                .contains("declares multiple `Props` structs")
-        );
+        assert!(err
+            .to_string()
+            .contains("declares multiple `Props` structs"));
     }
 
     fn mk_temp_root(prefix: &str) -> PathBuf {
@@ -256,12 +284,8 @@ mod tests {
         assert!(source.contains("match __action.as_str()"));
 
         // Per-action dispatch arms calling the code-behind fns
-        assert!(
-            source.contains("\"create\" => match __pilcrow_gen::page_items::create(req).await")
-        );
-        assert!(
-            source.contains("\"delete\" => match __pilcrow_gen::page_items::delete(req).await")
-        );
+        assert!(source.contains("\"create\" => match __pilcrow_gen::page_items::create(req).await"));
+        assert!(source.contains("\"delete\" => match __pilcrow_gen::page_items::delete(req).await"));
 
         // Unknown action → 404 via AppError::NotFound
         assert!(source.contains("_ => {"));
@@ -298,32 +322,55 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
             template_source: "{% for p in products %}<p>{{ p }}</p>{% endfor %}".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("should generate with ISR constants");
 
         let src = &generated.source;
 
         // ISR constants must not appear in the emitted module source.
-        assert!(!src.contains("REVALIDATE"), "REVALIDATE leaked into emitted source");
-        assert!(!src.contains("MAX_STALE"), "MAX_STALE leaked into emitted source");
-        assert!(!src.contains("CACHE_TAGS"), "CACHE_TAGS leaked into emitted source");
-        assert!(!src.contains("CACHE_VARY"), "CACHE_VARY leaked into emitted source");
-        assert!(!src.contains("PRERENDER"), "PRERENDER leaked into emitted source");
+        assert!(
+            !src.contains("REVALIDATE"),
+            "REVALIDATE leaked into emitted source"
+        );
+        assert!(
+            !src.contains("MAX_STALE"),
+            "MAX_STALE leaked into emitted source"
+        );
+        assert!(
+            !src.contains("CACHE_TAGS"),
+            "CACHE_TAGS leaked into emitted source"
+        );
+        assert!(
+            !src.contains("CACHE_VARY"),
+            "CACHE_VARY leaked into emitted source"
+        );
+        assert!(
+            !src.contains("PRERENDER"),
+            "PRERENDER leaked into emitted source"
+        );
 
         // Props and load() must still be emitted.
         assert!(src.contains("pub struct Props"), "Props was stripped");
         assert!(src.contains("pub async fn load"), "load() was stripped");
 
         // ISR config must be recorded in the ISR map.
-        let isr = generated.isr_config_map.get("page_products")
+        let isr = generated
+            .isr_config_map
+            .get("page_products")
             .expect("page_products should have ISR config");
         assert_eq!(isr.revalidate, Some(60));
         assert_eq!(isr.max_stale, Some(3600));
-        assert_eq!(isr.cache_tags, vec!["products".to_string(), "inventory".to_string()]);
+        assert_eq!(
+            isr.cache_tags,
+            vec!["products".to_string(), "inventory".to_string()]
+        );
         assert_eq!(isr.cache_vary, vec!["tenant_id".to_string()]);
 
         // PRERENDER is now in the SSG map, not in ISrOpts.
-        let ssg = generated.ssg_config_map.get("page_products")
+        let ssg = generated
+            .ssg_config_map
+            .get("page_products")
             .expect("page_products should have SSG config");
         assert!(ssg.prerender);
     }
@@ -349,14 +396,20 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
             template_source: "<h1>{{ title }}</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("should generate with PRERENDER constant");
 
         // PRERENDER must not appear in the emitted source.
-        assert!(!generated.source.contains("PRERENDER"), "PRERENDER leaked into emitted source");
+        assert!(
+            !generated.source.contains("PRERENDER"),
+            "PRERENDER leaked into emitted source"
+        );
 
         // SSG config must be recorded.
-        let ssg = generated.ssg_config_map.get("page_about")
+        let ssg = generated
+            .ssg_config_map
+            .get("page_about")
             .expect("page_about should have SSG config");
         assert!(ssg.prerender);
         assert!(!ssg.has_entries_fn);
@@ -390,10 +443,13 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
             template_source: "<h1>{{ name }}</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("should generate with entries fn");
 
-        let ssg = generated.ssg_config_map.get("page_products_id")
+        let ssg = generated
+            .ssg_config_map
+            .get("page_products_id")
             .expect("page_products_id should have SSG config");
         assert!(ssg.prerender);
         assert!(ssg.has_entries_fn);
@@ -409,6 +465,7 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
             template_source: "<h1>{{ title }}</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("should generate");
         assert!(generated.isr_config_map.get("page_index").is_none());
@@ -431,18 +488,28 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             template_source: "<h1>:text</h1>".to_string(),
             layout_chain: vec![],
             fragment_url_prefix: None,
+            route_params: vec![],
         }])
         .expect("should generate with STREAMING constant");
 
         // STREAMING must not appear in the emitted source.
-        assert!(!generated.source.contains("STREAMING"), "STREAMING leaked into emitted source");
+        assert!(
+            !generated.source.contains("STREAMING"),
+            "STREAMING leaked into emitted source"
+        );
 
         // streaming flag must be recorded in page_options.
-        let opts = generated.page_options.get("page_about").expect("page_about in options");
+        let opts = generated
+            .page_options
+            .get("page_about")
+            .expect("page_about in options");
         assert!(opts.streaming);
 
         // Props::default() must be derivable (Default injected automatically).
-        assert!(generated.source.contains("derive"), "Default should be injected for streaming");
+        assert!(
+            generated.source.contains("derive"),
+            "Default should be injected for streaming"
+        );
     }
 
     #[test]
@@ -452,6 +519,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             template_path: "/tmp/src/pages/products.html".to_string(),
             symbol: "page_products".to_string(),
             render_symbol: "render_page_products".to_string(),
+            route_params: vec![],
             param_matchers: HashMap::new(),
         };
         let load_sig = LoadSignature {
@@ -459,6 +527,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             returns_result: true,
             wants_client: false,
             wants_req: true,
+            wants_page: false,
         };
         let mut load_map: HashMap<String, Option<LoadSignature>> = HashMap::new();
         load_map.insert("page_products".to_string(), Some(load_sig));
@@ -466,7 +535,10 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         let mut page_opts: HashMap<String, PageOptions> = HashMap::new();
         page_opts.insert(
             "page_products".to_string(),
-            PageOptions { streaming: true, ..Default::default() },
+            PageOptions {
+                streaming: true,
+                ..Default::default()
+            },
         );
 
         let source = render_generated_app_module(
@@ -487,15 +559,27 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         );
 
         // Must spawn page load in background.
-        assert!(source.contains("tokio::spawn"), "STREAMING handler must spawn page load");
+        assert!(
+            source.contains("tokio::spawn"),
+            "STREAMING handler must spawn page load"
+        );
         // Must use __streaming_props_response.
-        assert!(source.contains("__streaming_props_response"), "must use streaming response");
+        assert!(
+            source.contains("__streaming_props_response"),
+            "must use streaming response"
+        );
         // Must inject the window.__ps shim.
         assert!(source.contains("window.__ps"), "must inject streaming shim");
         // Must serialize page props.
-        assert!(source.contains("__serialize_page_props"), "must serialize props");
+        assert!(
+            source.contains("__serialize_page_props"),
+            "must serialize props"
+        );
         // Must apply resp_handle.
-        assert!(source.contains("__resp_handle.apply_to"), "must apply response handle");
+        assert!(
+            source.contains("__resp_handle.apply_to"),
+            "must apply response handle"
+        );
     }
 
     #[test]

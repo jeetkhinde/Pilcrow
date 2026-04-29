@@ -20,12 +20,13 @@ pub(crate) enum DevEvent {
 impl DevEvent {
     fn to_sse(self) -> Event {
         match self {
-            DevEvent::CssReload { path } => Event::default()
-                .event("custom")
-                .data(serde_json::json!({
+            DevEvent::CssReload { path } => Event::default().event("custom").data(
+                serde_json::json!({
                     "event": "css-reload",
                     "data": { "path": path }
-                }).to_string()),
+                })
+                .to_string(),
+            ),
         }
     }
 }
@@ -135,7 +136,10 @@ pub(crate) fn spawn_css_watcher(tx: broadcast::Sender<DevEvent>, src_dir: PathBu
         for result in sync_rx {
             let event = match result {
                 Ok(e) => e,
-                Err(e) => { tracing::warn!("dev: CSS watch error: {e}"); continue; }
+                Err(e) => {
+                    tracing::warn!("dev: CSS watch error: {e}");
+                    continue;
+                }
             };
 
             if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {

@@ -2,14 +2,14 @@
 //! This crate is the required entrypoint for convention-based `web` apps.
 
 // ── Response builders ────────────────────────────────────────
+pub use runtime::response::response::{form_errors, json, navigate, redirect, status};
 pub use runtime::response::response::{
     ActionResult, ErrorResponse, FormErrorItem, FormErrors, JsonResponse, NavigateResponse,
     ResponseExt, ToastLevel,
 };
-pub use runtime::response::response::{form_errors, json, navigate, redirect, status};
 
 // ── Request handling ─────────────────────────────────────────
-pub use runtime::{FormMap, Locals, Next, Req, Res};
+pub use runtime::{FormMap, Locals, Next, Page, Req, Res};
 
 // ── Status & response primitives ─────────────────────────────
 pub use runtime::Response;
@@ -17,8 +17,8 @@ pub use runtime::StatusCode;
 
 // ── SSE ──────────────────────────────────────────────────────
 pub use runtime::{
-    EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute, interval, sse_raw, sse_stream,
-    watch,
+    interval, sse_raw, sse_stream, watch, EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter,
+    SseRoute,
 };
 
 // ── WebSocket ────────────────────────────────────────────────
@@ -26,8 +26,8 @@ pub use runtime::{WsEvent, WsRoute, WsStream};
 
 // ── Generated routes ─────────────────────────────────────────
 pub use runtime::{
-    GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,
-    register_generated_api_routes, register_generated_routes,
+    generated_api_routes, generated_routes, pilcrow_router, register_generated_api_routes,
+    register_generated_routes, GeneratedApiRoute, GeneratedPageRoute,
 };
 
 // ── Assets ───────────────────────────────────────────────────
@@ -70,7 +70,10 @@ pub mod adapters {
 }
 
 // ── Deferred streaming ───────────────────────────────────────
-pub use runtime::{Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch, deferred_response, deferred_response_combined};
+pub use runtime::{
+    deferred_response, deferred_response_combined, Deferred, DeferredHtml, DeferredHtmlPatch,
+    DeferredPatch,
+};
 
 // ── ISR (Incremental Static Regeneration) ────────────────────
 pub use runtime::{IsrCache, IsrCacheState, IsrHandle};
@@ -81,17 +84,17 @@ pub use runtime::{FmtHelper, I18nBundles};
 #[doc(hidden)]
 pub use axum;
 #[doc(hidden)]
-pub use tracing;
-#[doc(hidden)]
 pub use pilcrow_client;
-#[doc(hidden)]
-pub use runtime::csrf_middleware as __csrf_middleware;
-#[doc(hidden)]
-pub use runtime::{__deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred};
 #[doc(hidden)]
 pub use runtime::__isr_cache_key;
 #[doc(hidden)]
+pub use runtime::csrf_middleware as __csrf_middleware;
+#[doc(hidden)]
 pub use runtime::tokio;
+#[doc(hidden)]
+pub use runtime::{__deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred};
+#[doc(hidden)]
+pub use tracing;
 
 /// Include the auto-generated Pilcrow app module and expose `pilcrow_router()`.
 ///

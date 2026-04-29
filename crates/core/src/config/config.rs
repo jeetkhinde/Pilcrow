@@ -365,4 +365,3 @@ fn default_image_formats() -> Vec<String> {
 fn default_image_concurrency() -> usize {
     4
 }
-

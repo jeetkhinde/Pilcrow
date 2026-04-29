@@ -228,7 +228,7 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                             "load must be declared async.".to_string(),
                             path,
                             Some("crates/routekit/src/templating/codegen/instrument.rs"),
-                            Some("Use `pub async fn load(req: Req) -> AppResult<Props>`."),
+                            Some("Use `pub async fn load(req: Req) -> AppResult<Props>` or `pub async fn load(ctx: Page) -> AppResult<Props>` on dynamic pages."),
                         ));
                     }
                     if !returns_named_type(&function.sig.output, "AppResult") {
@@ -241,15 +241,17 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                             Some("Use `-> AppResult<Props>` and return `Ok(Props { ... })`."),
                         ));
                     }
-                    if !wants_type(&function.sig.inputs, "Req") {
+                    if !wants_type(&function.sig.inputs, "Req")
+                        && !wants_type(&function.sig.inputs, "Page")
+                    {
                         findings.push(finding(
                             Severity::Warning,
                             "pilcrow-load-req",
-                            "load should accept a Req argument for current code-behind conventions."
+                            "load should accept a Req argument, or Page on dynamic file routes."
                                 .to_string(),
                             path,
                             Some("crates/routekit/src/templating/codegen/instrument.rs"),
-                            Some("Use `pub async fn load(req: Req) -> AppResult<Props>` or `_req: Req` if unused."),
+                            Some("Use `pub async fn load(req: Req) -> AppResult<Props>` or `pub async fn load(ctx: Page) -> AppResult<Props>`."),
                         ));
                     }
                 } else if matches!(function.vis, Visibility::Public(_))
@@ -614,6 +616,16 @@ mod tests {
         let report = validate_implementation(
             "pub struct Props {}\npub async fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }",
             Some("src/pages/index.rs"),
+            None,
+        );
+        assert!(report.valid, "{:?}", report.findings);
+    }
+
+    #[test]
+    fn accepts_typed_page_load_shape() {
+        let report = validate_implementation(
+            "pub struct Props {}\npub async fn load(ctx: Page) -> AppResult<Props> { Ok(Props {}) }",
+            Some("src/pages/products/[id].rs"),
             None,
         );
         assert!(report.valid, "{:?}", report.findings);

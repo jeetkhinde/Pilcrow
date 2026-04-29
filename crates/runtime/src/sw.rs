@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::http::{StatusCode, header};
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use pilcrow_core::config::config::{ServiceWorkerConfig, SwStrategy};
 
@@ -124,7 +124,10 @@ pub async fn sw_handler(
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
             (header::CACHE_CONTROL, "no-store"),
         ],
         source,

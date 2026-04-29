@@ -52,7 +52,10 @@ enum DeferredHtmlInner {
 impl DeferredHtml {
     /// Create a deferred HTML slot backed by a future that resolves to an HTML string.
     pub fn spawn(fut: impl Future<Output = String> + Send + 'static) -> Self {
-        Self { inner: DeferredHtmlInner::Future(Box::pin(fut)), loading: String::new() }
+        Self {
+            inner: DeferredHtmlInner::Future(Box::pin(fut)),
+            loading: String::new(),
+        }
     }
 
     /// Set the loading skeleton shown in the slot while the future is resolving.
@@ -63,7 +66,12 @@ impl DeferredHtml {
 
     /// Called by generated code: extract the future and loading HTML for streaming.
     #[doc(hidden)]
-    pub fn __into_parts(self) -> (Pin<Box<dyn Future<Output = String> + Send + 'static>>, String) {
+    pub fn __into_parts(
+        self,
+    ) -> (
+        Pin<Box<dyn Future<Output = String> + Send + 'static>>,
+        String,
+    ) {
         match self.inner {
             DeferredHtmlInner::Future(f) => (f, self.loading),
             DeferredHtmlInner::Slot(_) => panic!("DeferredHtml::__into_parts called on a slot"),
@@ -73,7 +81,10 @@ impl DeferredHtml {
     /// Called by generated code: create a placeholder used during shell rendering.
     #[doc(hidden)]
     pub fn __slot(name: impl Into<String>, loading: String) -> Self {
-        Self { inner: DeferredHtmlInner::Slot(name.into()), loading }
+        Self {
+            inner: DeferredHtmlInner::Slot(name.into()),
+            loading,
+        }
     }
 }
 
@@ -224,12 +235,16 @@ enum DeferredInner<T> {
 impl<T: Serialize + Send + 'static> Deferred<T> {
     /// Create a deferred value backed by a future. Starts resolving when awaited.
     pub fn spawn(fut: impl Future<Output = T> + Send + 'static) -> Self {
-        Self { inner: DeferredInner::Future(Box::pin(fut)) }
+        Self {
+            inner: DeferredInner::Future(Box::pin(fut)),
+        }
     }
 
     /// Create an already-resolved deferred value.
     pub fn ready(value: T) -> Self {
-        Self { inner: DeferredInner::Ready(value) }
+        Self {
+            inner: DeferredInner::Ready(value),
+        }
     }
 
     /// Resolve the deferred value. Consumes self.

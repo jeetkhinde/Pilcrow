@@ -44,7 +44,10 @@ pub async fn csrf_middleware(req: Request, next: Next) -> Response<Body> {
 }
 
 fn needs_csrf_check(method: &Method, headers: &HeaderMap) -> bool {
-    if !matches!(method, &Method::POST | &Method::PUT | &Method::PATCH | &Method::DELETE) {
+    if !matches!(
+        method,
+        &Method::POST | &Method::PUT | &Method::PATCH | &Method::DELETE
+    ) {
         return false;
     }
     let ct = headers
@@ -156,7 +159,10 @@ mod tests {
 
     #[test]
     fn x_forwarded_host_beats_host() {
-        let h = headers(&[("host", "backend:3000"), ("x-forwarded-host", "app.example.com")]);
+        let h = headers(&[
+            ("host", "backend:3000"),
+            ("x-forwarded-host", "app.example.com"),
+        ]);
         assert_eq!(request_host(&h), Some("app.example.com".to_owned()));
     }
 }

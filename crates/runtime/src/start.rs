@@ -14,9 +14,9 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
-use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
-use crate::i18n::{I18nBundles, locale_middleware_impl};
-use crate::image::handler::{ImageState, image_handler};
+use crate::dev::{dev_inject_layer, dev_reload_handler, spawn_css_watcher, DevState};
+use crate::i18n::{locale_middleware_impl, I18nBundles};
+use crate::image::handler::{image_handler, ImageState};
 use crate::isr::{IsrCache, IsrHandle};
 use crate::sw::{sw_handler, sw_inject_layer};
 
@@ -106,16 +106,20 @@ where
             "/_image",
             axum::routing::get(image_handler).with_state(image_state),
         );
-        tracing::info!("image optimization: enabled (cache: {})", config.images.cache_dir);
+        tracing::info!(
+            "image optimization: enabled (cache: {})",
+            config.images.cache_dir
+        );
     }
 
     let dev_state = if dev_mode {
         let state = DevState::new();
-        let src_dir = std::env::current_dir()
-            .unwrap_or_default()
-            .join("src");
+        let src_dir = std::env::current_dir().unwrap_or_default().join("src");
         spawn_css_watcher(state.sender(), src_dir);
-        app = app.route("/__pilcrow/dev-reload", axum::routing::get(dev_reload_handler));
+        app = app.route(
+            "/__pilcrow/dev-reload",
+            axum::routing::get(dev_reload_handler),
+        );
         Some(state)
     } else {
         None
@@ -154,7 +158,7 @@ where
     let app = if let Some(state) = dev_state {
         tracing::info!("dev mode: live reload + CSS hot swap active");
         app.layer(axum::Extension(state))
-           .layer(axum::middleware::from_fn(dev_inject_layer))
+            .layer(axum::middleware::from_fn(dev_inject_layer))
     } else {
         app
     };

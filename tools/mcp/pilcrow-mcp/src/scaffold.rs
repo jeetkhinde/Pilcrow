@@ -119,10 +119,17 @@ fn scaffold_loaded_page(
     let rs_path = route_file(app_root, route_path, "rs");
     let title = titleize(request.name);
     let with_action = option_bool(request.options, "action").unwrap_or(false);
+    let is_dynamic = route_path.contains('[') && route_path.contains(']');
 
-    let mut rs_content = format!(
-        "pub struct Props {{\n    pub title: &'static str,\n}}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ title: \"{title}\" }})\n}}\n"
-    );
+    let mut rs_content = if is_dynamic {
+        format!(
+            "pub struct Props {{\n    pub title: &'static str,\n}}\n\npub async fn load(ctx: Page) -> AppResult<Props> {{\n    Ok(Props {{ title: \"{title}\" }})\n}}\n"
+        )
+    } else {
+        format!(
+            "pub struct Props {{\n    pub title: &'static str,\n}}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ title: \"{title}\" }})\n}}\n"
+        )
+    };
     if with_action {
         rs_content.push_str(
             "\npub async fn submit(req: Req) -> ActionResult {\n    req.res.no_cache();\n    redirect(&req.path)\n}\n",
@@ -144,7 +151,11 @@ fn scaffold_loaded_page(
                 content: rs_content,
             },
         ],
-        vec!["Loaded page: Props and load() are scaffolded. Extend Props with the data your page needs.".to_string()],
+        vec![if is_dynamic {
+            "Loaded dynamic page: Props and load(ctx: Page) are scaffolded. Route params are generated from the file path as `Params`.".to_string()
+        } else {
+            "Loaded page: Props and load() are scaffolded. Extend Props with the data your page needs.".to_string()
+        }],
     ))
 }
 

@@ -15,6 +15,20 @@ pub fn build_generated_page_manifest(
         .map(|route| {
             let symbol = build_symbol_name(&route.template_path, &pages_dir_norm);
             let render_symbol = format!("render_{symbol}");
+            let route_params = route
+                .params
+                .iter()
+                .map(|name| {
+                    let constraint = route.param_constraints.get(name);
+                    let rust_type = route_param_rust_type(constraint);
+                    GeneratedRouteParam {
+                        name: name.clone(),
+                        rust_type,
+                        optional: route.optional_params.iter().any(|p| p == name),
+                        catch_all: route.has_catch_all,
+                    }
+                })
+                .collect();
             let param_matchers: HashMap<String, String> = route
                 .param_constraints
                 .iter()
@@ -31,6 +45,7 @@ pub fn build_generated_page_manifest(
                 template_path: route.template_path,
                 symbol,
                 render_symbol,
+                route_params,
                 param_matchers,
             }
         })
@@ -65,11 +80,21 @@ pub fn build_generated_fragment_manifest(
                 template_path: route.template_path,
                 symbol: symbol.clone(),
                 render_symbol: format!("render_{symbol}"),
+                route_params: vec![],
                 param_matchers: HashMap::new(),
             }
         })
         .collect();
     Ok(generated)
+}
+
+fn route_param_rust_type(constraint: Option<&ParameterConstraint>) -> String {
+    match constraint {
+        Some(ParameterConstraint::Int) => "i64",
+        Some(ParameterConstraint::UInt) => "u64",
+        _ => "String",
+    }
+    .to_string()
 }
 
 /// Render a Rust module source for discovered page routes.

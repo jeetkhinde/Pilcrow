@@ -1,4 +1,4 @@
-use crate::response::response::{FormErrors, form_errors};
+use crate::response::response::{form_errors, FormErrors};
 
 /// Fluent form validation builder.
 ///
@@ -28,7 +28,9 @@ pub struct Validator {
 
 impl Validator {
     pub fn new() -> Self {
-        Self { inner: form_errors() }
+        Self {
+            inner: form_errors(),
+        }
     }
 
     /// Echo a field value for form repopulation, whether or not the field has errors.
@@ -50,7 +52,9 @@ impl Validator {
     pub fn min_length(mut self, key: &str, value: &str, min: usize) -> Self {
         self.inner = self.inner.value(key, value);
         if value.len() < min {
-            self.inner = self.inner.error(key, format!("must be at least {min} characters"));
+            self.inner = self
+                .inner
+                .error(key, format!("must be at least {min} characters"));
         }
         self
     }
@@ -59,7 +63,9 @@ impl Validator {
     pub fn max_length(mut self, key: &str, value: &str, max: usize) -> Self {
         self.inner = self.inner.value(key, value);
         if value.len() > max {
-            self.inner = self.inner.error(key, format!("must be at most {max} characters"));
+            self.inner = self
+                .inner
+                .error(key, format!("must be at most {max} characters"));
         }
         self
     }
@@ -111,52 +117,79 @@ mod tests {
 
     #[test]
     fn required_passes_for_nonempty_value() {
-        assert!(Validator::new().required("name", "Alice").into_result().is_ok());
+        assert!(Validator::new()
+            .required("name", "Alice")
+            .into_result()
+            .is_ok());
     }
 
     #[test]
     fn required_fails_for_empty_string() {
-        let err = Validator::new().required("name", "").into_result().unwrap_err();
+        let err = Validator::new()
+            .required("name", "")
+            .into_result()
+            .unwrap_err();
         assert!(err.has_errors);
         assert_eq!(err.errors.get("name").map(|s| s.as_str()), Some("required"));
     }
 
     #[test]
     fn required_fails_for_whitespace_only() {
-        let err = Validator::new().required("name", "   ").into_result().unwrap_err();
+        let err = Validator::new()
+            .required("name", "   ")
+            .into_result()
+            .unwrap_err();
         assert!(err.has_errors);
     }
 
     #[test]
     fn min_length_passes_at_boundary() {
-        assert!(Validator::new().min_length("pass", "abc", 3).into_result().is_ok());
+        assert!(Validator::new()
+            .min_length("pass", "abc", 3)
+            .into_result()
+            .is_ok());
     }
 
     #[test]
     fn min_length_fails_below_boundary() {
-        let err = Validator::new().min_length("pass", "ab", 3).into_result().unwrap_err();
+        let err = Validator::new()
+            .min_length("pass", "ab", 3)
+            .into_result()
+            .unwrap_err();
         assert!(err.errors.contains_key("pass"));
     }
 
     #[test]
     fn max_length_passes_at_boundary() {
-        assert!(Validator::new().max_length("code", "abc", 3).into_result().is_ok());
+        assert!(Validator::new()
+            .max_length("code", "abc", 3)
+            .into_result()
+            .is_ok());
     }
 
     #[test]
     fn max_length_fails_above_boundary() {
-        let err = Validator::new().max_length("code", "abcd", 3).into_result().unwrap_err();
+        let err = Validator::new()
+            .max_length("code", "abcd", 3)
+            .into_result()
+            .unwrap_err();
         assert!(err.errors.contains_key("code"));
     }
 
     #[test]
     fn email_passes_valid_address() {
-        assert!(Validator::new().email("email", "user@example.com").into_result().is_ok());
+        assert!(Validator::new()
+            .email("email", "user@example.com")
+            .into_result()
+            .is_ok());
     }
 
     #[test]
     fn email_fails_missing_at_sign() {
-        let err = Validator::new().email("email", "notanemail").into_result().unwrap_err();
+        let err = Validator::new()
+            .email("email", "notanemail")
+            .into_result()
+            .unwrap_err();
         assert!(err.errors.contains_key("email"));
     }
 
@@ -185,6 +218,9 @@ mod tests {
             .custom("age", "17", true, "must be 18 or older")
             .into_result()
             .unwrap_err();
-        assert_eq!(err.errors.get("age").map(|s| s.as_str()), Some("must be 18 or older"));
+        assert_eq!(
+            err.errors.get("age").map(|s| s.as_str()),
+            Some("must be 18 or older")
+        );
     }
 }

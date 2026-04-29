@@ -944,18 +944,30 @@ fn parse_attr_map(raw: &str) -> std::collections::HashMap<String, String> {
 
     while i < raw.len() {
         // skip whitespace
-        while i < raw.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+        while i < raw.len()
+            && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r')
+        {
             i += 1;
         }
-        if i >= raw.len() { break; }
+        if i >= raw.len() {
+            break;
+        }
 
         // read name
         let name_start = i;
-        while i < raw.len() && bytes[i] != b'=' && bytes[i] != b' ' && bytes[i] != b'\t' && bytes[i] != b'\n' {
+        while i < raw.len()
+            && bytes[i] != b'='
+            && bytes[i] != b' '
+            && bytes[i] != b'\t'
+            && bytes[i] != b'\n'
+        {
             i += 1;
         }
         let name = raw[name_start..i].trim().to_string();
-        if name.is_empty() { i += 1; continue; }
+        if name.is_empty() {
+            i += 1;
+            continue;
+        }
 
         if i >= raw.len() || bytes[i] != b'=' {
             map.insert(name, String::new());
@@ -963,7 +975,10 @@ fn parse_attr_map(raw: &str) -> std::collections::HashMap<String, String> {
         }
         i += 1; // skip '='
 
-        if i >= raw.len() { map.insert(name, String::new()); break; }
+        if i >= raw.len() {
+            map.insert(name, String::new());
+            break;
+        }
 
         let value = if bytes[i] == b'"' || bytes[i] == b'\'' {
             let q = bytes[i] as char;
@@ -973,7 +988,9 @@ fn parse_attr_map(raw: &str) -> std::collections::HashMap<String, String> {
                 i += 1;
             }
             let v = raw[val_start..i].to_string();
-            if i < raw.len() { i += 1; } // closing quote
+            if i < raw.len() {
+                i += 1;
+            } // closing quote
             v
         } else {
             let val_start = i;
@@ -1088,8 +1105,7 @@ fn parse_island_tag(input: &str, page_url_base: &str, id: usize) -> Option<(Stri
     }
 
     let src = html_attr_value(&raw_attrs, "src")?;
-    let strategy = html_attr_value(&raw_attrs, "strategy")
-        .unwrap_or_else(|| "load".to_string());
+    let strategy = html_attr_value(&raw_attrs, "strategy").unwrap_or_else(|| "load".to_string());
 
     let url = resolve_island_url(&src, page_url_base);
 
@@ -1521,12 +1537,16 @@ pub struct Props { pub title: String }
         let input = r#"<pilcrow:image src="/images/photo.png" alt="Photo" />"#;
         let out = transpile_pilcrow_tags(input);
         assert!(out.contains("/_image?src="), "should have src param");
-        assert!(!out.contains("w="), "should not have w param when width absent");
+        assert!(
+            !out.contains("w="),
+            "should not have w param when width absent"
+        );
     }
 
     #[test]
     fn pilcrow_image_format_and_quality() {
-        let input = r#"<pilcrow:image src="/img/banner.jpg" format="webp" quality="90" width="800" />"#;
+        let input =
+            r#"<pilcrow:image src="/img/banner.jpg" format="webp" quality="90" width="800" />"#;
         let out = transpile_pilcrow_tags(input);
         assert!(out.contains("f=webp"), "should pass format");
         assert!(out.contains("q=90"), "should pass quality");
@@ -1536,14 +1556,20 @@ pub struct Props { pub title: String }
     fn pilcrow_image_src_is_url_encoded() {
         let input = r#"<pilcrow:image src="/public/my image.jpg" alt="test" />"#;
         let out = transpile_pilcrow_tags(input);
-        assert!(out.contains("%20") || out.contains("+"), "space should be encoded");
+        assert!(
+            out.contains("%20") || out.contains("+"),
+            "space should be encoded"
+        );
     }
 
     #[test]
     fn pilcrow_image_class_forwarded() {
         let input = r#"<pilcrow:image src="/img.jpg" class="hero-img" alt="img" />"#;
         let out = transpile_pilcrow_tags(input);
-        assert!(out.contains(r#"class="hero-img""#), "class should be forwarded");
+        assert!(
+            out.contains(r#"class="hero-img""#),
+            "class should be forwarded"
+        );
     }
 
     #[test]
@@ -1568,7 +1594,10 @@ pub struct Props { pub title: String }
     fn pilcrow_head_stripped_when_no_layout() {
         let input = "<pilcrow:head><title>My Page</title></pilcrow:head><h1>Body</h1>";
         let out = transpile_pilcrow_tags(input);
-        assert!(!out.contains("<pilcrow:head>"), "pilcrow:head should be removed");
+        assert!(
+            !out.contains("<pilcrow:head>"),
+            "pilcrow:head should be removed"
+        );
         assert!(!out.contains("<title>"), "head content should be stripped");
         assert!(out.contains("<h1>Body</h1>"), "body content preserved");
     }

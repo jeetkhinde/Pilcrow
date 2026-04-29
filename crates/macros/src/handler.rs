@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{FnArg, Ident, ItemFn, Pat, PatType, parse_macro_input, visit::Visit};
+use syn::{parse_macro_input, visit::Visit, FnArg, Ident, ItemFn, Pat, PatType};
 
 pub fn expand(item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
@@ -22,27 +22,27 @@ pub fn expand(item: TokenStream) -> TokenStream {
         if let FnArg::Typed(PatType { pat, ty, .. }) = param {
             if let Pat::Ident(ident) = pat.as_ref() {
                 let name = ident.ident.to_string();
-            match name.as_str() {
-                "form" => {
-                    rewritten.push(quote! {
-                        ::axum::Form(#pat): ::axum::Form<#ty>
-                    });
-                    continue;
+                match name.as_str() {
+                    "form" => {
+                        rewritten.push(quote! {
+                            ::axum::Form(#pat): ::axum::Form<#ty>
+                        });
+                        continue;
+                    }
+                    "json" => {
+                        rewritten.push(quote! {
+                            ::axum::Json(#pat): ::axum::Json<#ty>
+                        });
+                        continue;
+                    }
+                    "path" => {
+                        rewritten.push(quote! {
+                            ::axum::extract::Path(#pat): ::axum::extract::Path<#ty>
+                        });
+                        continue;
+                    }
+                    _ => {}
                 }
-                "json" => {
-                    rewritten.push(quote! {
-                        ::axum::Json(#pat): ::axum::Json<#ty>
-                    });
-                    continue;
-                }
-                "path" => {
-                    rewritten.push(quote! {
-                        ::axum::extract::Path(#pat): ::axum::extract::Path<#ty>
-                    });
-                    continue;
-                }
-                _ => {}
-            }
             }
         }
         rewritten.push(quote! { #param });

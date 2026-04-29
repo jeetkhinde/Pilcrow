@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use fluent_bundle::FluentArgs;
-use fluent_bundle::FluentValue;
-use fluent_bundle::FluentResource;
 use fluent_bundle::concurrent::FluentBundle;
+use fluent_bundle::FluentArgs;
+use fluent_bundle::FluentResource;
+use fluent_bundle::FluentValue;
 use unic_langid::LanguageIdentifier;
 
 // ── Bundle storage ────────────────────────────────────────────
@@ -88,7 +88,11 @@ impl I18nBundles {
                 fluent_args.set(*k, FluentValue::from(*v));
             }
             let mut errors = Vec::new();
-            Some(bundle.format_pattern(pattern, Some(&fluent_args), &mut errors).into_owned())
+            Some(
+                bundle
+                    .format_pattern(pattern, Some(&fluent_args), &mut errors)
+                    .into_owned(),
+            )
         };
 
         // Try requested locale first, then default locale, then return the key.
@@ -272,8 +276,8 @@ fn thousands_sep(locale: &str) -> char {
 fn decimal_sep(locale: &str) -> char {
     let lang = locale.split('-').next().unwrap_or(locale);
     match lang {
-        "de" | "nl" | "pl" | "ru" | "tr" | "cs" | "sk" | "hr"
-        | "fr" | "es" | "it" | "pt" | "sv" | "fi" | "no" | "nb" | "da" => ',',
+        "de" | "nl" | "pl" | "ru" | "tr" | "cs" | "sk" | "hr" | "fr" | "es" | "it" | "pt"
+        | "sv" | "fi" | "no" | "nb" | "da" => ',',
         _ => '.',
     }
 }

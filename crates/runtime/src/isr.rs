@@ -99,7 +99,10 @@ pub struct IsrCache(Arc<Mutex<IsrInner>>);
 
 impl Default for IsrInner {
     fn default() -> Self {
-        Self { map: HashMap::new(), persist_dir: None }
+        Self {
+            map: HashMap::new(),
+            persist_dir: None,
+        }
     }
 }
 
@@ -138,7 +141,10 @@ impl IsrCache {
             }
         }
 
-        Self(Arc::new(Mutex::new(IsrInner { map, persist_dir: Some(dir) })))
+        Self(Arc::new(Mutex::new(IsrInner {
+            map,
+            persist_dir: Some(dir),
+        })))
     }
 
     /// Check the cache state for a given key.
@@ -243,7 +249,11 @@ impl IsrCache {
     /// Used by [`pilcrow_web::export`] to write static HTML files to disk.
     pub fn export_entries(&self) -> Vec<(String, String)> {
         let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        inner.map.values().map(|e| (e.key.clone(), e.html.clone())).collect()
+        inner
+            .map
+            .values()
+            .map(|e| (e.key.clone(), e.html.clone()))
+            .collect()
     }
 
     /// Return a snapshot of all current cache entries for inspection.
@@ -251,14 +261,18 @@ impl IsrCache {
     /// Used by the `GET /__pilcrow/isr` dev endpoint.
     pub fn snapshot(&self) -> Vec<CacheEntrySnapshot> {
         let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        inner.map.values().map(|e| CacheEntrySnapshot {
-            key: e.key.clone(),
-            age_secs: e.age_secs(),
-            ttl_secs: e.ttl_secs,
-            is_fresh: e.is_fresh(),
-            revalidating: e.revalidating,
-            tags: e.tags.clone(),
-        }).collect()
+        inner
+            .map
+            .values()
+            .map(|e| CacheEntrySnapshot {
+                key: e.key.clone(),
+                age_secs: e.age_secs(),
+                ttl_secs: e.ttl_secs,
+                is_fresh: e.is_fresh(),
+                revalidating: e.revalidating,
+                tags: e.tags.clone(),
+            })
+            .collect()
     }
 }
 
@@ -397,7 +411,13 @@ mod tests {
 
     #[test]
     fn cache_key_no_vary_no_query() {
-        let key = __isr_cache_key("/products", &FormMap::default(), &[], &empty_cookies(), &empty_headers());
+        let key = __isr_cache_key(
+            "/products",
+            &FormMap::default(),
+            &[],
+            &empty_cookies(),
+            &empty_headers(),
+        );
         assert_eq!(key, "/products");
     }
 
@@ -413,7 +433,13 @@ mod tests {
     #[test]
     fn cache_key_vary_by_cookie() {
         let jar = CookieJar::default().add(cookie::Cookie::new("session", "abc123"));
-        let key = __isr_cache_key("/dash", &FormMap::default(), &["session"], &jar, &empty_headers());
+        let key = __isr_cache_key(
+            "/dash",
+            &FormMap::default(),
+            &["session"],
+            &jar,
+            &empty_headers(),
+        );
         assert_eq!(key, "/dash#abc123");
     }
 
@@ -421,7 +447,13 @@ mod tests {
     fn cache_key_vary_by_header_fallback() {
         let mut h = HeaderMap::new();
         h.insert("accept-language", "en-US".parse().unwrap());
-        let key = __isr_cache_key("/dash", &FormMap::default(), &["accept-language"], &empty_cookies(), &h);
+        let key = __isr_cache_key(
+            "/dash",
+            &FormMap::default(),
+            &["accept-language"],
+            &empty_cookies(),
+            &h,
+        );
         assert_eq!(key, "/dash#en-US");
     }
 
@@ -438,14 +470,22 @@ mod tests {
     fn cache_key_vary_missing_key_falls_back_to_base_key() {
         // When the vary key is absent from both cookies and headers, the vary
         // segment is empty and the key degrades to the plain path.
-        let key = __isr_cache_key("/p", &FormMap::default(), &["session"], &empty_cookies(), &empty_headers());
+        let key = __isr_cache_key(
+            "/p",
+            &FormMap::default(),
+            &["session"],
+            &empty_cookies(),
+            &empty_headers(),
+        );
         assert_eq!(key, "/p");
     }
 
     #[tokio::test]
     async fn store_and_check_fresh() {
         let cache = IsrCache::new();
-        cache.store("/products", "<h1>Products</h1>".into(), 60, vec![]).await;
+        cache
+            .store("/products", "<h1>Products</h1>".into(), 60, vec![])
+            .await;
         match cache.check("/products", None).await {
             IsrCacheState::Fresh(html) => assert!(html.contains("Products")),
             other => panic!("expected Fresh, got {other:?}"),
@@ -455,13 +495,18 @@ mod tests {
     #[tokio::test]
     async fn miss_for_unknown_key() {
         let cache = IsrCache::new();
-        assert!(matches!(cache.check("/unknown", None).await, IsrCacheState::Miss));
+        assert!(matches!(
+            cache.check("/unknown", None).await,
+            IsrCacheState::Miss
+        ));
     }
 
     #[tokio::test]
     async fn snapshot_reflects_stored_entries() {
         let cache = IsrCache::new();
-        cache.store("/a", "html".into(), 60, vec!["tag1".into()]).await;
+        cache
+            .store("/a", "html".into(), 60, vec!["tag1".into()])
+            .await;
         let snap = cache.snapshot();
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].key, "/a");
@@ -477,21 +522,45 @@ mod tests {
         cache.store("/products/1", "html".into(), 60, vec![]).await;
         cache.store("/about", "html".into(), 60, vec![]).await;
         cache.invalidate_path("/products");
-        assert!(matches!(cache.check("/products", None).await, IsrCacheState::Miss));
-        assert!(matches!(cache.check("/products/1", None).await, IsrCacheState::Miss));
-        assert!(matches!(cache.check("/about", None).await, IsrCacheState::Fresh(_)));
+        assert!(matches!(
+            cache.check("/products", None).await,
+            IsrCacheState::Miss
+        ));
+        assert!(matches!(
+            cache.check("/products/1", None).await,
+            IsrCacheState::Miss
+        ));
+        assert!(matches!(
+            cache.check("/about", None).await,
+            IsrCacheState::Fresh(_)
+        ));
     }
 
     #[tokio::test]
     async fn invalidate_tag_removes_tagged_entries() {
         let cache = IsrCache::new();
-        cache.store("/p1", "html".into(), 60, vec!["products".into()]).await;
-        cache.store("/p2", "html".into(), 60, vec!["products".into()]).await;
-        cache.store("/about", "html".into(), 60, vec!["pages".into()]).await;
+        cache
+            .store("/p1", "html".into(), 60, vec!["products".into()])
+            .await;
+        cache
+            .store("/p2", "html".into(), 60, vec!["products".into()])
+            .await;
+        cache
+            .store("/about", "html".into(), 60, vec!["pages".into()])
+            .await;
         cache.invalidate_tag("products");
-        assert!(matches!(cache.check("/p1", None).await, IsrCacheState::Miss));
-        assert!(matches!(cache.check("/p2", None).await, IsrCacheState::Miss));
-        assert!(matches!(cache.check("/about", None).await, IsrCacheState::Fresh(_)));
+        assert!(matches!(
+            cache.check("/p1", None).await,
+            IsrCacheState::Miss
+        ));
+        assert!(matches!(
+            cache.check("/p2", None).await,
+            IsrCacheState::Miss
+        ));
+        assert!(matches!(
+            cache.check("/about", None).await,
+            IsrCacheState::Fresh(_)
+        ));
     }
 
     #[tokio::test]
@@ -499,7 +568,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         {
             let cache = IsrCache::with_persistence(dir.path());
-            cache.store("/products", "<p>data</p>".into(), 3600, vec!["products".into()]).await;
+            cache
+                .store(
+                    "/products",
+                    "<p>data</p>".into(),
+                    3600,
+                    vec!["products".into()],
+                )
+                .await;
         }
         // Reload from disk.
         let cache2 = IsrCache::with_persistence(dir.path());

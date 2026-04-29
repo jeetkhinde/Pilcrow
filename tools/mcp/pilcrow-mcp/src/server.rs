@@ -1353,7 +1353,7 @@ fn analyse_build_error(error_log: &str) -> Value {
 
     if error_log.contains("load") && (error_log.contains("async") || error_log.contains("not async")) {
         categories.push("load() signature mismatch");
-        suggestions.push("Ensure load() is `pub async fn load(req: Req) -> AppResult<Props>`. Missing async is the most common cause.");
+        suggestions.push("Ensure load() is `pub async fn load(req: Req) -> AppResult<Props>` or, on dynamic pages, `pub async fn load(ctx: Page) -> AppResult<Props>`. Missing async is the most common cause.");
     }
     if error_log.contains("Props") && error_log.contains("field") {
         categories.push("Props field mismatch");

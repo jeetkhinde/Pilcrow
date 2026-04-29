@@ -28,7 +28,9 @@ pub fn render_generated_env_module(config: &EnvConfig) -> String {
     out.push_str("        }\n");
     // Singleton accessor — loaded once, panics on missing env vars at first call.
     out.push_str("        pub fn global() -> &'static Self {\n");
-    out.push_str("            static __ENV: ::std::sync::OnceLock<Public> = ::std::sync::OnceLock::new();\n");
+    out.push_str(
+        "            static __ENV: ::std::sync::OnceLock<Public> = ::std::sync::OnceLock::new();\n",
+    );
     out.push_str("            __ENV.get_or_init(|| Self::load().expect(\"PUBLIC_* env vars required by Pilcrow.toml are not set\"))\n");
     out.push_str("        }\n");
     out.push_str("    }\n\n");

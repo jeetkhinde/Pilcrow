@@ -68,6 +68,19 @@ pub fn render_generated_templates_module(
             &entry.source_path,
             &extra_fields,
         )?;
+        if instrumented
+            .load_signature
+            .is_some_and(|sig| sig.wants_page)
+            && entry.route_params.is_empty()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "`load(ctx: Page)` in '{}' requires a dynamic route segment such as `[id]`; use `load(req: Req)` for static routes",
+                    entry.source_path
+                ),
+            ));
+        }
 
         // Store layout's own fields so pages that use this layout can inject them.
         if is_layout && instrumented.load_signature.is_some() {
@@ -150,6 +163,9 @@ pub fn render_generated_templates_module(
 
         let _ = writeln!(out, "#[allow(dead_code)]");
         let _ = writeln!(out, "pub mod {module_ident} {{");
+        if !entry.route_params.is_empty() {
+            out.push_str(&emit_page_params(&entry.route_params));
+        }
         for line in instrumented.source.lines() {
             out.push_str("    ");
             out.push_str(line);
@@ -238,6 +254,63 @@ pub fn render_generated_templates_module(
         isr_config_map,
         ssg_config_map,
     })
+}
+
+fn emit_page_params(params: &[GeneratedRouteParam]) -> String {
+    let mut out = String::new();
+    out.push_str("    #[derive(Debug, Clone, serde::Serialize)]\n");
+    out.push_str("    pub struct Params {\n");
+    for param in params {
+        let ty = if param.catch_all {
+            "Vec<String>".to_string()
+        } else if param.optional {
+            format!("Option<{}>", param.rust_type)
+        } else {
+            param.rust_type.clone()
+        };
+        let _ = writeln!(out, "        pub {}: {},", param.name, ty);
+    }
+    out.push_str("    }\n");
+    out.push_str("    pub type Page = ::pilcrow_web::Page<Params>;\n");
+    out.push_str("    impl ::std::convert::TryFrom<::std::collections::HashMap<String, String>> for Params {\n");
+    out.push_str("        type Error = ::pilcrow_web::AppError;\n");
+    out.push_str("        fn try_from(mut __params: ::std::collections::HashMap<String, String>) -> ::std::result::Result<Self, Self::Error> {\n");
+    out.push_str("            Ok(Self {\n");
+    for param in params {
+        let name_lit = rust_string(&param.name);
+        let field = &param.name;
+        if param.catch_all {
+            let _ = writeln!(
+                out,
+                "                {field}: __params.remove({name_lit}).map(|v| v.split('/').map(|s| s.to_string()).collect()).unwrap_or_default(),"
+            );
+        } else if param.optional {
+            let parse = parse_param_expr(&param.rust_type, "__value");
+            let _ = writeln!(
+                out,
+                "                {field}: match __params.remove({name_lit}) {{ Some(__value) if !__value.is_empty() => Some({parse}), _ => None }},"
+            );
+        } else {
+            let parse = parse_param_expr(&param.rust_type, "__value");
+            let _ = writeln!(
+                out,
+                "                {field}: {{ let __value = __params.remove({name_lit}).ok_or_else(|| ::pilcrow_web::AppError::NotFound({name_lit}.to_string()))?; {parse} }},"
+            );
+        }
+    }
+    out.push_str("            })\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out
+}
+
+fn parse_param_expr(rust_type: &str, value_ident: &str) -> String {
+    match rust_type {
+        "i64" | "u64" => format!(
+            "{value_ident}.parse::<{rust_type}>().map_err(|_| ::pilcrow_web::AppError::NotFound)?"
+        ),
+        _ => value_ident.to_string(),
+    }
 }
 
 /// Generate and write the compiled templates module to `out_file`.

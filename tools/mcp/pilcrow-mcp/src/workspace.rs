@@ -42,6 +42,7 @@ pub struct CodeBehindInfo {
     pub prop_fields: Vec<PropField>,
     pub has_load: bool,
     pub load_is_async: bool,
+    pub load_param_type: Option<String>,
     pub action_names: Vec<String>,
     pub has_deferred: bool,
     pub page_options: Vec<String>,
@@ -293,8 +294,12 @@ pub fn derive_url_pattern(rel_path: &str) -> String {
             if inner.starts_with("...") {
                 url_parts.push(format!("*{}", &inner[3..]));
             } else {
-                // Strip =matcher if present
-                let name = inner.split('=').next().unwrap_or(inner);
+                // Strip constraints/matchers (`[id:int]`, `[id=integer]`) if present.
+                let name = inner
+                    .split(['=', ':'])
+                    .next()
+                    .unwrap_or(inner)
+                    .trim_end_matches('?');
                 url_parts.push(format!(":{name}"));
             }
         } else {
@@ -381,6 +386,7 @@ pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
                 prop_fields: vec![],
                 has_load: false,
                 load_is_async: false,
+                load_param_type: None,
                 action_names: vec![],
                 has_deferred: false,
                 page_options: vec![],
@@ -393,6 +399,7 @@ pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
     let mut prop_fields = Vec::new();
     let mut has_load = false;
     let mut load_is_async = false;
+    let mut load_param_type = None;
     let mut action_names = Vec::new();
     let mut page_options = Vec::new();
 
@@ -419,6 +426,10 @@ pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
                 if name == "load" {
                     has_load = true;
                     load_is_async = f.sig.asyncness.is_some();
+                    load_param_type = f.sig.inputs.iter().find_map(|arg| {
+                        let FnArg::Typed(arg) = arg else { return None };
+                        type_last_ident(&arg.ty)
+                    });
                 } else if is_action_fn(f) {
                     action_names.push(name);
                 }
@@ -440,6 +451,7 @@ pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
         prop_fields,
         has_load,
         load_is_async,
+        load_param_type,
         action_names,
         has_deferred,
         page_options,
@@ -520,6 +532,14 @@ fn type_contains_name(ty: &Type, expected: &str) -> bool {
             .any(|segment| segment.ident == expected),
         Type::Reference(reference) => type_contains_name(&reference.elem, expected),
         _ => false,
+    }
+}
+
+fn type_last_ident(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Path(path) => path.path.segments.last().map(|segment| segment.ident.to_string()),
+        Type::Reference(reference) => type_last_ident(&reference.elem),
+        _ => None,
     }
 }
 
@@ -777,6 +797,11 @@ mod tests {
     }
 
     #[test]
+    fn derive_url_pattern_typed_constraint() {
+        assert_eq!(derive_url_pattern("products/[id:int].html"), "/products/:id");
+    }
+
+    #[test]
     fn derive_url_pattern_route_group_stripped() {
         assert_eq!(derive_url_pattern("(admin)/dashboard.html"), "/dashboard");
     }
@@ -821,6 +846,7 @@ pub async fn submit(req: Req) -> ActionResult { redirect("/") }
         let info = parse_code_behind(&path).unwrap();
         assert!(info.has_load);
         assert!(info.load_is_async);
+        assert_eq!(info.load_param_type.as_deref(), Some("Req"));
         assert!(info.action_names.contains(&"submit".to_string()));
         assert!(info.has_props);
     }

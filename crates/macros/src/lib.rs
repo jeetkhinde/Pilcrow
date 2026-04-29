@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Expr, LitStr, Token,
     parse::{Parse, ParseStream},
-    parse_macro_input,
+    parse_macro_input, Expr, LitStr, Token,
 };
 mod handler;
 

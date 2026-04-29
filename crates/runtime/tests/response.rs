@@ -2,8 +2,8 @@
 use axum::{http::StatusCode, response::IntoResponse};
 use http_body_util::BodyExt;
 use runtime::{
+    response::response::{form_errors, json, navigate, redirect, ResponseExt},
     ToastLevel,
-    response::response::{ResponseExt, form_errors, json, navigate, redirect},
 };
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -13,10 +13,7 @@ async fn body_string(response: axum::response::Response) -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
-fn header_str<'a>(
-    resp: &'a axum::response::Response,
-    name: &str,
-) -> Option<&'a str> {
+fn header_str<'a>(resp: &'a axum::response::Response, name: &str) -> Option<&'a str> {
     resp.headers().get(name)?.to_str().ok()
 }
 
@@ -121,7 +118,9 @@ fn form_errors_into_response_is_json() {
 
 #[test]
 fn response_ext_with_header_adds_header() {
-    let resp = navigate("/").with_header("x-custom", "hello").into_response();
+    let resp = navigate("/")
+        .with_header("x-custom", "hello")
+        .into_response();
     assert_eq!(header_str(&resp, "x-custom"), Some("hello"));
 }
 

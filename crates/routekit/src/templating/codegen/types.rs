@@ -21,6 +21,8 @@ pub struct TemplateCodegenInput {
     pub layout_chain: Vec<String>,
     /// URL prefix for fragment directory entries (e.g. `"widgets"`). `None` for non-fragments.
     pub fragment_url_prefix: Option<String>,
+    /// Route params generated from the file path for page modules.
+    pub route_params: Vec<GeneratedRouteParam>,
 }
 
 /// Metadata for one generated template module.
@@ -53,6 +55,23 @@ pub struct LoadSignature {
     pub wants_client: bool,
     /// Whether the parameter list declares a `Req` argument.
     pub wants_req: bool,
+    /// Whether the parameter list declares a generated `Page` context argument.
+    pub wants_page: bool,
+}
+
+impl LoadSignature {
+    pub fn consumes_req(self) -> bool {
+        self.wants_req || self.wants_page
+    }
+}
+
+/// One dynamic parameter generated from a file-route segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedRouteParam {
+    pub name: String,
+    pub rust_type: String,
+    pub optional: bool,
+    pub catch_all: bool,
 }
 
 /// One discovered named action handler in a page's code-behind.

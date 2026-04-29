@@ -82,7 +82,15 @@ pub async fn image_handler(
     let max_w = cfg.max_width;
     let max_h = cfg.max_height;
     let result = tokio::task::spawn_blocking(move || {
-        processor::transform(&src_bytes, params.width, params.height, quality, format, max_w, max_h)
+        processor::transform(
+            &src_bytes,
+            params.width,
+            params.height,
+            quality,
+            format,
+            max_w,
+            max_h,
+        )
     })
     .await;
 
@@ -106,10 +114,8 @@ pub async fn image_handler(
 
 fn serve_bytes(bytes: Vec<u8>, mime: &'static str) -> Response {
     let mut res = Response::new(Body::from(bytes));
-    res.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(mime),
-    );
+    res.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     res.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),

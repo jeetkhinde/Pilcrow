@@ -79,6 +79,7 @@ mod tests {
             template_path: String::new(),
             symbol: symbol.to_string(),
             render_symbol: format!("render_{symbol}"),
+            route_params: vec![],
             param_matchers: HashMap::new(),
         }
     }

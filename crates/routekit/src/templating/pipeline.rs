@@ -4,13 +4,14 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::routing::discovery::{
-    DiscoveredHtmlFiles, discover_fragment_files, discover_html_files,
+    discover_fragment_files, discover_html_files, DiscoveredHtmlFiles,
 };
 use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
-    GeneratedApiRoute, GeneratedPageRoute, GeneratedTemplateEntry, HookFlags, TemplateCodegenInput,
     build_generated_fragment_manifest, write_generated_api_routes_module,
     write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
+    GeneratedApiRoute, GeneratedPageRoute, GeneratedRouteParam, GeneratedTemplateEntry, HookFlags,
+    TemplateCodegenInput,
 };
 use crate::templating::compiler::{
     inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
@@ -121,8 +122,11 @@ pub fn compile_to_out_dir_with_config(
             })
             .collect();
 
-    let all_fragment_entries: Vec<&crate::templating::build_config::FragmentEntry> =
-        build_config.fragments.iter().chain(auto_fragment_entries.iter()).collect();
+    let all_fragment_entries: Vec<&crate::templating::build_config::FragmentEntry> = build_config
+        .fragments
+        .iter()
+        .chain(auto_fragment_entries.iter())
+        .collect();
 
     for entry in &all_fragment_entries {
         let fragment_dir = src_root.join(&entry.dir);
@@ -130,7 +134,11 @@ pub fn compile_to_out_dir_with_config(
             continue;
         }
         let url_prefix = entry.url_prefix();
-        let discovered_frags = discover_fragment_files(src_root, &fragment_dir, &build_config.routing.ignore_directories)?;
+        let discovered_frags = discover_fragment_files(
+            src_root,
+            &fragment_dir,
+            &build_config.routing.ignore_directories,
+        )?;
         let frag_templates_root = templates_root.join("fragments").join(&url_prefix);
 
         // Load routable fragment HTML files into the module graph.
@@ -158,8 +166,11 @@ pub fn compile_to_out_dir_with_config(
             src_root,
             HtmlSourceKind::Ui,
             &{
-                let mut ui_files =
-                    crate::routing::discovery::collect_html_files_pub(&src_root.join("ui"), src_root, &build_config.routing.ignore_directories)?;
+                let mut ui_files = crate::routing::discovery::collect_html_files_pub(
+                    &src_root.join("ui"),
+                    src_root,
+                    &build_config.routing.ignore_directories,
+                )?;
                 ui_files.sort();
                 ui_files
             },
@@ -218,14 +229,32 @@ pub fn compile_to_out_dir_with_config(
         }
 
         // Build route manifest entries for this fragment group.
-        let frag_page_routes = build_generated_fragment_manifest(src_root, &fragment_dir, &url_prefix, &build_config.routing.ignore_directories)?;
+        let frag_page_routes = build_generated_fragment_manifest(
+            src_root,
+            &fragment_dir,
+            &url_prefix,
+            &build_config.routing.ignore_directories,
+        )?;
         fragment_routes.extend(frag_page_routes);
     }
     // ─────────────────────────────────────────────────────────────────────────
 
     let generated_routes_file = out_dir.join("generated_routes.rs");
-    let generated_routes = write_generated_routes_module(src_root, &generated_routes_file, &build_config.routing.ignore_directories)?;
+    let generated_routes = write_generated_routes_module(
+        src_root,
+        &generated_routes_file,
+        &build_config.routing.ignore_directories,
+    )?;
     let generated_templates_file = out_dir.join("generated_templates.rs");
+    let route_params_by_template: HashMap<String, Vec<GeneratedRouteParam>> = generated_routes
+        .iter()
+        .map(|route| {
+            (
+                normalize_path_text(Path::new(&route.template_path)),
+                route.route_params.clone(),
+            )
+        })
+        .collect();
 
     let template_codegen_inputs = files
         .iter()
@@ -237,6 +266,10 @@ pub fn compile_to_out_dir_with_config(
             template_source: file.transpiled_template.clone(),
             layout_chain: file.layout_chain.clone(),
             fragment_url_prefix: file.fragment_url_prefix.clone(),
+            route_params: route_params_by_template
+                .get(&normalize_path_text(&file.source_path))
+                .cloned()
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     let templates_output =
@@ -244,8 +277,11 @@ pub fn compile_to_out_dir_with_config(
     let generated_templates = templates_output.entries;
 
     let generated_api_routes_file = out_dir.join("generated_api_routes.rs");
-    let generated_api_routes =
-        write_generated_api_routes_module(src_root, &generated_api_routes_file, &build_config.routing.ignore_directories)?;
+    let generated_api_routes = write_generated_api_routes_module(
+        src_root,
+        &generated_api_routes_file,
+        &build_config.routing.ignore_directories,
+    )?;
 
     // Build directory-keyed maps for special page lookups (nearest-ancestor wins).
     let pages_dir = src_root.join("pages");
@@ -383,10 +419,8 @@ pub fn compile_to_out_dir_with_config(
     fs::write(out_dir.join("generated_env.rs"), env_src.as_bytes())?;
 
     // Write i18n typed translation helpers: `pub mod t { pub fn greeting(req, name) -> String }`
-    let i18n_src = crate::templating::i18n_codegen::render_generated_i18n_module(
-        &build_config.i18n,
-        src_root,
-    );
+    let i18n_src =
+        crate::templating::i18n_codegen::render_generated_i18n_module(&build_config.i18n, src_root);
     fs::write(out_dir.join("generated_i18n.rs"), i18n_src.as_bytes())?;
 
     files.sort_by(|a, b| {
@@ -515,7 +549,8 @@ pub fn detect_hook_flags(hooks_path: &Path) -> HookFlags {
         }),
         has_handle_error: src.lines().any(|l| {
             let t = l.trim_start();
-            t.starts_with("pub async fn handle_error(") || t.starts_with("pub async fn handle_error (")
+            t.starts_with("pub async fn handle_error(")
+                || t.starts_with("pub async fn handle_error (")
         }),
         has_init: src.lines().any(|l| {
             let t = l.trim_start();
@@ -735,7 +770,10 @@ fn load_source_group(
             transpile_markdown(&source).map_err(|err| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("failed to compile markdown {}: {err}", source_path.display()),
+                    format!(
+                        "failed to compile markdown {}: {err}",
+                        source_path.display()
+                    ),
                 )
             })?
         } else {
@@ -853,7 +891,10 @@ fn load_fragment_source_group(
             transpile_markdown(&source).map_err(|err| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("failed to compile markdown {}: {err}", source_path.display()),
+                    format!(
+                        "failed to compile markdown {}: {err}",
+                        source_path.display()
+                    ),
                 )
             })?
         } else {
@@ -1397,56 +1438,58 @@ fn expand_known_components(
                 template_compile_error(owner_path, msg)
             })?;
 
-            let imported_module = modules.get(import_target).ok_or_else(|| {
-                template_compile_error(
-                    owner_path,
-                    format!(
-                        "import target `{}` was not part of discovered templates",
-                        src_relative_display_path(import_target)
-                    ),
-                )
-            })?;
+                let imported_module = modules.get(import_target).ok_or_else(|| {
+                    template_compile_error(
+                        owner_path,
+                        format!(
+                            "import target `{}` was not part of discovered templates",
+                            src_relative_display_path(import_target)
+                        ),
+                    )
+                })?;
 
-            if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
-                let mut cycle_chain = stack[cycle_start..]
-                    .iter()
-                    .map(|p| src_relative_display_path(p))
-                    .collect::<Vec<_>>();
-                cycle_chain.push(src_relative_display_path(import_target));
-                return Err(template_compile_error(
-                    owner_path,
-                    format!(
-                        "component import cycle detected: {}",
-                        cycle_chain.join(" -> ")
-                    ),
-                ));
-            }
+                if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
+                    let mut cycle_chain = stack[cycle_start..]
+                        .iter()
+                        .map(|p| src_relative_display_path(p))
+                        .collect::<Vec<_>>();
+                    cycle_chain.push(src_relative_display_path(import_target));
+                    return Err(template_compile_error(
+                        owner_path,
+                        format!(
+                            "component import cycle detected: {}",
+                            cycle_chain.join(" -> ")
+                        ),
+                    ));
+                }
 
-            let inner_expanded = invocation
-                .inner
-                .as_deref()
-                .map(|inner| expand_known_components(inner, owner_path, modules, stack, depth + 1))
-                .transpose()?
-                .unwrap_or_default();
+                let inner_expanded = invocation
+                    .inner
+                    .as_deref()
+                    .map(|inner| {
+                        expand_known_components(inner, owner_path, modules, stack, depth + 1)
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
 
-            let slot_assignments = collect_slot_assignments(&inner_expanded);
-            let component_with_slot =
-                apply_slots(&imported_module.template_source, &slot_assignments);
+                let slot_assignments = collect_slot_assignments(&inner_expanded);
+                let component_with_slot =
+                    apply_slots(&imported_module.template_source, &slot_assignments);
 
-            stack.push(import_target.clone());
-            let component_body = expand_known_components(
-                &component_with_slot,
-                import_target,
-                modules,
-                stack,
-                depth + 1,
-            )?;
-            stack.pop();
+                stack.push(import_target.clone());
+                let component_body = expand_known_components(
+                    &component_with_slot,
+                    import_target,
+                    modules,
+                    stack,
+                    depth + 1,
+                )?;
+                stack.pop();
 
-            out.push_str(&render_askama_let_bindings(&invocation.attrs));
-            out.push_str(&component_body);
-            i += invocation.consumed;
-            continue;
+                out.push_str(&render_askama_let_bindings(&invocation.attrs));
+                out.push_str(&component_body);
+                i += invocation.consumed;
+                continue;
             }
         }
 
@@ -1545,8 +1588,7 @@ fn collect_slot_assignments(inner: &str) -> SlotAssignments {
 }
 
 fn render_slot_fragment_node(source: &str, node: &HtmlNode) -> String {
-    if node.name.eq_ignore_ascii_case("Fragment")
-        || node.name.eq_ignore_ascii_case("pilcrow:head")
+    if node.name.eq_ignore_ascii_case("Fragment") || node.name.eq_ignore_ascii_case("pilcrow:head")
     {
         return node
             .inner
@@ -2414,12 +2456,10 @@ pub struct Props {
         assert!(result.generated_routes_file.exists());
         assert!(result.generated_templates_file.exists());
         assert!(result.generated_routes.iter().any(|r| r.pattern == "/"));
-        assert!(
-            result
-                .generated_templates
-                .iter()
-                .any(|t| t.render_symbol == "render_page_index")
-        );
+        assert!(result
+            .generated_templates
+            .iter()
+            .any(|t| t.render_symbol == "render_page_index"));
 
         let page_template = out.join("pilcrow_templates/pages/index.html");
         let page_rendered = fs::read_to_string(page_template).expect("read transpiled page");
@@ -2920,16 +2960,32 @@ pub async fn load(_req: Req) -> Props { Props {} }"#,
         let result = compile_to_out_dir(&src, &out).expect("pipeline should compile markdown");
 
         assert!(
-            result.generated_routes.iter().any(|r| r.pattern == "/posts/hello"),
+            result
+                .generated_routes
+                .iter()
+                .any(|r| r.pattern == "/posts/hello"),
             "expected route /posts/hello, got: {:?}",
-            result.generated_routes.iter().map(|r| &r.pattern).collect::<Vec<_>>()
+            result
+                .generated_routes
+                .iter()
+                .map(|r| &r.pattern)
+                .collect::<Vec<_>>()
         );
 
         let tpl_path = out.join("pilcrow_templates/pages/posts/hello.html");
-        assert!(tpl_path.exists(), "transpiled template should exist as .html");
+        assert!(
+            tpl_path.exists(),
+            "transpiled template should exist as .html"
+        );
         let rendered = fs::read_to_string(&tpl_path).expect("read transpiled markdown template");
-        assert!(rendered.contains("<h1>Hello World</h1>"), "H1 should be rendered: {rendered}");
-        assert!(rendered.contains("<strong>markdown</strong>"), "bold should be rendered: {rendered}");
+        assert!(
+            rendered.contains("<h1>Hello World</h1>"),
+            "H1 should be rendered: {rendered}"
+        );
+        assert!(
+            rendered.contains("<strong>markdown</strong>"),
+            "bold should be rendered: {rendered}"
+        );
 
         cleanup(&root);
     }
@@ -2949,7 +3005,8 @@ pub async fn load(_req: Req) -> Props { Props {} }"#,
             "pub struct Props {\n    pub title: String,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Pilcrow Blog\".to_string() })\n}\n",
         );
 
-        let result = compile_to_out_dir(&src, &out).expect("pipeline should compile markdown with code-behind");
+        let result = compile_to_out_dir(&src, &out)
+            .expect("pipeline should compile markdown with code-behind");
 
         assert!(
             result.generated_routes.iter().any(|r| r.pattern == "/blog"),
@@ -2957,13 +3014,25 @@ pub async fn load(_req: Req) -> Props { Props {} }"#,
         );
 
         let tpl_path = out.join("pilcrow_templates/pages/blog.html");
-        assert!(tpl_path.exists(), "transpiled template should exist as .html");
+        assert!(
+            tpl_path.exists(),
+            "transpiled template should exist as .html"
+        );
         let rendered = fs::read_to_string(&tpl_path).expect("read transpiled markdown template");
-        assert!(rendered.contains("<h1>My Blog</h1>"), "H1 should be rendered: {rendered}");
+        assert!(
+            rendered.contains("<h1>My Blog</h1>"),
+            "H1 should be rendered: {rendered}"
+        );
 
-        let page = result.preprocessed_files.iter().find(|f| f.module_name == "page_blog")
+        let page = result
+            .preprocessed_files
+            .iter()
+            .find(|f| f.module_name == "page_blog")
             .expect("page_blog module should exist");
-        assert!(page.rust_frontmatter.contains("pub struct Props"), "code-behind Props should be present");
+        assert!(
+            page.rust_frontmatter.contains("pub struct Props"),
+            "code-behind Props should be present"
+        );
 
         cleanup(&root);
     }
@@ -3090,12 +3159,10 @@ pub struct Props {}
         );
 
         // Neither _layout.html should be a route
-        assert!(
-            result
-                .generated_routes
-                .iter()
-                .all(|r| !r.pattern.contains("_layout"))
-        );
+        assert!(result
+            .generated_routes
+            .iter()
+            .all(|r| !r.pattern.contains("_layout")));
 
         cleanup(&root);
     }
@@ -3135,12 +3202,10 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         );
 
         // _layout.html is not a route
-        assert!(
-            result
-                .generated_routes
-                .iter()
-                .all(|r| r.pattern != "/_layout")
-        );
+        assert!(result
+            .generated_routes
+            .iter()
+            .all(|r| r.pattern != "/_layout"));
 
         cleanup(&root);
     }
@@ -3375,14 +3440,23 @@ pub struct Props {}
         let page_template = out.join("pilcrow_templates/pages/index.html");
         let rendered = fs::read_to_string(page_template).expect("read transpiled page");
 
-        assert!(rendered.contains("<title>My Page</title>"), "custom title hoisted");
+        assert!(
+            rendered.contains("<title>My Page</title>"),
+            "custom title hoisted"
+        );
         assert!(
             rendered.contains(r#"<meta name="description" content="Great page" />"#),
             "meta tag hoisted"
         );
         assert!(!rendered.contains("Default"), "fallback title replaced");
-        assert!(rendered.contains("<h1>Hello</h1>"), "page body in default slot");
-        assert!(!rendered.contains("pilcrow:head"), "pilcrow:head tag consumed");
+        assert!(
+            rendered.contains("<h1>Hello</h1>"),
+            "page body in default slot"
+        );
+        assert!(
+            !rendered.contains("pilcrow:head"),
+            "pilcrow:head tag consumed"
+        );
     }
 
     #[test]
@@ -3410,8 +3484,14 @@ pub struct Props {}
         let page_template = out.join("pilcrow_templates/pages/index.html");
         let rendered = fs::read_to_string(page_template).expect("read transpiled page");
 
-        assert!(rendered.contains("<title>Site Title</title>"), "fallback title used");
-        assert!(rendered.contains("<h1>No custom head</h1>"), "page body present");
+        assert!(
+            rendered.contains("<title>Site Title</title>"),
+            "fallback title used"
+        );
+        assert!(
+            rendered.contains("<h1>No custom head</h1>"),
+            "page body present"
+        );
     }
 
     #[test]
@@ -3435,7 +3515,10 @@ pub const LAYOUT: &str = "none";
         let rendered = fs::read_to_string(page_template).expect("read transpiled page");
 
         assert!(!rendered.contains("pilcrow:head"), "pilcrow:head stripped");
-        assert!(!rendered.contains("<title>Gone</title>"), "head content stripped");
+        assert!(
+            !rendered.contains("<title>Gone</title>"),
+            "head content stripped"
+        );
         assert!(rendered.contains("<p>Body only</p>"), "body preserved");
     }
 }

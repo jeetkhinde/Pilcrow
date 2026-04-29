@@ -1,7 +1,7 @@
 /// Tests for `SilcrowEvent`, `SseEmitter`, and `sse_stream`.
 use axum::response::IntoResponse;
 use http_body_util::BodyExt;
-use runtime::{EmitError, SilcrowEvent, sse_stream};
+use runtime::{sse_stream, EmitError, SilcrowEvent};
 
 async fn collect_sse_body(sse: impl IntoResponse) -> String {
     let bytes = sse
@@ -19,7 +19,12 @@ async fn collect_sse_body(sse: impl IntoResponse) -> String {
 #[tokio::test]
 async fn sse_stream_has_event_stream_content_type() {
     let resp = sse_stream(|_| async move { Ok(()) }).into_response();
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.contains("text/event-stream"), "got: {ct}");
 }
 
@@ -146,7 +151,10 @@ async fn sse_emitter_json_sends_patch_event() {
 
 #[test]
 fn emit_error_disconnected_display() {
-    assert_eq!(EmitError::Disconnected.to_string(), "SSE client disconnected");
+    assert_eq!(
+        EmitError::Disconnected.to_string(),
+        "SSE client disconnected"
+    );
 }
 
 #[test]

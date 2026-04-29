@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex, RwLock};
 use axum::{
     async_trait,
     extract::{Form, FromRequest, FromRequestParts, Path, Request},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
     http::request::Parts,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use axum_extra::extract::CookieJar;
 use cookie::time::Duration;
 use headers::HeaderMapExt;
 use pilcrow_core::AppError;
@@ -56,7 +56,10 @@ impl std::fmt::Debug for Locals {
 impl Locals {
     /// Store a value of type `T`. Overwrites any previous value of the same type.
     pub fn set<T: Send + Sync + 'static>(&self, value: T) {
-        self.0.write().unwrap_or_else(|e| e.into_inner()).insert(TypeId::of::<T>(), Box::new(value));
+        self.0
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(TypeId::of::<T>(), Box::new(value));
     }
 
     /// Retrieve a clone of the stored value of type `T`, or `None` if not set.
@@ -80,7 +83,10 @@ impl Locals {
 
     /// `true` if a value of type `T` has been set.
     pub fn has<T: 'static>(&self) -> bool {
-        self.0.read().unwrap_or_else(|e| e.into_inner()).contains_key(&TypeId::of::<T>())
+        self.0
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&TypeId::of::<T>())
     }
 }
 
@@ -300,12 +306,15 @@ impl FormMap {
         let mut parts: Vec<String> = Vec::with_capacity(self.0.len());
         for (k, vs) in &self.0 {
             for v in vs {
-                parts.push(format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)));
+                parts.push(format!(
+                    "{}={}",
+                    urlencoding::encode(k),
+                    urlencoding::encode(v)
+                ));
             }
         }
         let encoded = parts.join("&");
-        serde_urlencoded::from_str::<T>(&encoded)
-            .map_err(|e| AppError::Validation(e.to_string()))
+        serde_urlencoded::from_str::<T>(&encoded).map_err(|e| AppError::Validation(e.to_string()))
     }
 }
 
@@ -316,7 +325,9 @@ impl FormMap {
 /// `%XX` sequences are percent-decoded. Empty pairs are ignored.
 fn parse_query_multi(raw_query: Option<&str>) -> FormMap {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
-    let Some(q) = raw_query else { return FormMap(out) };
+    let Some(q) = raw_query else {
+        return FormMap(out);
+    };
     for pair in q.split('&') {
         if pair.is_empty() {
             continue;
@@ -407,6 +418,39 @@ pub struct Req {
     i18n: Option<I18nBundles>,
 }
 
+/// Typed page context passed to `load(ctx: Page)` for dynamic file routes.
+///
+/// Routekit generates a page-local `Params` type from the route file path and a
+/// `type Page = pilcrow_web::Page<Params>` alias inside the generated page module.
+/// The underlying [`Req`] remains available through `ctx.req` and via deref.
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub req: Req,
+    pub params: T,
+}
+
+impl<T> Page<T>
+where
+    T: TryFrom<HashMap<String, String>, Error = AppError>,
+{
+    pub fn try_from_req(req: Req) -> Result<Self, AppError> {
+        let params = T::try_from(req.params.clone())?;
+        Ok(Self { req, params })
+    }
+
+    pub fn from_req(req: Req) -> Self {
+        Self::try_from_req(req).expect("route params should be validated before load()")
+    }
+}
+
+impl<T> std::ops::Deref for Page<T> {
+    type Target = Req;
+
+    fn deref(&self) -> &Self::Target {
+        &self.req
+    }
+}
+
 impl Req {
     /// Return the named action from the current request URL.
     ///
@@ -458,7 +502,9 @@ impl Req {
             let mut response = Redirect::to(&self.path).into_response();
             *response.status_mut() = StatusCode::SEE_OTHER;
             if let Ok(header_value) = HeaderValue::from_str(&flash_cookie.to_string()) {
-                response.headers_mut().append(header::SET_COOKIE, header_value);
+                response
+                    .headers_mut()
+                    .append(header::SET_COOKIE, header_value);
             }
             Ok(response)
         }
@@ -532,7 +578,11 @@ impl Req {
     ///   `handle` hook are visible inside `handle_error`
     #[doc(hidden)]
     pub fn __from_error_parts(parts: &Parts) -> Self {
-        let locals = parts.extensions.get::<Locals>().cloned().unwrap_or_default();
+        let locals = parts
+            .extensions
+            .get::<Locals>()
+            .cloned()
+            .unwrap_or_default();
         let res = parts.extensions.get::<Res>().cloned().unwrap_or_default();
         let path = parts.uri.path().to_owned();
         let headers = parts.headers.clone();
@@ -587,7 +637,9 @@ impl Req {
     /// let price    = req.fmt().float(19.99, 2);
     /// ```
     pub fn fmt(&self) -> FmtHelper<'_> {
-        FmtHelper { locale: &self.locale }
+        FmtHelper {
+            locale: &self.locale,
+        }
     }
 
     /// Return a builder for constructing a synthetic `Req` in unit tests.
@@ -677,19 +729,29 @@ impl ReqBuilder {
 
     /// Append a query string value.
     pub fn query(mut self, key: &str, value: &str) -> Self {
-        self.query.0.entry(key.to_string()).or_default().push(value.to_string());
+        self.query
+            .0
+            .entry(key.to_string())
+            .or_default()
+            .push(value.to_string());
         self
     }
 
     /// Append a form body field.
     pub fn form_field(mut self, key: &str, value: &str) -> Self {
-        self.form.0.entry(key.to_string()).or_default().push(value.to_string());
+        self.form
+            .0
+            .entry(key.to_string())
+            .or_default()
+            .push(value.to_string());
         self
     }
 
     /// Add a cookie.
     pub fn cookie(mut self, name: &str, value: &str) -> Self {
-        self.cookies = self.cookies.add(Cookie::new(name.to_string(), value.to_string()));
+        self.cookies = self
+            .cookies
+            .add(Cookie::new(name.to_string(), value.to_string()));
         self
     }
 
@@ -742,10 +804,7 @@ struct CommonParts {
     action: Option<String>,
 }
 
-async fn extract_common_parts<S: Send + Sync>(
-    parts: &mut Parts,
-    state: &S,
-) -> CommonParts {
+async fn extract_common_parts<S: Send + Sync>(parts: &mut Parts, state: &S) -> CommonParts {
     let params = Path::<HashMap<String, String>>::from_request_parts(parts, state)
         .await
         .map(|p| p.0)
@@ -775,15 +834,11 @@ async fn extract_common_parts<S: Send + Sync>(
         });
 
     // Shared per-request Res: same pattern.
-    let res = parts
-        .extensions
-        .get::<Res>()
-        .cloned()
-        .unwrap_or_else(|| {
-            let r = Res::default();
-            parts.extensions.insert(r.clone());
-            r
-        });
+    let res = parts.extensions.get::<Res>().cloned().unwrap_or_else(|| {
+        let r = Res::default();
+        parts.extensions.insert(r.clone());
+        r
+    });
 
     // ISR cache handle — injected by start() when the cache is initialised.
     // Pages without REVALIDATE will have a no-op IsrHandle (inner = None).
@@ -803,7 +858,20 @@ async fn extract_common_parts<S: Send + Sync>(
     // i18n bundles — injected by start() when [i18n] is configured.
     let i18n = parts.extensions.get::<I18nBundles>().cloned();
 
-    CommonParts { params, query, cookies, headers, path, is_enhanced, locals, res, cache, locale, i18n, action }
+    CommonParts {
+        params,
+        query,
+        cookies,
+        headers,
+        path,
+        is_enhanced,
+        locals,
+        res,
+        cache,
+        locale,
+        i18n,
+        action,
+    }
 }
 
 #[async_trait]
@@ -817,11 +885,10 @@ impl<S: Send + Sync> FromRequest<S> for Req {
 
         // Reconstruct the request so Form can consume the body.
         let req = Request::from_parts(parts, body);
-        let pairs: Vec<(String, String)> =
-            Form::<Vec<(String, String)>>::from_request(req, state)
-                .await
-                .map(|f| f.0)
-                .unwrap_or_default();
+        let pairs: Vec<(String, String)> = Form::<Vec<(String, String)>>::from_request(req, state)
+            .await
+            .map(|f| f.0)
+            .unwrap_or_default();
 
         let mut raw_map: HashMap<String, Vec<String>> = HashMap::new();
         for (k, v) in pairs {

@@ -3,7 +3,7 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 
-use routing::path::{PathHierarchy, normalize_path};
+use routing::path::{normalize_path, PathHierarchy};
 
 pub mod routing;
 pub mod templating;

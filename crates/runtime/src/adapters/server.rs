@@ -1,6 +1,6 @@
 use axum::Router;
 
-use crate::adapter::{AdapterFuture, PilcrowAdapter, shutdown_signal};
+use crate::adapter::{shutdown_signal, AdapterFuture, PilcrowAdapter};
 
 /// Adapter for cloud platforms that inject a `PORT` env var at runtime.
 ///

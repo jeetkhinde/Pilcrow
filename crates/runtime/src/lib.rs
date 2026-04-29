@@ -3,11 +3,10 @@
 pub mod adapter;
 pub mod adapters;
 pub mod assets;
-pub(crate) mod dev;
-pub(crate) mod sw;
-pub mod deferred;
 pub mod context;
 pub mod csrf;
+pub mod deferred;
+pub(crate) mod dev;
 pub mod generated_routes;
 pub mod i18n;
 pub mod image;
@@ -16,6 +15,7 @@ pub mod middleware;
 pub mod response;
 pub mod sse;
 pub mod start;
+pub(crate) mod sw;
 pub mod validator;
 pub mod ws;
 pub use adapter::{AdapterFuture, PilcrowAdapter, TokioAdapter};
@@ -23,23 +23,23 @@ pub use start::{export, start, start_with_adapter, start_with_prerender};
 // ── Core API re-exports ──────────────────────────────────────
 pub use axum::http::StatusCode;
 pub use axum::response::Response;
-pub use context::{FormMap, Locals, Req, Res};
-pub use pilcrow_core::HookError;
+pub use context::{FormMap, Locals, Page, Req, Res};
 pub use csrf::csrf_middleware;
-pub use middleware::Next;
 pub use generated_routes::{
-    GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,
-    register_generated_api_routes, register_generated_routes,
+    generated_api_routes, generated_routes, pilcrow_router, register_generated_api_routes,
+    register_generated_routes, GeneratedApiRoute, GeneratedPageRoute,
 };
+pub use middleware::Next;
+pub use pilcrow_core::HookError;
 pub use pilcrow_macros::sse;
 pub use response::response::ToastLevel;
 pub use response::response::{
-    ActionResult, ErrorResponse, FormErrorItem, FormErrors, JsonResponse, NavigateResponse,
-    ResponseExt, form_errors, json, navigate, redirect, status,
+    form_errors, json, navigate, redirect, status, ActionResult, ErrorResponse, FormErrorItem,
+    FormErrors, JsonResponse, NavigateResponse, ResponseExt,
 };
 pub use sse::watch;
 pub use sse::{
-    EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute, interval, sse_raw, sse_stream,
+    interval, sse_raw, sse_stream, EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute,
 };
 pub use ws::ws::{WsEvent, WsRoute, WsStream};
 
@@ -50,16 +50,15 @@ pub use axum;
 pub use response::response::html;
 
 pub use deferred::{
-    Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch,
     __deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred,
-    __serialize_page_props, __streaming_props_response,
-    deferred_response, deferred_response_combined,
+    __serialize_page_props, __streaming_props_response, deferred_response,
+    deferred_response_combined, Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch,
 };
 // ── ISR ──────────────────────────────────────────────────────
-pub use isr::{CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle, __isr_cache_key};
+pub use isr::{__isr_cache_key, CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle};
 // ── Validation ───────────────────────────────────────────────
-pub use validator::Validator;
 pub use context::ReqBuilder;
+pub use validator::Validator;
 // ── i18n ─────────────────────────────────────────────────────
 pub use i18n::{FmtHelper, I18nBundles};
 

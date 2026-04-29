@@ -38,6 +38,8 @@ pub struct GeneratedPageRoute {
     pub template_path: String,
     pub symbol: String,
     pub render_symbol: String,
+    /// Typed route params generated from the file path, in route order.
+    pub route_params: Vec<GeneratedRouteParam>,
     /// Param names mapped to their external matcher module names.
     /// e.g. `[id=integer]` → `{ "id" => "integer" }` (calls `crate::params::integer::match_param`).
     pub param_matchers: HashMap<String, String>,
