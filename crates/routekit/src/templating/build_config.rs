@@ -19,6 +19,54 @@ pub struct PilcrowBuildConfig {
     /// i18n configuration — generates typed `t::` translation functions from `.ftl` files.
     #[serde(default)]
     pub i18n: I18nBuildConfig,
+
+    /// Client-side integrations, currently React client islands.
+    #[serde(default)]
+    pub client: ClientBuildConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct ClientBuildConfig {
+    #[serde(default)]
+    pub react: ReactBuildConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ReactBuildConfig {
+    /// Enables the React island build when `<react>` tags are present.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory names that may contain React source. These directories must also
+    /// be excluded with `[routing].ignore_directories`.
+    #[serde(default = "default_react_dirs")]
+    pub dirs: Vec<String>,
+    /// Warn when a single generated island entry exceeds this approximate size.
+    #[serde(default)]
+    pub max_island_kb: Option<u64>,
+    /// Warn when all React JS for one build exceeds this approximate size.
+    #[serde(default)]
+    pub max_page_react_kb: Option<u64>,
+    #[serde(default)]
+    pub warn: bool,
+    #[serde(default)]
+    pub fail_on_budget: bool,
+}
+
+impl Default for ReactBuildConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dirs: default_react_dirs(),
+            max_island_kb: None,
+            max_page_react_kb: None,
+            warn: false,
+            fail_on_budget: false,
+        }
+    }
+}
+
+fn default_react_dirs() -> Vec<String> {
+    vec!["react".to_string()]
 }
 
 /// Build-time i18n configuration. Mirrors `I18nConfig` in `pilcrow-core`.

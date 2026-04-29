@@ -673,6 +673,81 @@ validation_rules = [
 scaffold_templates = ["island"]
 
 [[features]]
+id = "react-islands"
+name = "React Islands"
+domain = "pilcrow"
+status = "stable"
+summary = "Client-only React widgets mounted with <react> tags, scoped to ignored react directories and lazy-loaded by strategy."
+spec = """
+React islands are client-only widgets. Pilcrow renders the page or fragment first;
+React mounts only inside explicit <react> containers.
+
+Canonical tag:
+  <react src="./react/Counter.tsx" strategy="visible" count="{{ props.count }}" />
+
+Placement follows Pilcrow.toml folder rules:
+  src/pages/dashboard/react/Counter.tsx   — page-local widget
+  src/widgets/react/FavoriteButton.tsx    — fragment-local widget
+  src/react/DataGrid.tsx                  — shared widget
+
+Required config:
+  [routing]
+  ignore_directories = ["react"]
+
+  [client.react]
+  enabled = true
+  dirs = ["react"]
+
+Routekit resolves relative src values from the containing page or fragment file.
+Root src values like /react/DataGrid.tsx resolve from src/react/DataGrid.tsx.
+Extra attributes are passed to the React component as string props, with kebab-case
+names converted to camelCase by the browser loader.
+
+The build runs Vite only when <react> tags are present. It emits hashed browser
+chunks under /_pilcrow/client/** and a tiny loader at /_pilcrow/react-islands.js.
+Silcrow fragment swaps trigger the loader to scan newly inserted HTML.
+"""
+canonical_usage = """
+<!-- src/pages/dashboard/index.html -->
+<react src="./react/Counter.tsx" strategy="visible" initial-count="{{ count }}" />
+
+// src/pages/dashboard/react/Counter.tsx
+export default function Counter(props: { initialCount: string }) {
+  return <button>{props.initialCount}</button>;
+}
+"""
+constraints = [
+  "V1 supports React only.",
+  "React islands are CSR-only — no React SSR hydration.",
+  "src and strategy are required on every <react> tag.",
+  "strategy must be one of: load, visible, idle.",
+  "React source must live under one of [client.react].dirs.",
+  "React source directories must also be covered by [routing].ignore_directories.",
+  "Apps using React islands need local npm dependencies for vite, react, and react-dom.",
+]
+invalid_examples = [
+  "<react src=\"./react/Counter.tsx\" /> — missing strategy",
+  "<react src=\"./Counter.tsx\" strategy=\"visible\" /> — source is not in a configured react dir",
+  "Putting TSX files under pages without ignore_directories = [\"react\"]",
+]
+source_refs = [
+  "crates/routekit/src/templating/react.rs",
+  "crates/routekit/src/templating/pipeline.rs",
+  "crates/runtime/assets/react-islands.js",
+  "crates/runtime/src/start.rs",
+]
+test_refs = [
+  "crates/routekit/src/templating/react.rs — react tag tests",
+  "crates/routekit/src/routing/discovery.rs — ignore_directories react tests",
+]
+validation_rules = [
+  "<react> tags require src and strategy.",
+  "Use strategy=\"visible\" for heavier widgets unless immediate interactivity is required.",
+  "Prefer Silcrow forms/actions over modeling routine server interactions as React state.",
+]
+scaffold_templates = ["react-island"]
+
+[[features]]
 id = "ssg"
 name = "Static Site Generation (SSG)"
 domain = "pilcrow"

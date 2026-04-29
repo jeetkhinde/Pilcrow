@@ -649,6 +649,18 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Routekit,
         },
         DocumentSpec {
+            id: "routekit-react-islands",
+            title: "React island transpilation, Vite build, and asset manifest generation",
+            path: "crates/routekit/src/templating/react.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "runtime-react-islands-loader",
+            title: "React island browser loader",
+            path: "crates/runtime/assets/react-islands.js",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "routekit-pipeline-templating",
             title: "Build pipeline: slot expansion, <pilcrow:head> hoisting, island detection, layout chain (pipeline.rs)",
             path: "crates/routekit/src/templating/pipeline.rs",

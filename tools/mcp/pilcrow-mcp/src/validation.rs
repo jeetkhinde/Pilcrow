@@ -403,6 +403,31 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
             }
         }
 
+        if line.contains("<react") {
+            if !line.contains("src=") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-react-missing-src",
+                    "`<react>` requires a static src attribute pointing at a React component.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature react-islands (stable)"),
+                    Some("Use `<react src=\"./react/Counter.tsx\" strategy=\"visible\" />`."),
+                ));
+            }
+            if !line.contains("strategy=") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-react-missing-strategy",
+                    "`<react>` requires strategy=\"load\", \"visible\", or \"idle\" so JavaScript cost is explicit.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature react-islands (stable)"),
+                    Some("Prefer `strategy=\"visible\"` for non-critical widgets."),
+                ));
+            }
+        }
+
         // generateStaticParams is unimplemented. `prerender` in HTML is wrong syntax —
         // PRERENDER belongs in the .rs code-behind, not the HTML template.
         if line.contains("generateStaticParams") {

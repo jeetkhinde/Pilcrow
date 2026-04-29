@@ -14,6 +14,7 @@ use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
+use crate::assets::assets::{serve_react_islands_js, serve_silcrow_js, silcrow_js_path};
 use crate::dev::{dev_inject_layer, dev_reload_handler, spawn_css_watcher, DevState};
 use crate::i18n::{locale_middleware_impl, I18nBundles};
 use crate::image::handler::{image_handler, ImageState};
@@ -91,7 +92,14 @@ where
     prerender_fn(Arc::clone(&isr_cache)).await;
     let isr_handle = IsrHandle::new(Arc::clone(&isr_cache));
 
-    let mut app = app.route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler));
+    let silcrow_path = silcrow_js_path();
+    let mut app = app
+        .route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler))
+        .route(&silcrow_path, axum::routing::get(serve_silcrow_js))
+        .route(
+            "/_pilcrow/react-islands.js",
+            axum::routing::get(serve_react_islands_js),
+        );
 
     if sw_enabled {
         app = app.route("/sw.js", axum::routing::get(sw_handler));

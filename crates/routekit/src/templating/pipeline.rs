@@ -18,6 +18,9 @@ use crate::templating::compiler::{
     transpile_pilcrow_tags,
 };
 use crate::templating::markdown::transpile_markdown;
+use crate::templating::react::{
+    build_react_assets, replace_react_placeholders, transpile_react_tags, ReactIslandRef,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
@@ -96,7 +99,14 @@ pub fn compile_to_out_dir_with_config(
 
     let discovered = discover_html_files(src_root, &build_config.routing.ignore_directories)?;
     let templates_root = out_dir.join("pilcrow_templates");
-    let mut files = preprocess_discovered_sources(src_root, &templates_root, &discovered)?;
+    let mut react_islands = Vec::<ReactIslandRef>::new();
+    let mut files = preprocess_discovered_sources(
+        src_root,
+        &templates_root,
+        &discovered,
+        build_config,
+        &mut react_islands,
+    )?;
 
     // ── Fragment groups (configured + auto-detected islands/ subdirs) ────────
     let mut fragment_routes: Vec<crate::templating::codegen::GeneratedPageRoute> = Vec::new();
@@ -201,7 +211,15 @@ pub fn compile_to_out_dir_with_config(
             )?;
             let fragment_base = format!("/{url_prefix}");
             let after_islands = transpile_island_tags(&expanded, &fragment_base);
-            let after_components = transpile_component_tags(&after_islands);
+            let (after_react, mut found_react) = transpile_react_tags(
+                &after_islands,
+                &module.source_path,
+                src_root,
+                &build_config.client.react,
+                &build_config.routing,
+            )?;
+            react_islands.append(&mut found_react);
+            let after_components = transpile_component_tags(&after_react);
             let after_pilcrow = transpile_pilcrow_tags(&after_components);
             let final_template = inject_form_method_attrs(&after_pilcrow);
 
@@ -246,6 +264,23 @@ pub fn compile_to_out_dir_with_config(
         &build_config.routing.ignore_directories,
     )?;
     let generated_templates_file = out_dir.join("generated_templates.rs");
+    let manifest_dir = src_root.parent().unwrap_or(src_root);
+    let react_urls = build_react_assets(
+        manifest_dir,
+        out_dir,
+        &react_islands,
+        &build_config.client.react,
+    )?;
+    if !react_urls.is_empty() {
+        for file in &mut files {
+            file.transpiled_template =
+                replace_react_placeholders(&file.transpiled_template, &react_urls);
+            fs::write(
+                &file.template_output_path,
+                file.transpiled_template.as_bytes(),
+            )?;
+        }
+    }
     let route_params_by_template: HashMap<String, Vec<GeneratedRouteParam>> = generated_routes
         .iter()
         .map(|route| {
@@ -401,6 +436,7 @@ pub fn compile_to_out_dir_with_config(
         &templates_output.isr_config_map,
         &templates_output.ssg_config_map,
         hook_flags,
+        !react_urls.is_empty(),
         src_root,
         out_dir,
     )?;
@@ -592,6 +628,8 @@ fn preprocess_discovered_sources(
     src_root: &Path,
     templates_root: &Path,
     discovered: &DiscoveredHtmlFiles,
+    build_config: &PilcrowBuildConfig,
+    react_islands: &mut Vec<ReactIslandRef>,
 ) -> io::Result<Vec<PreprocessedHtmlFile>> {
     let mut modules = HashMap::<PathBuf, HtmlModuleSource>::new();
 
@@ -725,7 +763,15 @@ fn preprocess_discovered_sources(
             "/".to_string()
         };
         let after_islands = transpile_island_tags(&expanded, &url_base);
-        let after_components = transpile_component_tags(&after_islands);
+        let (after_react, mut found_react) = transpile_react_tags(
+            &after_islands,
+            &module.source_path,
+            src_root,
+            &build_config.client.react,
+            &build_config.routing,
+        )?;
+        react_islands.append(&mut found_react);
+        let after_components = transpile_component_tags(&after_react);
         let after_pilcrow = transpile_pilcrow_tags(&after_components);
         let final_template = inject_form_method_attrs(&after_pilcrow);
 

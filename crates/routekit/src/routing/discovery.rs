@@ -665,6 +665,45 @@ mod tests {
         cleanup(&root);
     }
 
+    #[test]
+    fn ignore_directories_skips_colocated_react_under_pages() {
+        let root = mk_temp_root("ignore_react_pages");
+        let src = root.join("src");
+
+        write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
+        write_file(
+            &src.join("pages/dashboard/react/Counter.html"),
+            "<h1>not a route</h1>",
+        );
+
+        let routes = build_page_routes(&src, &["react".to_string()]).expect("routes build");
+        let patterns = routes
+            .iter()
+            .map(|route| route.pattern.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(patterns, vec!["/"]);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn ignore_directories_skips_colocated_react_under_fragments() {
+        let root = mk_temp_root("ignore_react_fragments");
+        let src = root.join("src");
+
+        write_file(&src.join("widgets/user-card.html"), "<p>User</p>");
+        write_file(
+            &src.join("widgets/react/Favorite.html"),
+            "<p>not a fragment</p>",
+        );
+
+        let found = discover_fragment_files(&src, &src.join("widgets"), &["react".to_string()])
+            .expect("fragments discover");
+
+        assert_eq!(found.fragments, vec![src.join("widgets/user-card.html")]);
+        cleanup(&root);
+    }
+
     fn mk_temp_root(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -556,6 +556,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             &HashMap::new(),
             &HashMap::new(),
             HookFlags::default(),
+            false,
         );
 
         // Must spawn page load in background.
