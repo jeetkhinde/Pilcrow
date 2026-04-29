@@ -755,11 +755,17 @@ impl PilcrowServer {
         if desc.contains("middleware") || desc.contains("auth") || desc.contains("session") || desc.contains("guard") {
             matched.push(("middleware", "middleware / auth keywords"));
         }
+        if desc.contains("hook") || desc.contains("global request") || desc.contains("before route") || desc.contains("startup init") {
+            matched.push(("server-hooks", "hook lifecycle keywords"));
+        }
         if desc.contains("redirect") || desc.contains("navigate") || desc.contains("route") {
             matched.push(("typed-routes", "navigation / routing keywords"));
         }
         if desc.contains("env") || desc.contains("config") || desc.contains("secret") || desc.contains("database_url") {
             matched.push(("env-config", "environment / config keywords"));
+        }
+        if desc.contains("csrf") || desc.contains("forgery") || desc.contains("origin check") {
+            matched.push(("csrf", "csrf / request safety keywords"));
         }
         if desc.contains("api") || desc.contains("json") || desc.contains("rest") || desc.contains("endpoint") {
             matched.push(("api-routes", "API / JSON endpoint keywords"));
