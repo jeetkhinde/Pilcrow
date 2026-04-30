@@ -706,14 +706,142 @@ names converted to camelCase by the browser loader.
 The build runs Vite only when <react> tags are present. It emits hashed browser
 chunks under /_pilcrow/client/** and a tiny loader at /_pilcrow/react-islands.js.
 Silcrow fragment swaps trigger the loader to scan newly inserted HTML.
+
+react-islands.js loader behavior:
+- The loader scans the current document for [data-pilcrow-react] mount nodes.
+- data-strategy controls scheduling: load mounts immediately, visible mounts
+  through IntersectionObserver, idle mounts through requestIdleCallback or a
+  timeout fallback.
+- data-prop-* attributes become React props; kebab-case prop names become
+  camelCase.
+- data-css is a comma-separated list of generated CSS assets; each CSS URL is
+  loaded once into document.head.
+- data-src is dynamically imported. The generated Vite wrapper exports mount()
+  and also registers window.__pilcrowReactMounts[id] as a fallback.
+- The same mount node is only mounted once. If mounting fails, the node is made
+  mountable again for a later scan.
+- The loader listens for silcrow:patched and rescans inserted or patched HTML.
+
+React project dependencies:
+  package.json dependencies: react, react-dom
+  package.json devDependencies: vite, @vitejs/plugin-react, typescript
+
+React 19 production patterns:
+- Subscribe to Silcrow route, stream, or user-named atom scopes with
+  useSyncExternalStore over Silcrow.subscribe(scope, notify) and
+  Silcrow.snapshot(scope).
+- Read route JSON with React 19 use(Silcrow.prefetch(path)) inside Suspense.
+  Silcrow.prefetch(path) memoizes the Promise until mutation or error, so React
+  does not suspend-loop from promise churn.
+- Submit Pilcrow named actions from React with Silcrow.submit(url, body,
+  { method: "POST", scope }). Use this when React owns local form state;
+  prefer plain HTML forms with s-post for routine server forms.
+- Seed window.__silcrow_seed before silcrow.js loads when Pilcrow already has
+  the first route payload and the React island should avoid a duplicate request.
+- Non-GET Silcrow.submit calls clear cached route responses and prefetched
+  promises. Use invalidate_target for DOM binding-cache invalidation.
 """
 canonical_usage = """
+// Pilcrow.toml
+[routing]
+ignore_directories = ["react"]
+
+[client.react]
+enabled = true
+dirs = ["react"]
+max_island_kb = 80
+max_page_react_kb = 220
+warn = true
+fail_on_budget = false
+
 <!-- src/pages/dashboard/index.html -->
 <react src="./react/Counter.tsx" strategy="visible" initial-count="{{ count }}" />
 
 // src/pages/dashboard/react/Counter.tsx
 export default function Counter(props: { initialCount: string }) {
   return <button>{props.initialCount}</button>;
+}
+
+// src/react/silcrow.ts
+import { useSyncExternalStore } from "react";
+
+export function useSilcrowAtom<T>(scope: string, initialValue: T): T {
+  return useSyncExternalStore(
+    (notify) => window.Silcrow?.subscribe(scope, notify) ?? (() => {}),
+    () => window.Silcrow?.snapshot<T>(scope) ?? initialValue,
+    () => window.Silcrow?.snapshot<T>(scope) ?? initialValue,
+  );
+}
+
+// React 19 route data with Suspense + use()
+import { Suspense, use, useMemo } from "react";
+
+type ProductIndex = {
+  title: string;
+  items: Array<{ id: number; name: string; price: string }>;
+};
+
+function ProductRows({ promise }: { promise: Promise<ProductIndex> }) {
+  const initial = use(promise);
+  const data = useSilcrowAtom<ProductIndex>("route:/products", initial);
+  return (
+    <ul>
+      {data.items.map((item) => (
+        <li key={item.id}>{item.name} - {item.price}</li>
+      ))}
+    </ul>
+  );
+}
+
+export function ProductPanel({ path = "/products" }: { path?: string }) {
+  const promise = useMemo(() => window.Silcrow!.prefetch<ProductIndex>(path), [path]);
+  return (
+    <Suspense fallback={<p>Loading products...</p>}>
+      <ProductRows promise={promise} />
+    </Suspense>
+  );
+}
+
+// React 19 action submission with useActionState
+import { useActionState } from "react";
+
+type ActionState = {
+  ok: boolean;
+  message?: string;
+  errors?: Record<string, string>;
+};
+
+async function createProduct(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const result = await window.Silcrow!.submit<ActionState>("?/create", formData, {
+    method: "POST",
+    scope: "products:create",
+  });
+  if (!result.ok) return result.data ?? { ok: false, message: `HTTP ${result.status}` };
+  return result.data ?? { ok: true, message: "Saved" };
+}
+
+export function ProductCreateForm() {
+  const [state, formAction, pending] = useActionState(createProduct, { ok: true });
+  return (
+    <form action={formAction}>
+      <input name="name" aria-invalid={Boolean(state.errors?.name)} />
+      {state.errors?.name ? <p role="alert">{state.errors.name}</p> : null}
+      <button disabled={pending}>{pending ? "Saving..." : "Save"}</button>
+      {state.message ? <p>{state.message}</p> : null}
+    </form>
+  );
+}
+
+// Matching Pilcrow named action shape
+use pilcrow_web::{form_errors, json, ActionResult, Req};
+
+pub async fn create(req: Req) -> ActionResult {
+    let name = req.form.get("name").unwrap_or("").trim();
+    if name.is_empty() {
+        return req.fail(form_errors().error("name", "Name is required"));
+    }
+    req.res.invalidate_target("#products");
+    json(serde_json::json!({ "ok": true, "message": "Product created" }))
 }
 """
 constraints = [
@@ -724,6 +852,8 @@ constraints = [
   "React source must live under one of [client.react].dirs.",
   "React source directories must also be covered by [routing].ignore_directories.",
   "Apps using React islands need local npm dependencies for vite, react, and react-dom.",
+  "React route-data examples assume React 19 use() and Suspense.",
+  "Silcrow.submit from React should target the same Pilcrow named action URLs used by enhanced HTML forms.",
 ]
 invalid_examples = [
   "<react src=\"./react/Counter.tsx\" /> — missing strategy",
