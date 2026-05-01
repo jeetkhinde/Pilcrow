@@ -6,11 +6,11 @@ id = "ssr-pages"
 name = "SSR Pages"
 domain = "pilcrow"
 status = "stable"
-summary = "Server-rendered pages are discovered from src/pages/**/*.html with optional Rust code-behind."
-spec = "A page is an HTML template under src/pages. A sibling .rs file may declare Props and an async load(req: Req) -> AppResult<Props> function. Pages are registered by generated code through pilcrow_web::include_generated_app!()."
-canonical_usage = "Create src/pages/products/index.html and src/pages/products/index.rs. In index.rs: `pub struct Props { pub items: Vec<String> }` and `pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { items: vec![] }) }`. Access in template: `{{ items }}`."
+summary = "Server-rendered pages are discovered from pages/**/*.html with optional Rust code-behind."
+spec = "A page is an HTML template under pages. A sibling .rs file may declare Props and an async load(req: Req) -> AppResult<Props> function. Pages are registered by generated code through pilcrow_web::include_generated_app!()."
+canonical_usage = "Create pages/products/index.html and pages/products/index.rs. In index.rs: `pub struct Props { pub items: Vec<String> }` and `pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { items: vec![] }) }`. Access in template: `{{ items }}`."
 constraints = [
-  "Page .html files must live under src/pages/.",
+  "Page .html files must live under pages/.",
   "Code-behind load() must be async, return AppResult<Props>, and accept Req.",
   "Props must be a public struct named Props.",
   "Do not call pilcrow_web::include_generated_app!() manually — the pilcrow_app!() macro does it.",
@@ -27,7 +27,7 @@ source_refs = [
 ]
 test_refs = [
   "crates/routekit/src/templating/codegen/tests.rs",
-  "sandbox/apps/web/src/pages/index.rs",
+  "sandbox/pages/index.rs",
 ]
 validation_rules = [
   "Pages should not manually register Axum routes.",
@@ -40,12 +40,12 @@ id = "file-routing"
 name = "File Routing"
 domain = "pilcrow"
 status = "stable"
-summary = "Route paths are derived from files and directories under src/pages and src/api."
+summary = "Route paths are derived from files and directories under pages and api."
 spec = "index.html maps to its containing directory, dynamic segments use bracket syntax [param], route groups use parenthesized directories (group), and generated route helpers live in OUT_DIR."
-canonical_usage = "src/pages/index.html -> GET /. src/pages/products/index.html -> GET /products. src/pages/[id]/index.html -> GET /:id. src/pages/(admin)/dashboard.html -> GET /dashboard (group stripped). src/pages/[id=integer]/index.html -> GET /:id with integer constraint."
+canonical_usage = "pages/index.html -> GET /. pages/products/index.html -> GET /products. pages/[id]/index.html -> GET /:id. pages/(admin)/dashboard.html -> GET /dashboard (group stripped). pages/[id=integer]/index.html -> GET /:id with integer constraint."
 constraints = [
-  "Page routes must live under src/pages.",
-  "API routes must live under src/api.",
+  "Page routes must live under pages.",
+  "API routes must live under api.",
   "Dynamic params use [name] syntax; constraint matchers use [name=matcher] syntax.",
   "Route groups use (name) syntax — strips the name from the URL.",
   "index.html in a directory maps to the directory path.",
@@ -53,7 +53,7 @@ constraints = [
 invalid_examples = [
   "Registering routes in main.rs with .route() or Router::new()",
   "Using :param syntax in file names — that is axum runtime notation; file names use [param]",
-  "Placing page files outside src/pages/",
+  "Placing page files outside pages/",
 ]
 source_refs = [
   "crates/routekit/src/templating/pipeline.rs",
@@ -62,7 +62,7 @@ source_refs = [
 test_refs = ["crates/routekit/src/templating/codegen/tests.rs"]
 validation_rules = [
   "Do not hand-wire page routes in main.rs.",
-  "Keep routes under src/pages or src/api.",
+  "Keep routes under pages or api.",
 ]
 scaffold_templates = ["route"]
 
@@ -79,7 +79,7 @@ constraints = [
   "Patterns with slashes match paths relative to the src directory.",
   "Directories matching the glob patterns are completely skipped during page, fragment, and API route discovery.",
 ]
-invalid_examples = ["Using absolute paths like '/src/pages/Cards'"]
+invalid_examples = ["Using absolute paths like '/pages/Cards'"]
 source_refs = ["crates/routekit/src/routing/discovery.rs"]
 test_refs = []
 validation_rules = ["ignore_directories paths should be valid glob patterns."]
@@ -92,7 +92,7 @@ domain = "pilcrow"
 status = "stable"
 summary = "Layouts are HTML templates named _layout.html and compose around nested pages."
 spec = "A _layout.html file applies to pages in its directory subtree. A route group may provide its own _layout.html without adding a URL segment. Layouts may have a .rs code-behind with their own Props and load()."
-canonical_usage = "Create src/pages/_layout.html with `{{ content }}` slot. Optionally create src/pages/_layout.rs with `pub struct Props { pub user: Option<String> }` and `pub async fn load(req: Req) -> AppResult<Props> { ... }`. The layout Props fields are merged into page Props as __MergedProps."
+canonical_usage = "Create pages/_layout.html with `{{ content }}` slot. Optionally create pages/_layout.rs with `pub struct Props { pub user: Option<String> }` and `pub async fn load(req: Req) -> AppResult<Props> { ... }`. The layout Props fields are merged into page Props as __MergedProps."
 constraints = [
   "Layout files must be named _layout.html.",
   "Layout code-behind load() must return AppResult<Props> — same convention as pages.",
@@ -121,10 +121,10 @@ name = "Route Groups"
 domain = "pilcrow"
 status = "stable"
 summary = "Parenthesized page directories organize routes without contributing URL segments."
-spec = "Directories like src/pages/(admin) may contain pages and layouts. The group name is for organization and layout scoping only. The URL does not include the group directory name."
-canonical_usage = "Create src/pages/(admin)/_layout.html for an admin shell. Place src/pages/(admin)/dashboard.html for GET /dashboard. The (admin) group applies the layout without adding /admin to the URL."
+spec = "Directories like pages/(admin) may contain pages and layouts. The group name is for organization and layout scoping only. The URL does not include the group directory name."
+canonical_usage = "Create pages/(admin)/_layout.html for an admin shell. Place pages/(admin)/dashboard.html for GET /dashboard. The (admin) group applies the layout without adding /admin to the URL."
 constraints = [
-  "Route group directories must stay inside src/pages.",
+  "Route group directories must stay inside pages.",
   "Group names must be wrapped in parentheses: (name).",
   "Groups may nest but the group name never appears in the generated URL.",
 ]
@@ -133,7 +133,7 @@ invalid_examples = [
 ]
 source_refs = ["crates/routekit/src/templating/pipeline.rs"]
 test_refs = ["crates/routekit/src/templating/codegen/tests.rs"]
-validation_rules = ["Route group directories must stay inside src/pages."]
+validation_rules = ["Route group directories must stay inside pages."]
 scaffold_templates = ["route"]
 
 [[features]]
@@ -142,8 +142,8 @@ name = "Fragments"
 domain = "pilcrow"
 status = "stable"
 summary = "Configured fragment directories expose HTML fragments as addressable server-rendered endpoints."
-spec = "Pilcrow.toml [[fragments]] entries point to directories relative to src. Fragment HTML files are scanned and generated as URL-accessible fragment routes. No layout wrapping is applied. Code-behind files work exactly as with pages."
-canonical_usage = "In Pilcrow.toml: `[[fragments]]\\ndir = \"widgets\"`. Create src/widgets/user-card.html -> GET /widgets/user-card. Optionally create src/widgets/user-card.rs with Props and load(). Fragment modules are auto-available as `fragments::widgets::user_card`."
+spec = "Pilcrow.toml [[fragments]] entries point to directories relative to project root. Fragment HTML files are scanned and generated as URL-accessible fragment routes. No layout wrapping is applied. Code-behind files work exactly as with pages."
+canonical_usage = "In Pilcrow.toml: `[[fragments]]\\ndir = \"widgets\"`. Create widgets/user-card.html -> GET /widgets/user-card. Optionally create widgets/user-card.rs with Props and load(). Fragment modules are auto-available as `fragments::widgets::user_card`."
 constraints = [
   "Fragment dirs are configured in Pilcrow.toml [[fragments]] — not auto-discovered.",
   "No layout is applied to fragment routes.",
@@ -152,7 +152,7 @@ constraints = [
   "Fragment dirs may import ui/ components.",
 ]
 invalid_examples = [
-  "Placing fragment files under src/pages/ — those would be treated as regular routes with layout wrapping",
+  "Placing fragment files under pages/ — those would be treated as regular routes with layout wrapping",
   "Referencing a fragment dir without adding it to Pilcrow.toml [[fragments]]",
 ]
 source_refs = [
@@ -170,11 +170,11 @@ id = "api-routes"
 name = "API Routes"
 domain = "pilcrow"
 status = "stable"
-summary = "Rust API routes are discovered from src/api/**/*.rs."
+summary = "Rust API routes are discovered from api/**/*.rs."
 spec = "API route files export a `pub fn router() -> axum::Router` function. Routekit discovers these files and mounts them into the generated application router via the generated_api_mods.rs file."
-canonical_usage = "Create src/api/products.rs. Export `pub fn router() -> axum::Router { Router::new().route(\"/api/products\", get(list)) }`. The router is automatically mounted by the build pipeline."
+canonical_usage = "Create api/products.rs. Export `pub fn router() -> axum::Router { Router::new().route(\"/api/products\", get(list)) }`. The router is automatically mounted by the build pipeline."
 constraints = [
-  "API route files must live under src/api/.",
+  "API route files must live under api/.",
   "Each file must export `pub fn router() -> axum::Router`.",
   "Do not mount API routers manually in main.rs — the build pipeline does it.",
 ]
@@ -183,7 +183,7 @@ invalid_examples = [
   "Mounting the API router in main.rs with .merge()",
 ]
 source_refs = ["crates/routekit/src/templating/codegen/api_routes.rs"]
-test_refs = ["sandbox/apps/web/src/api/products.rs"]
+test_refs = ["sandbox/api/products.rs"]
 validation_rules = [
   "API files should expose router() rather than registering from main.rs.",
 ]
@@ -225,11 +225,11 @@ id = "server-hooks"
 name = "Server Hooks"
 domain = "pilcrow"
 status = "stable"
-summary = "Optional src/hooks.rs lifecycle hooks for global request handling, 5xx error shaping, and one-time startup init."
-spec = "When src/hooks.rs exists, Pilcrow detects and wires any of these async functions: `handle(req: Req, next: Next) -> Response`, `handle_error(error: &HookError, req: &Req) -> Option<Response>`, and `init()`. `handle` runs before route handlers, `handle_error` can replace 5xx responses, and `init` runs once before serving."
-canonical_usage = "Create src/hooks.rs with: `pub async fn handle(req: Req, next: Next) -> Response { req.locals.set(\"trace-id\"); next.run().await }`, `pub async fn handle_error(error: &HookError, req: &Req) -> Option<Response> { tracing::error!(\"{}\", error.message); None }`, and `pub async fn init() { tracing::info!(\"startup\"); }`."
+summary = "Optional hooks.rs lifecycle hooks for global request handling, 5xx error shaping, and one-time startup init."
+spec = "When hooks.rs exists, Pilcrow detects and wires any of these async functions: `handle(req: Req, next: Next) -> Response`, `handle_error(error: &HookError, req: &Req) -> Option<Response>`, and `init()`. `handle` runs before route handlers, `handle_error` can replace 5xx responses, and `init` runs once before serving."
+canonical_usage = "Create hooks.rs with: `pub async fn handle(req: Req, next: Next) -> Response { req.locals.set(\"trace-id\"); next.run().await }`, `pub async fn handle_error(error: &HookError, req: &Req) -> Option<Response> { tracing::error!(\"{}\", error.message); None }`, and `pub async fn init() { tracing::info!(\"startup\"); }`."
 constraints = [
-  "Hook file must be src/hooks.rs at the app root.",
+  "Hook file must be hooks.rs at the app root.",
   "Hook function signatures must match exactly (async, argument types, return type).",
   "handle() should call next.run().await unless intentionally short-circuiting.",
   "Use req.locals in hooks for cross-cutting request state shared with load()/actions.",
@@ -237,16 +237,16 @@ constraints = [
 invalid_examples = [
   "fn handle(req: Req, next: Next) -> Response — missing async",
   "pub async fn handle_error(error: HookError, req: Req) -> Response — wrong references and return type",
-  "Placing hooks in src/middleware.rs expecting automatic lifecycle wiring",
+  "Placing hooks in hooks.rs expecting automatic lifecycle wiring",
 ]
 source_refs = [
   "crates/routekit/src/templating/pipeline.rs — hook detection",
   "crates/routekit/src/templating/codegen/app_module.rs — generated hook shims and middleware wiring",
-  "sandbox/apps/web/src/hooks.rs",
+  "sandbox/hooks.rs",
 ]
 test_refs = ["crates/routekit/src/templating/pipeline.rs — detect_hook_flags tests"]
 validation_rules = [
-  "Prefer src/hooks.rs for global auth/session/request-id logic over duplicating in each load()/action.",
+  "Prefer hooks.rs for global auth/session/request-id logic over duplicating in each load()/action.",
 ]
 scaffold_templates = ["middleware"]
 
@@ -335,17 +335,17 @@ id = "middleware"
 name = "Middleware"
 domain = "pilcrow"
 status = "stable"
-summary = "src/middleware.rs can provide request middleware for generated routes."
+summary = "hooks.rs can provide request middleware for generated routes."
 spec = "Middleware receives Req and Next, then returns a Response. It should call next.run().await when continuing to the route handler. req.locals and req.res set in middleware are shared with all downstream load() and action fns."
 canonical_usage = "pub async fn middleware(req: Req, next: Next) -> Response { let token = req.cookies.get(\"session\").map(|c| c.value().to_string()); match auth::verify(token).await { Ok(user) => req.locals.set(user), Err(_) if req.path.starts_with(\"/admin\") => return AppError::Unauthorized.into_response(), _ => {} } next.run().await }"
 constraints = [
-  "Middleware must live in src/middleware.rs — no other location is auto-detected.",
+  "Middleware must live in hooks.rs — no other location is auto-detected.",
   "Middleware function must be named `middleware` (pub async fn middleware).",
   "next.run() forwards the entire request including body.",
   "Returning a Response without calling next.run() short-circuits the request.",
 ]
 invalid_examples = [
-  "Placing middleware in src/pages/middleware.rs — not auto-detected",
+  "Placing middleware in pages/middleware.rs — not auto-detected",
   "Naming the function `handle` instead of `middleware`",
 ]
 source_refs = [
@@ -353,7 +353,7 @@ source_refs = [
   "crates/routekit/src/templating/codegen/app_module.rs",
 ]
 test_refs = ["crates/runtime/tests/context.rs"]
-validation_rules = ["Middleware should live in src/middleware.rs."]
+validation_rules = ["Middleware should live in hooks.rs."]
 scaffold_templates = []
 
 [[features]]
@@ -371,7 +371,7 @@ In Pilcrow.toml:
 
 Generated: env::Public { api_url, app_name } and env::Private { database_url, secret_key }.
 
-Recommended: load once in src/middleware.rs and store in Locals to avoid repeated syscalls:
+Recommended: load once in hooks.rs and store in Locals to avoid repeated syscalls:
   pub async fn middleware(req: Req, next: Next) -> Response {
       let env = env::Private::load().expect("required env vars not set");
       req.locals.set(env);
@@ -419,7 +419,7 @@ domain = "pilcrow"
 status = "stable"
 summary = "_loading.html templates provide scoped loading skeletons."
 spec = "A _loading.html template in a pages subtree is appended to rendered HTML for matching routes so Silcrow can show scoped pending UI during navigation. The _loading.html content is injected as a <template> element."
-canonical_usage = "Create src/pages/_loading.html with skeleton content. Silcrow will show this during navigation to routes in the same directory. Scoped to the directory — a _loading.html in (admin)/ applies to admin group routes only."
+canonical_usage = "Create pages/_loading.html with skeleton content. Silcrow will show this during navigation to routes in the same directory. Scoped to the directory — a _loading.html in (admin)/ applies to admin group routes only."
 constraints = [
   "_loading.html applies to sibling and child routes, not parent routes.",
   "Loading templates are injected as <template> elements — they are not rendered as routes.",
@@ -462,17 +462,17 @@ id = "param-matchers"
 name = "Typed Param Matchers"
 domain = "pilcrow"
 status = "stable"
-summary = "Custom param matchers in src/params/ constrain dynamic route segments at request time."
-spec = "A file src/params/integer.rs exporting `pub fn match_param(value: &str) -> bool` is used when a route segment is named [id=integer]. The generated handler calls match_param at request time and returns 404 if it returns false."
-canonical_usage = "Create src/params/integer.rs: `pub fn match_param(value: &str) -> bool { value.parse::<i64>().is_ok() }`. Create src/pages/[id=integer]/index.html — only numeric :id values will match this route."
+summary = "Custom param matchers in params/ constrain dynamic route segments at request time."
+spec = "A file params/integer.rs exporting `pub fn match_param(value: &str) -> bool` is used when a route segment is named [id=integer]. The generated handler calls match_param at request time and returns 404 if it returns false."
+canonical_usage = "Create params/integer.rs: `pub fn match_param(value: &str) -> bool { value.parse::<i64>().is_ok() }`. Create pages/[id=integer]/index.html — only numeric :id values will match this route."
 constraints = [
-  "Matcher files must live in src/params/.",
+  "Matcher files must live in params/.",
   "Each file must export `pub fn match_param(value: &str) -> bool`.",
   "Matcher name in [id=name] must match the filename (without .rs).",
 ]
 invalid_examples = [
   "Using [id:int] syntax for custom matchers — that is built-in constraint syntax",
-  "Placing matcher files outside src/params/",
+  "Placing matcher files outside params/",
 ]
 source_refs = [
   "crates/routekit/src/templating/pipeline.rs",
@@ -490,15 +490,15 @@ name = "Typed Route Helpers"
 domain = "pilcrow"
 status = "stable"
 summary = "Generated pub mod routes { ... } with one typed fn per page route. Static routes return &'static str; dynamic routes return String."
-spec = "pilcrow_app!() includes OUT_DIR/generated_typed_routes.rs which exposes a `pub mod routes` module. Each page gets one function derived from its module symbol (page_ prefix stripped). Static routes (no :param) return &'static str. Dynamic routes take one &str argument per param and return String. Function names follow the page module symbol naming, e.g. the page at src/pages/products/[id].html gets routes::products_id(id: &str) -> String."
+spec = "pilcrow_app!() includes OUT_DIR/generated_typed_routes.rs which exposes a `pub mod routes` module. Each page gets one function derived from its module symbol (page_ prefix stripped). Static routes (no :param) return &'static str. Dynamic routes take one &str argument per param and return String. Function names follow the page module symbol naming, e.g. the page at pages/products/[id].html gets routes::products_id(id: &str) -> String."
 canonical_usage = """
-// src/pages/products/index.rs — static route /products
+// pages/products/index.rs — static route /products
 pub async fn delete(req: Req) -> ActionResult {
     db::delete(req.form.get("id").unwrap_or("")).await?;
     redirect(routes::products())   // returns &'static str "/products"
 }
 
-// src/pages/products/[id]/index.rs — dynamic route /products/:id
+// pages/products/[id]/index.rs — dynamic route /products/:id
 pub async fn load(req: Req) -> AppResult<Props> {
     let id = req.params.get("id").unwrap();
     // Build a canonical URL using the typed helper
@@ -561,7 +561,7 @@ For API clients / test scripts, set the Origin header:
     -d "name=widget"
 
 If you need to opt specific API routes out of CSRF (e.g. webhooks), handle that
-in src/middleware.rs by checking req.path and returning early:
+in hooks.rs by checking req.path and returning early:
   pub async fn middleware(req: Req, next: Next) -> Response {
       // Webhook endpoint bypasses CSRF (verified by signature instead)
       if req.path.starts_with("/api/webhooks/") {
@@ -569,7 +569,7 @@ in src/middleware.rs by checking req.path and returning early:
       }
       next.run().await
   }
-Note: csrf_middleware still runs — the above illustrates src/middleware.rs flow.
+Note: csrf_middleware still runs — the above illustrates hooks.rs flow.
 To truly bypass, add a separate axum layer before csrf in build_router() (advanced).
 """
 constraints = [
@@ -628,21 +628,21 @@ Island files are ordinary fragment files (load(), actions, no layout wrapping).
 The island's load() reads params from req.query.
 
 Co-location (auto-detected, no Pilcrow.toml entry needed):
-  src/pages/dashboard/islands/counter.html  → GET /dashboard/islands/counter
-  src/pages/dashboard/islands/counter.rs    → load(), actions
+  pages/dashboard/islands/counter.html  → GET /dashboard/islands/counter
+  pages/dashboard/islands/counter.rs    → load(), actions
 
 Shared cross-page islands use [[fragments]] in Pilcrow.toml as before.
 """
 canonical_usage = """
-In a page template (src/pages/dashboard/index.html):
+In a page template (pages/dashboard/index.html):
   <island src="./counter" strategy="visible" initial="0" />
   <island src="./user-card" strategy="idle" user-id="{{ props.user_id }}" />
   <island src="/shared/global-nav" />
 
-Island file (src/pages/dashboard/islands/counter.html):
+Island file (pages/dashboard/islands/counter.html):
   <div>Count: <span :text="count"></span></div>
 
-Island code-behind (src/pages/dashboard/islands/counter.rs):
+Island code-behind (pages/dashboard/islands/counter.rs):
   pub struct Props { pub count: i32 }
   pub async fn load(req: Req) -> AppResult<Props> {
       let count = req.query.get("initial").unwrap_or("0").parse().unwrap_or(0);
@@ -686,8 +686,8 @@ Canonical tag:
   <react src="./react/Counter.tsx" strategy="visible" count="{{ props.count }}" />
 
 Placement follows Pilcrow.toml folder rules:
-  src/pages/dashboard/react/Counter.tsx   — page-local widget
-  src/widgets/react/FavoriteButton.tsx    — fragment-local widget
+  pages/dashboard/react/Counter.tsx   — page-local widget
+  widgets/react/FavoriteButton.tsx    — fragment-local widget
   src/react/DataGrid.tsx                  — shared widget
 
 Required config:
@@ -754,10 +754,10 @@ max_page_react_kb = 220
 warn = true
 fail_on_budget = false
 
-<!-- src/pages/dashboard/index.html -->
+<!-- pages/dashboard/index.html -->
 <react src="./react/Counter.tsx" strategy="visible" initial-count="{{ count }}" />
 
-// src/pages/dashboard/react/Counter.tsx
+// pages/dashboard/react/Counter.tsx
 export default function Counter(props: { initialCount: string }) {
   return <button>{props.initialCount}</button>;
 }
@@ -910,14 +910,14 @@ PRERENDER is a no-op for pages with Deferred<T> or DeferredHtml fields (streamin
 All PRERENDER constants are stripped from the emitted module — never appear in generated Rust.
 """
 canonical_usage = """
-// Static route — src/pages/about.rs
+// Static route — pages/about.rs
 pub const PRERENDER: bool = true;
 pub struct Props { pub title: String }
 pub async fn load(_req: Req) -> AppResult<Props> {
     Ok(Props { title: "About Us".to_string() })
 }
 
-// Dynamic route — src/pages/products/[id].rs
+// Dynamic route — pages/products/[id].rs
 pub const PRERENDER: bool = true;
 pub struct Props { pub product: Product }
 pub async fn entries() -> Vec<HashMap<String, String>> {
@@ -989,7 +989,7 @@ req.res.bypass_cache() skips both cache read and write (preview/admin mode).
 req.cache.revalidate_tag("tag") and req.cache.revalidate("/path") for manual invalidation.
 """
 canonical_usage = """
-// src/pages/products/index.rs
+// pages/products/index.rs
 pub const REVALIDATE: u64 = 60;
 pub const CACHE_TAGS: &[&str] = &["products"];
 
@@ -1126,7 +1126,7 @@ Repeated keys (e.g. multiple checkboxes) are preserved as multiple values; use V
 fields to capture them. Absent keys return the field's Default if #[serde(default)] is set.
 """
 canonical_usage = """
-// src/pages/items.rs
+// pages/items.rs
 #[derive(serde::Deserialize)]
 struct CreateInput {
     name: String,
@@ -1221,7 +1221,7 @@ This is the recommended pattern for pages that need fast first-load AND fresh da
 Requires pilcrow_start() in main.rs (same as PRERENDER-only).
 """
 canonical_usage = """
-// src/pages/products/index.rs
+// pages/products/index.rs
 pub const PRERENDER: bool = true;
 pub const REVALIDATE: u64 = 60;
 pub const CACHE_TAGS: &[&str] = &["products"];
@@ -1307,7 +1307,7 @@ Use global() in middleware where it is called on every request; use load() in ma
 code where you want to handle VarError explicitly.
 """
 canonical_usage = """
-// src/middleware.rs — call global() once per request at near-zero cost
+// hooks.rs — call global() once per request at near-zero cost
 pub async fn middleware(req: Req, next: Next) -> Response {
     let env = env::Private::global();
     let user = verify_session(req.cookies.get("session"), &env.database_url).await;
@@ -1425,7 +1425,7 @@ template dispatches to it when the first CLI arg is `export`:
 Dynamic routes with PRERENDER = true must also declare `entries()`.
 """
 canonical_usage = """
-// src/pages/index.rs
+// pages/index.rs
 pub const PRERENDER: bool = true;
 
 pub struct Props { pub title: String }
@@ -1537,7 +1537,7 @@ Pass one or both flags when creating a new project:
   pilcrow new my-app --with-auth --with-postgres
 
 --with-auth generates:
-  - src/middleware.rs with a session cookie auth skeleton
+  - hooks.rs with a session cookie auth skeleton
     (reads `session` cookie, short-circuits /dashboard routes with 401)
 
 --with-postgres generates:
@@ -1549,7 +1549,7 @@ canonical_usage = """
 # Create project with both flags:
 pilcrow new my-app --with-auth --with-postgres
 
-# Generated src/middleware.rs:
+# Generated hooks.rs:
 pub async fn middleware(req: Req, next: Next) -> Response {
     let token = req.cookies.get("session").map(|c| c.value().to_string());
     match token {
@@ -1725,7 +1725,7 @@ Constraints:
 - STREAMING without load() is a no-op (silently ignored).
 """
 canonical_usage = """
-// src/pages/products.rs
+// pages/products.rs
 pub const STREAMING: bool = true;
 
 pub struct Props {
@@ -1852,7 +1852,7 @@ locales_dir    = "locales"     # Relative to src/. Default: "locales".
 
 **File layout:**
 ```
-src/locales/
+locales/
   en/
     messages.ftl   # One or more .ftl files per locale
   de/
@@ -1874,7 +1874,7 @@ routekit parses `.ftl` files from the default locale at build time and generates
 one typed function per message key. FTL message ids are converted to snake_case Rust identifiers.
 
 ```ftl
-# src/locales/en/messages.ftl
+# locales/en/messages.ftl
 greeting = Hello, { $name }!
 product-count = { $count ->
     [one] { $count } product
@@ -1939,10 +1939,10 @@ default_locale = "en"
 locales        = ["en", "de"]
 locales_dir    = "locales"
 
-# src/locales/en/messages.ftl
+# locales/en/messages.ftl
 greeting = Hello, { $name }!
 
-# src/pages/index.rs
+# pages/index.rs
 pub async fn load(req: Req) -> AppResult<Props> {
     Ok(Props { heading: t::greeting(&req, "World") })
 }
@@ -1961,8 +1961,8 @@ test_refs = [
 ]
 validation_rules = [
   "i18n.locales must include i18n.default_locale.",
-  "i18n.locales_dir must be a directory relative to src/.",
-  "FTL files must be placed in src/{locales_dir}/{locale}/*.ftl.",
+  "i18n.locales_dir must be a directory relative to project root/.",
+  "FTL files must be placed in {locales_dir}/{locale}/*.ftl.",
 ]
 scaffold_templates = ["i18n"]
 
@@ -2013,7 +2013,7 @@ enabled = true
 quality = 80
 formats = ["webp", "jpeg"]
 
-# src/pages/index.html
+# pages/index.html
 <pilcrow:image src="/public/product.jpg" width="600" alt="Product" class="product-img" />
 """
 constraints = [
@@ -2087,8 +2087,8 @@ constraints = [
 source_refs = [
   "crates/routekit/src/templating/pipeline.rs — collect_slot_assignments, render_slot_fragment_node",
   "crates/routekit/src/templating/compiler.rs — transpile_pilcrow_tags, strip_pilcrow_head_block",
-  "sandbox/apps/web/src/pages/_layout.html — slot name=\"pilcrow_head\" example",
-  "sandbox/apps/web/src/pages/products/index.html — multi-tag pilcrow:head usage",
+  "sandbox/pages/_layout.html — slot name=\"pilcrow_head\" example",
+  "sandbox/pages/products/index.html — multi-tag pilcrow:head usage",
 ]
 test_refs = [
   "crates/routekit/src/templating/pipeline.rs — compile_pipeline_pilcrow_head_* (3 tests)",
@@ -2104,11 +2104,11 @@ scaffold_templates = []
 name = "Markdown Pages"
 status = "stable"
 spec = """
-`.md` and `.mdx` files placed anywhere in `src/pages/` or a configured fragment directory
+`.md` and `.mdx` files placed anywhere in `pages/` or a configured fragment directory
 become routes using the same conventions as `.html` files.
 
-- `src/pages/posts/hello.md` → `GET /posts/hello`
-- `src/widgets/intro.md` → `GET /widgets/intro`
+- `pages/posts/hello.md` → `GET /posts/hello`
+- `widgets/intro.md` → `GET /widgets/intro`
 - GitHub Flavored Markdown (GFM) is compiled to HTML at build time via `markdown-rs`.
 - YAML frontmatter (between `---` delimiters at the top of the file) is stripped from
   the rendered output and currently discarded. Use a code-behind `.rs` file to set page
@@ -2120,7 +2120,7 @@ become routes using the same conventions as `.html` files.
   preserved in the rendered HTML but will not be recognised by the component transpiler.
 """
 canonical_usage = """
-<!-- src/pages/posts/hello.md -->
+<!-- pages/posts/hello.md -->
 # Hello World
 
 This is a **markdown** page with a [link](/about).

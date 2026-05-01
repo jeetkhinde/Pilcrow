@@ -809,7 +809,7 @@ impl PilcrowServer {
             "matched_features": features,
             "code_skeleton": skeleton,
             "next_steps": [
-                "Copy the code_skeleton into your src/pages/ or src/api/ file.",
+                "Copy the code_skeleton into your pages/ or api/ file.",
                 "Run validate_implementation on the file before running cargo build.",
                 "Use get_feature_spec for the full spec of any matched feature.",
             ]
@@ -1107,7 +1107,7 @@ fn suggest_from_context(
         recommendations.push(Optimization {
             rule_id: "pilcrow-middleware",
             severity: "info",
-            message: "No src/middleware.rs was found.".to_string(),
+            message: "No hooks.rs was found.".to_string(),
             suggested_fix: "Add middleware only when cross-cutting auth, headers, tracing, or request locals are needed.".to_string(),
         });
     }
@@ -1166,58 +1166,58 @@ fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
     if has("incremental-ssr") && has("ssg") {
         // Combined PRERENDER + REVALIDATE
         json!({
-            "rs": "// src/pages/products/index.rs\npub const PRERENDER: bool = true;\npub const REVALIDATE: u64 = 60;\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}",
-            "html": "<!-- src/pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            "rs": "// pages/products/index.rs\npub const PRERENDER: bool = true;\npub const REVALIDATE: u64 = 60;\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}",
+            "html": "<!-- pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
             "note": "Prerendered at startup, then ISR-revalidated every 60s. Use pilcrow_start() in main.rs.",
         })
     } else if has("incremental-ssr") {
         let ttl = if desc.contains("60") { 60 } else if desc.contains("300") { 300 } else { 60 };
         json!({
-            "rs": format!("// src/pages/products/index.rs\npub const REVALIDATE: u64 = {ttl};\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props {{ pub items: Vec<String> }}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ items: vec![] }})\n}}"),
-            "html": "<!-- src/pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
+            "rs": format!("// pages/products/index.rs\npub const REVALIDATE: u64 = {ttl};\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props {{ pub items: Vec<String> }}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ items: vec![] }})\n}}"),
+            "html": "<!-- pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
             "invalidation": "Call req.cache.revalidate_tag(\"products\") in an action to bust the cache.",
         })
     } else if has("ssg") {
         json!({
-            "rs": "// src/pages/about.rs\npub const PRERENDER: bool = true;\n\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"About\".into() })\n}",
-            "html": "<!-- src/pages/about.html -->\n<h1>{{ title }}</h1>",
+            "rs": "// pages/about.rs\npub const PRERENDER: bool = true;\n\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"About\".into() })\n}",
+            "html": "<!-- pages/about.html -->\n<h1>{{ title }}</h1>",
             "note": "Rendered once at startup. Use pilcrow_start() in main.rs instead of pilcrow_web::start().",
         })
     } else if has("named-actions") && has("ssr-pages") {
         json!({
-            "rs": "// src/pages/items.rs\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}\n\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    if name.is_empty() {\n        return req.fail(form_errors().error(\"name\", \"required\").value(\"name\", name));\n    }\n    redirect(\"/items\")\n}",
-            "html": "<!-- src/pages/items.html -->\n<form s-post=\"?/create\" s-target=\"#form\">\n  <input name=\"name\" />\n  <span :text=\"errors.name\"></span>\n  <button>Add</button>\n</form>",
+            "rs": "// pages/items.rs\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}\n\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    if name.is_empty() {\n        return req.fail(form_errors().error(\"name\", \"required\").value(\"name\", name));\n    }\n    redirect(\"/items\")\n}",
+            "html": "<!-- pages/items.html -->\n<form s-post=\"?/create\" s-target=\"#form\">\n  <input name=\"name\" />\n  <span :text=\"errors.name\"></span>\n  <button>Add</button>\n</form>",
         })
     } else if has("named-actions") {
         json!({
-            "rs": "// src/pages/items.rs\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    redirect(\"/items\")\n}\n\npub async fn delete(req: Req) -> ActionResult {\n    let id = req.params.get(\"id\").map(|s| s.as_str()).unwrap_or(\"\");\n    redirect(\"/items\")\n}",
-            "html": "<!-- src/pages/items.html -->\n<form s-post=\"?/create\">...</form>\n<button s-post=\"?/delete\">Delete</button>",
+            "rs": "// pages/items.rs\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\");\n    redirect(\"/items\")\n}\n\npub async fn delete(req: Req) -> ActionResult {\n    let id = req.params.get(\"id\").map(|s| s.as_str()).unwrap_or(\"\");\n    redirect(\"/items\")\n}",
+            "html": "<!-- pages/items.html -->\n<form s-post=\"?/create\">...</form>\n<button s-post=\"?/delete\">Delete</button>",
         })
     } else if has("sse") {
         json!({
-            "rs": "// src/api/counter.rs\npub async fn get(req: Req) -> Response {\n    pilcrow_web::sse(async_stream::stream! {\n        let mut n = 0u64;\n        loop {\n            yield pilcrow_web::SseEvent::json(serde_json::json!({ \"count\": n }));\n            n += 1;\n            tokio::time::sleep(std::time::Duration::from_secs(1)).await;\n        }\n    })\n}",
-            "html": "<!-- src/pages/index.html -->\n<span :text=\"count\" s-sse=\"/counter\">0</span>",
+            "rs": "// api/counter.rs\npub async fn get(req: Req) -> Response {\n    pilcrow_web::sse(async_stream::stream! {\n        let mut n = 0u64;\n        loop {\n            yield pilcrow_web::SseEvent::json(serde_json::json!({ \"count\": n }));\n            n += 1;\n            tokio::time::sleep(std::time::Duration::from_secs(1)).await;\n        }\n    })\n}",
+            "html": "<!-- pages/index.html -->\n<span :text=\"count\" s-sse=\"/counter\">0</span>",
         })
     } else if has("deferred-streams") {
         json!({
-            "rs": "// src/pages/dashboard.rs\nuse pilcrow_web::Deferred;\n\npub struct Props {\n    pub title: String,\n    pub count: Deferred<i64>,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props {\n        title: \"Dashboard\".into(),\n        count: Deferred::spawn(async { expensive_db_count().await }),\n    })\n}",
-            "html": "<!-- src/pages/dashboard.html -->\n<h1>{{ title }}</h1>\n<span :text=\"count\">…</span>",
+            "rs": "// pages/dashboard.rs\nuse pilcrow_web::Deferred;\n\npub struct Props {\n    pub title: String,\n    pub count: Deferred<i64>,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props {\n        title: \"Dashboard\".into(),\n        count: Deferred::spawn(async { expensive_db_count().await }),\n    })\n}",
+            "html": "<!-- pages/dashboard.html -->\n<h1>{{ title }}</h1>\n<span :text=\"count\">…</span>",
         })
     } else if has("api-routes") {
         json!({
-            "rs": "// src/api/products.rs\nuse pilcrow_web::{Req, json};\nuse axum::response::Response;\n\npub async fn get(_req: Req) -> Response {\n    json(serde_json::json!({ \"products\": [] }))\n}",
+            "rs": "// api/products.rs\nuse pilcrow_web::{Req, json};\nuse axum::response::Response;\n\npub async fn get(_req: Req) -> Response {\n    json(serde_json::json!({ \"products\": [] }))\n}",
             "note": "File becomes GET /api/products. Add post(), put(), delete() for other methods.",
         })
     } else if has("middleware") {
         json!({
-            "rs": "// src/middleware.rs\nuse pilcrow_web::{AppError, Next, Req, Response};\nuse axum::response::IntoResponse;\n\npub async fn middleware(req: Req, next: Next) -> Response {\n    let token = req.cookies.get(\"session\").map(|c| c.value().to_string());\n    match verify_session(token).await {\n        Ok(user) => req.locals.set(user),\n        Err(_) if req.path.starts_with(\"/admin\") => {\n            return AppError::Unauthorized.into_response();\n        }\n        _ => {}\n    }\n    next.run().await\n}",
-            "note": "Detected automatically — place at src/middleware.rs. No registration needed.",
+            "rs": "// hooks.rs\nuse pilcrow_web::{AppError, Next, Req, Response};\nuse axum::response::IntoResponse;\n\npub async fn middleware(req: Req, next: Next) -> Response {\n    let token = req.cookies.get(\"session\").map(|c| c.value().to_string());\n    match verify_session(token).await {\n        Ok(user) => req.locals.set(user),\n        Err(_) if req.path.starts_with(\"/admin\") => {\n            return AppError::Unauthorized.into_response();\n        }\n        _ => {}\n    }\n    next.run().await\n}",
+            "note": "Detected automatically — place at hooks.rs. No registration needed.",
         })
     } else {
         // Default: basic loaded page
         json!({
-            "rs": "// src/pages/index.rs\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Hello, Pilcrow\".into() })\n}",
-            "html": "<!-- src/pages/index.html -->\n<h1>{{ title }}</h1>",
+            "rs": "// pages/index.rs\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Hello, Pilcrow\".into() })\n}",
+            "html": "<!-- pages/index.html -->\n<h1>{{ title }}</h1>",
         })
     }
 }
@@ -1279,7 +1279,7 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
         vec![
             Pattern {
                 name: "Root _layout.html".to_string(),
-                description: "Single layout wrapping all pages at src/pages/_layout.html.".to_string(),
+                description: "Single layout wrapping all pages at pages/_layout.html.".to_string(),
                 tradeoffs: vec![
                     "Pro: simple, applies everywhere".to_string(),
                     "Con: cannot be scoped to a subset of routes".to_string(),
@@ -1302,7 +1302,7 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
         vec![
             Pattern {
                 name: "API route file".to_string(),
-                description: "File in src/api/ exports router(). Discovered automatically by routekit.".to_string(),
+                description: "File in api/ exports router(). Discovered automatically by routekit.".to_string(),
                 tradeoffs: vec![
                     "Pro: auto-mounted, no main.rs changes".to_string(),
                     "Pro: full axum Router flexibility".to_string(),

@@ -137,7 +137,7 @@ pub fn resolve_project(
     let manifest = manifest_path
         .map(|path| resolve_against(&root, path))
         .unwrap_or_else(|| {
-            let sandbox = root.join("sandbox/apps/web/Cargo.toml");
+            let sandbox = root.join("sandbox/Cargo.toml");
             if sandbox.exists() {
                 sandbox
             } else {
@@ -166,8 +166,8 @@ pub fn scan_project(
     manifest_path: Option<&str>,
 ) -> Result<ProjectContext> {
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let src = resolved.app_root.join("src");
-    let pages = src.join("pages");
+    let app_src = &resolved.app_root;
+    let pages = app_src.join("pages");
 
     let pilcrow_toml_path = resolved.app_root.join("Pilcrow.toml");
     let pilcrow_source = fs::read_to_string(&pilcrow_toml_path).ok();
@@ -189,7 +189,7 @@ pub fn scan_project(
         .fragments
         .iter()
         .map(|entry| {
-            let dir = src.join(&entry.dir);
+            let dir = app_src.join(&entry.dir);
             Ok(FragmentGroup {
                 dir: normalize_path(&entry.dir),
                 url: entry.url_prefix(),
@@ -198,7 +198,7 @@ pub fn scan_project(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let middleware_path = src.join("middleware.rs");
+    let middleware_path = app_src.join("hooks.rs");
     let middleware = if middleware_path.exists() {
         Some(file_info(&resolved.app_root, &middleware_path)?)
     } else {
@@ -234,10 +234,10 @@ pub fn scan_project(
         not_found_pages: list_matching_ignoring(&pages, &ignored_dirs, |path| {
             is_special_page(path, "_not_found") || is_special_page(path, "not-found")
         })?,
-        ui_components: list_matching(&src.join("ui"), |path| has_ext(path, "html"))?,
+        ui_components: list_matching(&app_src.join("ui"), |path| has_ext(path, "html"))?,
         fragments,
-        api_routes: list_matching(&src.join("api"), |path| has_ext(path, "rs"))?,
-        params: list_matching(&src.join("params"), |path| has_ext(path, "rs"))?,
+        api_routes: list_matching(&app_src.join("api"), |path| has_ext(path, "rs"))?,
+        params: list_matching(&app_src.join("params"), |path| has_ext(path, "rs"))?,
         middleware,
         generated_out_dir: out_dir_status(&resolved.manifest_path)?,
         route_graph,
@@ -771,9 +771,7 @@ fn is_special_page(path: &Path, stem: &str) -> bool {
 }
 
 fn normalize_path(path: &str) -> String {
-    path.trim_start_matches("src/")
-        .trim_start_matches('/')
-        .to_string()
+    path.trim_start_matches('/').to_string()
 }
 
 fn existing_ancestor(path: &Path) -> &Path {

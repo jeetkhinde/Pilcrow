@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Build-time configuration read from `Pilcrow.toml` in the crate root.
@@ -7,6 +8,10 @@ pub struct PilcrowBuildConfig {
     /// URL-accessible fragment groups (Option A: flat array, dir name → URL prefix).
     #[serde(default)]
     pub fragments: Vec<FragmentEntry>,
+
+    /// Frontmatter import aliases. `ui = "ui"` is always available by default.
+    #[serde(default = "default_import_aliases")]
+    pub imports: HashMap<String, String>,
 
     /// Environment variable declarations — generates typed `env::Public` / `env::Private` structs.
     #[serde(default)]
@@ -71,7 +76,7 @@ fn default_react_dirs() -> Vec<String> {
 
 /// Build-time i18n configuration. Mirrors `I18nConfig` in `pilcrow-core`.
 ///
-/// The build pipeline reads FTL files from `src/{locales_dir}/{default_locale}/*.ftl`
+/// The build pipeline reads FTL files from `{project_root}/{locales_dir}/{default_locale}/*.ftl`
 /// and generates a `pub mod t { ... }` with one typed function per message key.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct I18nBuildConfig {
@@ -82,7 +87,7 @@ pub struct I18nBuildConfig {
     /// All supported locale codes. When empty, an empty `pub mod t {}` is emitted.
     #[serde(default)]
     pub locales: Vec<String>,
-    /// Directory containing per-locale `.ftl` files, relative to `src/`. Default: `"locales"`.
+    /// Directory containing per-locale `.ftl` files, relative to the project root.
     #[serde(default = "default_locales_dir")]
     pub locales_dir: String,
 }
@@ -154,16 +159,16 @@ impl EnvConfig {
 ///
 /// ```toml
 /// [[fragments]]
-/// dir = "src/widgets"           # required; relative to crate root
+/// dir = "widgets"               # required; relative to project root
 ///
 /// [[fragments]]
-/// dir = "src/ui-blocks"
+/// dir = "ui-blocks"
 /// url = "blocks"                # optional; overrides the URL prefix
 /// ```
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct FragmentEntry {
-    /// Directory containing fragment HTML files, relative to the crate root.
-    /// e.g. `"src/widgets"` → `src/widgets/**/*.html`
+    /// Directory containing fragment HTML files, relative to the project root.
+    /// e.g. `"widgets"` → `widgets/**/*.html`
     pub dir: String,
 
     /// URL prefix for routes generated from this directory.
@@ -188,6 +193,10 @@ impl FragmentEntry {
     pub fn abs_dir(&self, manifest_dir: &Path) -> PathBuf {
         manifest_dir.join(&self.dir)
     }
+}
+
+fn default_import_aliases() -> HashMap<String, String> {
+    HashMap::from([("ui".to_string(), "ui".to_string())])
 }
 
 impl PilcrowBuildConfig {

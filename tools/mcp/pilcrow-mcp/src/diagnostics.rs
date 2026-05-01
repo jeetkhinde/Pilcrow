@@ -56,7 +56,7 @@ pub fn diagnose_project(
 ) -> Result<DiagnoseResult> {
     let context = scan_project(current_root, project_root, manifest_path)?;
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let _src = resolved.app_root.join("src");
+    let _app_root = &resolved.app_root;
 
     let mut findings = Vec::new();
     let mut counter = 0usize;
@@ -67,10 +67,10 @@ pub fn diagnose_project(
             &mut counter,
             Severity::Warning,
             "pilcrow-missing-not-found",
-            "No src/pages/_not_found.html found. Pilcrow will return a generic 404 for unmatched routes.",
+            "No pages/_not_found.html found. Pilcrow will return a generic 404 for unmatched routes.",
             None,
             None,
-            "Create src/pages/_not_found.html with a user-friendly 404 page.",
+            "Create pages/_not_found.html with a user-friendly 404 page.",
         ));
     }
 
@@ -83,7 +83,7 @@ pub fn diagnose_project(
                     Severity::Error,
                     "pilcrow-code-behind-parse-error",
                     &format!("Code-behind parse error in {}: {}", node.file_path, err),
-                    Some(&format!("src/pages/{}", node.file_path.replace(".html", ".rs"))),
+                    Some(&format!("pages/{}", node.file_path.replace(".html", ".rs"))),
                     None,
                     "Fix the Rust syntax error in the code-behind file.",
                 ));
@@ -100,7 +100,7 @@ pub fn diagnose_project(
                     Severity::Error,
                     "pilcrow-load-not-async",
                     &format!("load() in {} is not async. The build pipeline requires async load().", node.file_path),
-                    Some(&format!("src/pages/{}", node.file_path.replace(".html", ".rs"))),
+                    Some(&format!("pages/{}", node.file_path.replace(".html", ".rs"))),
                     None,
                     "Change `fn load` to `async fn load`.",
                 ));
@@ -125,7 +125,7 @@ pub fn diagnose_project(
             ),
             None,
             None,
-            "Create src/pages/_layout.html with navigation, head, and body chrome shared by all pages.",
+            "Create pages/_layout.html with navigation, head, and body chrome shared by all pages.",
         ));
     }
 
@@ -141,7 +141,7 @@ pub fn diagnose_project(
                         "Route {} uses Deferred<T> but has no _loading.html in its hierarchy. Users may see a blank page during streaming.",
                         node.url_pattern
                     ),
-                    Some(&format!("src/pages/{}", node.file_path)),
+                    Some(&format!("pages/{}", node.file_path)),
                     None,
                     "Add a _loading.html sibling or ancestor with skeleton content for this route.",
                 ));
@@ -156,12 +156,12 @@ pub fn diagnose_project(
                 "{}",
                 resolved
                     .app_root
-                    .join("src/pages")
+                    .join("pages")
                     .join(node.file_path.replace(".html", ".rs"))
                     .display()
             );
             if let Ok(source) = fs::read_to_string(&rs_path) {
-                let rel = format!("src/pages/{}", node.file_path.replace(".html", ".rs"));
+                let rel = format!("pages/{}", node.file_path.replace(".html", ".rs"));
                 let report = validate_implementation(&source, Some(&rel), Some("rust"));
                 for vf in report.findings {
                     findings.push(validation_finding_to_diag(&mut counter, vf));
@@ -176,10 +176,10 @@ pub fn diagnose_project(
             &mut counter,
             Severity::Info,
             "pilcrow-no-middleware",
-            "No src/middleware.rs found. If you need auth, tracing, or shared request locals across pages, add a middleware.",
+            "No hooks.rs found. If you need auth, tracing, or shared request locals across pages, add a middleware.",
             None,
             None,
-            "Create src/middleware.rs with `pub async fn middleware(req: Req, next: Next) -> Response { ... }`.",
+            "Create hooks.rs with `pub async fn middleware(req: Req, next: Next) -> Response { ... }`.",
         ));
     }
 
@@ -208,7 +208,7 @@ pub fn diagnose_project(
 
     // Check for api routes with scan
     for api in &context.api_routes {
-        let abs = resolved.app_root.join("src/api").join(&api.path);
+        let abs = resolved.app_root.join("api").join(&api.path);
         if let Ok(source) = fs::read_to_string(&abs) {
             if !source.contains("pub fn router(") {
                 findings.push(make_finding(
@@ -216,7 +216,7 @@ pub fn diagnose_project(
                     Severity::Error,
                     "pilcrow-api-missing-router",
                     &format!("API route {} does not export `pub fn router()`.", api.path),
-                    Some(&format!("src/api/{}", api.path)),
+                    Some(&format!("api/{}", api.path)),
                     None,
                     "Add `pub fn router() -> axum::Router { Router::new().route(...) }`.",
                 ));
@@ -261,7 +261,7 @@ pub fn diagnose_route(
     route: &str,
 ) -> Result<DiagnoseResult> {
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let pages = resolved.app_root.join("src/pages");
+    let pages = resolved.app_root.join("pages");
 
     let mut findings = Vec::new();
     let mut counter = 0usize;
@@ -292,7 +292,7 @@ pub fn diagnose_route(
             &mut counter,
             Severity::Error,
             "pilcrow-route-html-missing",
-            &format!("No HTML template found for route '{}'. Expected at src/pages/{}/index.html or src/pages/{}.html.", route, route_normalized, route_normalized),
+            &format!("No HTML template found for route '{}'. Expected at pages/{}/index.html or pages/{}.html.", route, route_normalized, route_normalized),
             None,
             None,
             "Create the missing .html template file.",
@@ -468,8 +468,8 @@ pub fn diagnose_codegen(
         }
     }
 
-    // Cross-check: routes in src/pages should appear in generated_app.rs
-    let pages = resolved.app_root.join("src/pages");
+    // Cross-check: routes in pages should appear in generated_app.rs
+    let pages = resolved.app_root.join("pages");
     if let Ok(generated_app) = fs::read_to_string(out_dir.join("generated_app.rs")) {
         let src_routes: Vec<_> = collect_html_routes(&pages);
         for route in &src_routes {
@@ -482,7 +482,7 @@ pub fn diagnose_codegen(
                     Severity::Warning,
                     "pilcrow-route-not-in-generated-app",
                     &format!("Route {} does not appear in generated_app.rs (looked for module hint '{module_hint}'). It may be stale.", route),
-                    Some(&format!("src/pages/{route}")),
+                    Some(&format!("pages/{route}")),
                     None,
                     "Run `cargo build` to regenerate. Check for syntax errors in the code-behind.",
                 ));
@@ -635,7 +635,7 @@ fn patch_hint_for_rule(rule_id: &str, file: Option<&str>) -> (String, bool) {
             true,
         ),
         "pilcrow-missing-not-found" => (
-            "Create src/pages/_not_found.html with a <h1>Not Found</h1> body.".to_string(),
+            "Create pages/_not_found.html with a <h1>Not Found</h1> body.".to_string(),
             false,
         ),
         "pilcrow-api-missing-router" => (
@@ -646,7 +646,7 @@ fn patch_hint_for_rule(rule_id: &str, file: Option<&str>) -> (String, bool) {
             false,
         ),
         "pilcrow-no-out-dir" | "pilcrow-no-generated-artifacts" => (
-            "Run `cargo build --manifest-path sandbox/apps/web/Cargo.toml` from the project root."
+            "Run `cargo build --manifest-path sandbox/Cargo.toml` from the project root."
                 .to_string(),
             false,
         ),

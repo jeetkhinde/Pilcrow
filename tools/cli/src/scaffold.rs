@@ -22,7 +22,7 @@ pub fn handle_new(args: &[String]) -> Result<(), String> {
 
     println!("created Pilcrow app at {}", root.display());
     if with_auth {
-        println!("  - auth hook at src/hooks.rs");
+        println!("  - auth hook at hooks.rs");
     }
     if with_postgres {
         println!("  - postgres env in .env and Pilcrow.toml");
@@ -35,9 +35,10 @@ pub fn handle_new(args: &[String]) -> Result<(), String> {
 }
 
 fn create_scaffold(root: &Path, with_auth: bool, with_postgres: bool) -> std::io::Result<()> {
-    fs::create_dir_all(root.join("src/pages"))?;
-    fs::create_dir_all(root.join("src/ui"))?;
-    fs::create_dir_all(root.join("src/api"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("pages"))?;
+    fs::create_dir_all(root.join("ui"))?;
+    fs::create_dir_all(root.join("api"))?;
 
     let mut cargo_deps = String::from(
         r#"pilcrow-web = { git = "https://github.com/jeetkhinde/Pilcrow" }"#,
@@ -92,12 +93,7 @@ SECRET_KEY = { env = "SECRET_KEY" }
     fs::write(
         root.join("build.rs"),
         r#"fn main() {
-    let src = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("src");
-    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    pilcrow_routekit::compile_to_out_dir(&src, &out).expect("compile pilcrow html sources");
-    for dir in pilcrow_routekit::watched_source_directories(&src) {
-        println!("cargo:rerun-if-changed={}", dir.display());
-    }
+    pilcrow_routekit::compile_current_crate_sources().expect("compile pilcrow html sources");
 }
 "#,
     )?;
@@ -122,7 +118,7 @@ async fn main() {
 
     // Root auto-layout.
     fs::write(
-        root.join("src/pages/_layout.html"),
+        root.join("pages/_layout.html"),
         r#"---
 pub struct Props {}
 ---
@@ -142,7 +138,7 @@ pub struct Props {}
     )?;
 
     fs::write(
-        root.join("src/pages/index.html"),
+        root.join("pages/index.html"),
         r#"<Fragment slot="title"><title>Home — My App</title></Fragment>
 <main>
     <h1>{{ greeting }}</h1>
@@ -158,7 +154,7 @@ pub struct Props {}
     )?;
 
     fs::write(
-        root.join("src/pages/index.rs"),
+        root.join("pages/index.rs"),
         r#"pub struct Props {
     pub greeting: String,
 }
@@ -178,7 +174,7 @@ pub async fn greet(req: Req) -> ActionResult {
     )?;
 
     fs::write(
-        root.join("src/pages/_not_found.html"),
+        root.join("pages/_not_found.html"),
         r#"<Fragment slot="title"><title>404 Not Found — My App</title></Fragment>
 <main>
     <h1>404 — Page not found</h1>
@@ -189,7 +185,7 @@ pub async fn greet(req: Req) -> ActionResult {
 
     if with_auth {
         fs::write(
-            root.join("src/hooks.rs"),
+            root.join("hooks.rs"),
             r#"use pilcrow_web::{AppError, HookError, Next, Req, Response};
 use pilcrow_web::axum::response::IntoResponse;
 

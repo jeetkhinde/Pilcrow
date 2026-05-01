@@ -1,3 +1,0 @@
-[workspace]
-members = ["apps/web"]
-resolver = "2"

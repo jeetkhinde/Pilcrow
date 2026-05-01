@@ -61,7 +61,6 @@ where
     let i18n_bundles: Option<I18nBundles> = if !config.i18n.locales.is_empty() {
         let locales_dir = std::env::current_dir()
             .unwrap_or_default()
-            .join("src")
             .join(&config.i18n.locales_dir);
         let bundles = I18nBundles::load(
             &locales_dir,
@@ -125,7 +124,7 @@ where
 
     let dev_state = if dev_mode {
         let state = DevState::new();
-        let src_dir = std::env::current_dir().unwrap_or_default().join("src");
+        let src_dir = std::env::current_dir().unwrap_or_default();
         spawn_css_watcher(state.sender(), src_dir);
         app = app.route(
             "/__pilcrow/dev-reload",

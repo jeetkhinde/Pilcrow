@@ -86,12 +86,12 @@ impl Default for ImageConfig {
 /// [i18n]
 /// default_locale = "en"
 /// locales        = ["en", "de", "fr"]
-/// locales_dir    = "locales"   # relative to src/; default is "locales"
+/// locales_dir    = "locales"   # relative to project root; default is "locales"
 /// ```
 ///
 /// - The default locale is served at bare URLs (`/products`).
 /// - All other locales are served with a URL prefix (`/de/products`).
-/// - `.ftl` files are loaded from `src/{locales_dir}/{locale}/*.ftl` at startup.
+/// - `.ftl` files are loaded from `{locales_dir}/{locale}/*.ftl` at startup.
 #[derive(Debug, Clone, Deserialize)]
 pub struct I18nConfig {
     /// The locale served at bare URLs (no prefix). Default: `"en"`.
@@ -100,7 +100,7 @@ pub struct I18nConfig {
     /// All supported locale codes. When empty, i18n is disabled.
     #[serde(default)]
     pub locales: Vec<String>,
-    /// Directory containing per-locale `.ftl` files, relative to `src/`. Default: `"locales"`.
+    /// Directory containing per-locale `.ftl` files, relative to the project root.
     #[serde(default = "default_locales_dir")]
     pub locales_dir: String,
 }

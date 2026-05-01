@@ -4,7 +4,7 @@
 
 ## What It Does
 
-- discovers file-based routes from `src/pages`
+- discovers file-based routes from `pages`
 - composes `layouts` and `components`
 - expands slots and component invocations
 - emits generated Rust modules:
@@ -17,8 +17,8 @@ PascalCase template tags are resolved only from explicit frontmatter imports.
 
 ```html
 ---
-import MainLayout from "layouts/MainLayout.html";
-import StatusBadge from "components/StatusBadge.html";
+import MainLayout from "ui/MainLayout.html";
+import StatusBadge from "ui/StatusBadge.html";
 
 pub struct Props {
     pub title: String,
@@ -29,8 +29,8 @@ pub struct Props {
 </MainLayout>
 ```
 
-- Imports must be `src`-root relative and end in `.html`.
-- Allowed import roots: `components/...` and `layouts/...`.
+- Imports must use a configured alias, like built-in `ui/...`, or a relative `./` / `../` path.
+- Import paths must end in `.html` and stay inside the project root.
 - Missing imports are compile errors.
 
 ## Common Failure (Missing Import)
@@ -40,25 +40,15 @@ If a template uses a PascalCase tag without import, routekit fails with an actio
 ```text
 Pilcrow template compile error
   file: pages/index.html
-  error: missing explicit import for component `<StatusBadge>` at template line 25, column 6. Add `import StatusBadge from "components/StatusBadge.html";` in frontmatter.
+  error: missing explicit import for component `<StatusBadge>` at template line 25, column 6. Add `import StatusBadge from "ui/StatusBadge.html";` in frontmatter.
 ```
 
 ## Required Web Build Integration
 
 ```rust
-use std::{env, path::PathBuf};
-
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let src_root = manifest_dir.join("src");
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    pilcrow_routekit::compile_to_out_dir(&src_root, &out_dir)
+    pilcrow_routekit::compile_current_crate_sources()
         .expect("compile pilcrow html sources");
-
-    for dir in pilcrow_routekit::watched_source_directories(&src_root) {
-        println!("cargo:rerun-if-changed={}", dir.display());
-    }
 }
 ```
 

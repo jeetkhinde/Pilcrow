@@ -66,7 +66,7 @@ pub fn inspect_route(
     route: &str,
 ) -> Result<RouteInspection> {
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let pages = resolved.app_root.join("src/pages");
+    let pages = resolved.app_root.join("pages");
 
     // Try to find the route html file by matching URL pattern
     let (html_abs, rel_path) = find_route_file(&pages, route)?;
@@ -181,7 +181,7 @@ pub fn inspect_generated_route(
     use crate::workspace::find_out_dir;
 
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let pages = resolved.app_root.join("src/pages");
+    let pages = resolved.app_root.join("pages");
 
     let url_pattern = if let Ok((_, rel)) = find_route_file(&pages, route) {
         derive_url_pattern(&rel)

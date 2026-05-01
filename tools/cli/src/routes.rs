@@ -30,8 +30,7 @@ pub fn handle_routes(args: &[String]) -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let src = app_root.join("src");
-    let pages = src.join("pages");
+    let pages = app_root.join("pages");
     if !pages.exists() {
         return Err(format!(
             "expected Pilcrow pages directory at {}",

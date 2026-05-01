@@ -21,14 +21,16 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use proc_macro2::Span;
 use quote::ToTokens;
 use syn::parse_quote;
 
 use crate::routing::constraint::ParameterConstraint;
-use crate::routing::discovery::{build_api_routes, build_fragment_routes, build_page_routes};
+use crate::routing::discovery::{
+    build_api_routes, build_fragment_routes, build_page_routes_with_fragment_dirs,
+};
 use crate::templating::page_options::{IsrOpts, LayoutOpt, PageOptions, SsgOpts, TrailingSlash};
 
 /// One generated page route entry for build-time manifests.

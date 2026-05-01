@@ -3,8 +3,10 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use globset::{Glob, GlobSetBuilder};
+
 use crate::routing::discovery::{
-    discover_fragment_files, discover_html_files, DiscoveredHtmlFiles,
+    discover_fragment_files, discover_html_files_with_fragment_dirs, DiscoveredHtmlFiles,
 };
 use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
@@ -75,6 +77,12 @@ pub struct CompilerOutput {
     pub generated_app_file: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+struct FragmentSourceGroup {
+    dir: PathBuf,
+    url_prefix: String,
+}
+
 /// Full compile pipeline — delegates to `compile_to_out_dir_with_config` with empty config.
 pub fn compile_to_out_dir(
     src_root: impl AsRef<Path>,
@@ -97,7 +105,16 @@ pub fn compile_to_out_dir_with_config(
     let src_root = src_root.as_ref();
     let out_dir = out_dir.as_ref();
 
-    let discovered = discover_html_files(src_root, &build_config.routing.ignore_directories)?;
+    let configured_fragment_dirs = expand_fragment_entries(src_root, build_config)?;
+    let fragment_dirs = configured_fragment_dirs
+        .iter()
+        .map(|group| group.dir.clone())
+        .collect::<Vec<_>>();
+    let discovered = discover_html_files_with_fragment_dirs(
+        src_root,
+        &build_config.routing.ignore_directories,
+        &fragment_dirs,
+    )?;
     let templates_root = out_dir.join("pilcrow_templates");
     let mut react_islands = Vec::<ReactIslandRef>::new();
     let mut files = preprocess_discovered_sources(
@@ -108,45 +125,17 @@ pub fn compile_to_out_dir_with_config(
         &mut react_islands,
     )?;
 
-    // ── Fragment groups (configured + auto-detected islands/ subdirs) ────────
+    // ── Fragment groups ──────────────────────────────────────────────────────
     let mut fragment_routes: Vec<crate::templating::codegen::GeneratedPageRoute> = Vec::new();
+    let mut fragment_error_module_for_route: HashMap<String, String> = HashMap::new();
+    let mut fragment_loading_module_for_route: HashMap<String, String> = HashMap::new();
 
-    // Auto-detect `islands/` subdirectories inside src/pages/ and treat them as
-    // fragment groups. This powers `<island src="./name">` co-location.
-    let pages_dir_path = src_root.join("pages");
-    let auto_island_dirs =
-        discover_auto_island_dirs(&pages_dir_path, &build_config.routing.ignore_directories)?;
-    let auto_fragment_entries: Vec<crate::templating::build_config::FragmentEntry> =
-        auto_island_dirs
-            .iter()
-            .map(|(abs_dir, url_prefix)| {
-                let rel_dir = abs_dir
-                    .strip_prefix(src_root)
-                    .unwrap_or(abs_dir)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                crate::templating::build_config::FragmentEntry {
-                    dir: rel_dir,
-                    url: Some(url_prefix.clone()),
-                }
-            })
-            .collect();
-
-    let all_fragment_entries: Vec<&crate::templating::build_config::FragmentEntry> = build_config
-        .fragments
-        .iter()
-        .chain(auto_fragment_entries.iter())
-        .collect();
-
-    for entry in &all_fragment_entries {
-        let fragment_dir = src_root.join(&entry.dir);
-        if !fragment_dir.exists() {
-            continue;
-        }
-        let url_prefix = entry.url_prefix();
+    for group in &configured_fragment_dirs {
+        let fragment_dir = &group.dir;
+        let url_prefix = group.url_prefix.clone();
         let discovered_frags = discover_fragment_files(
             src_root,
-            &fragment_dir,
+            fragment_dir,
             &build_config.routing.ignore_directories,
         )?;
         let frag_templates_root = templates_root.join("fragments").join(&url_prefix);
@@ -157,18 +146,29 @@ pub fn compile_to_out_dir_with_config(
             src_root,
             &url_prefix,
             &discovered_frags.fragments,
-            &fragment_dir,
+            fragment_dir,
             &frag_templates_root,
             &mut frag_modules,
+            build_config,
         )?;
         // Error pages within the fragment group (not routable, use fragment naming too).
         load_source_group(
             src_root,
             HtmlSourceKind::ErrorPage,
             &discovered_frags.error_pages,
-            &fragment_dir,
+            src_root,
             &frag_templates_root.join("error_pages"),
             &mut frag_modules,
+            build_config,
+        )?;
+        load_source_group(
+            src_root,
+            HtmlSourceKind::LoadingPage,
+            &discovered_frags.loading_pages,
+            src_root,
+            &frag_templates_root.join("loading_pages"),
+            &mut frag_modules,
+            build_config,
         )?;
 
         // Include ui/ modules in the graph so fragments can import <Component />.
@@ -187,6 +187,13 @@ pub fn compile_to_out_dir_with_config(
             &src_root.join("ui"),
             &templates_root.join("ui"),
             &mut frag_modules,
+            build_config,
+        )?;
+        load_imported_modules(
+            src_root,
+            &templates_root.join("imported"),
+            &mut frag_modules,
+            build_config,
         )?;
 
         // Expand components and write template files for each fragment module.
@@ -249,10 +256,16 @@ pub fn compile_to_out_dir_with_config(
         // Build route manifest entries for this fragment group.
         let frag_page_routes = build_generated_fragment_manifest(
             src_root,
-            &fragment_dir,
+            fragment_dir,
             &url_prefix,
             &build_config.routing.ignore_directories,
         )?;
+        let fragment_error_map =
+            nearest_special_module_for_routes(&files, &frag_page_routes, fragment_dir, HtmlSourceKind::ErrorPage);
+        let fragment_loading_map =
+            nearest_special_module_for_routes(&files, &frag_page_routes, fragment_dir, HtmlSourceKind::LoadingPage);
+        fragment_error_module_for_route.extend(fragment_error_map);
+        fragment_loading_module_for_route.extend(fragment_loading_map);
         fragment_routes.extend(frag_page_routes);
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -262,9 +275,10 @@ pub fn compile_to_out_dir_with_config(
         src_root,
         &generated_routes_file,
         &build_config.routing.ignore_directories,
+        &fragment_dirs,
     )?;
     let generated_templates_file = out_dir.join("generated_templates.rs");
-    let manifest_dir = src_root.parent().unwrap_or(src_root);
+    let manifest_dir = src_root;
     let react_urls = build_react_assets(
         manifest_dir,
         out_dir,
@@ -321,39 +335,13 @@ pub fn compile_to_out_dir_with_config(
     // Build directory-keyed maps for special page lookups (nearest-ancestor wins).
     let pages_dir = src_root.join("pages");
 
-    // directory → error module name
-    let error_dir_map: HashMap<String, String> = files
-        .iter()
-        .filter(|f| f.kind == HtmlSourceKind::ErrorPage)
-        .filter_map(|f| {
-            let dir = f.source_path.parent()?;
-            let dir_rel = dir.strip_prefix(&pages_dir).ok()?;
-            Some((normalize_path_text(dir_rel), f.module_name.clone()))
-        })
-        .collect();
-
-    // For each page route, find the nearest error module by walking up the directory tree.
-    let error_module_for_page: HashMap<String, String> = generated_routes
-        .iter()
-        .filter_map(|route| {
-            let abs_path = PathBuf::from(&route.template_path);
-            let page_dir = abs_path.parent()?;
-            let page_dir_rel = page_dir.strip_prefix(&pages_dir).ok()?;
-
-            let mut dir = page_dir_rel;
-            loop {
-                let key = normalize_path_text(dir);
-                if let Some(module) = error_dir_map.get(&key) {
-                    return Some((route.symbol.clone(), module.clone()));
-                }
-                if dir.as_os_str().is_empty() {
-                    break;
-                }
-                dir = dir.parent().unwrap_or(Path::new(""));
-            }
-            None
-        })
-        .collect();
+    let mut error_module_for_page = nearest_special_module_for_routes(
+        &files,
+        &generated_routes,
+        &pages_dir,
+        HtmlSourceKind::ErrorPage,
+    );
+    error_module_for_page.extend(fragment_error_module_for_route);
 
     // Root-level _not_found.html is preferred; fall back to the first found.
     let not_found_module: Option<String> = {
@@ -376,41 +364,15 @@ pub fn compile_to_out_dir_with_config(
             .map(|f| f.module_name.clone())
     };
 
-    // directory → loading module name
-    let loading_dir_map: HashMap<String, String> = files
-        .iter()
-        .filter(|f| f.kind == HtmlSourceKind::LoadingPage)
-        .filter_map(|f| {
-            let dir = f.source_path.parent()?;
-            let dir_rel = dir.strip_prefix(&pages_dir).ok()?;
-            Some((normalize_path_text(dir_rel), f.module_name.clone()))
-        })
-        .collect();
+    let mut loading_module_for_page = nearest_special_module_for_routes(
+        &files,
+        &generated_routes,
+        &pages_dir,
+        HtmlSourceKind::LoadingPage,
+    );
+    loading_module_for_page.extend(fragment_loading_module_for_route);
 
-    // For each page route, find the nearest loading module by walking up the directory tree.
-    let loading_module_for_page: HashMap<String, String> = generated_routes
-        .iter()
-        .filter_map(|route| {
-            let abs_path = PathBuf::from(&route.template_path);
-            let page_dir = abs_path.parent()?;
-            let page_dir_rel = page_dir.strip_prefix(&pages_dir).ok()?;
-
-            let mut dir = page_dir_rel;
-            loop {
-                let key = normalize_path_text(dir);
-                if let Some(module) = loading_dir_map.get(&key) {
-                    return Some((route.symbol.clone(), module.clone()));
-                }
-                if dir.as_os_str().is_empty() {
-                    break;
-                }
-                dir = dir.parent().unwrap_or(Path::new(""));
-            }
-            None
-        })
-        .collect();
-
-    // Detect optional src/hooks.rs and which hooks are defined inside it.
+    // Detect optional hooks.rs and which hooks are defined inside it.
     let hook_flags = detect_hook_flags(&src_root.join("hooks.rs"));
 
     // Merge page routes and fragment routes for the app module.
@@ -505,70 +467,7 @@ fn page_url_base(source_path: &Path, pages_dir: &Path) -> String {
     }
 }
 
-/// Scan `pages_dir` recursively for `islands/` subdirectories.
-///
-/// Returns `(absolute_path, url_prefix)` pairs where `url_prefix` is like
-/// `dashboard/islands` (no leading/trailing slashes, route-group segments stripped).
-fn discover_auto_island_dirs(
-    pages_dir: &Path,
-    ignored_dirs: &[String],
-) -> io::Result<Vec<(PathBuf, String)>> {
-    let mut result = Vec::new();
-    if pages_dir.exists() {
-        scan_for_island_dirs(pages_dir, pages_dir, ignored_dirs, &mut result)?;
-    }
-    Ok(result)
-}
-
-fn scan_for_island_dirs(
-    dir: &Path,
-    pages_dir: &Path,
-    ignored_dirs: &[String],
-    result: &mut Vec<(PathBuf, String)>,
-) -> io::Result<()> {
-    let read_dir = match fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return Ok(()),
-    };
-    for entry in read_dir {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if ignored_dirs.iter().any(|i| i == &name) {
-            continue;
-        }
-        if name == "islands" {
-            let rel = path.strip_prefix(pages_dir).unwrap_or(&path);
-            let url_prefix: String = rel
-                .components()
-                .filter_map(|c| {
-                    if let Component::Normal(s) = c {
-                        let s = s.to_str()?;
-                        if s.starts_with('(') && s.ends_with(')') {
-                            return None;
-                        }
-                        Some(s)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("/");
-            result.push((path, url_prefix));
-        } else {
-            scan_for_island_dirs(&path, pages_dir, ignored_dirs, result)?;
-        }
-    }
-    Ok(())
-}
-
-/// Scan `src/hooks.rs` for known hook function signatures.
+/// Scan `hooks.rs` for known hook function signatures.
 ///
 /// Detection is text-based: we look for `pub async fn <name>(` at the start of a line
 /// (after optional leading whitespace). This matches idiomatic `hooks.rs` files without
@@ -607,6 +506,131 @@ pub fn watched_source_directories(src_root: impl AsRef<Path>) -> Vec<PathBuf> {
     ]
 }
 
+fn expand_fragment_entries(
+    src_root: &Path,
+    build_config: &PilcrowBuildConfig,
+) -> io::Result<Vec<FragmentSourceGroup>> {
+    let mut groups = Vec::new();
+
+    for entry in &build_config.fragments {
+        if has_glob_meta(&entry.dir) {
+            let pattern = Glob::new(&entry.dir).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("invalid fragment dir glob `{}`: {err}", entry.dir),
+                )
+            })?;
+            let mut builder = GlobSetBuilder::new();
+            builder.add(pattern);
+            let set = builder.build().map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("invalid fragment dir glob `{}`: {err}", entry.dir),
+                )
+            })?;
+            let mut dirs = Vec::new();
+            collect_matching_dirs(src_root, src_root, &set, &mut dirs)?;
+            dirs.sort();
+            for dir in dirs {
+                let url_prefix = glob_fragment_url_prefix(src_root, &entry.dir, &dir, entry);
+                groups.push(FragmentSourceGroup { dir, url_prefix });
+            }
+        } else {
+            let dir = src_root.join(&entry.dir);
+            if dir.exists() {
+                groups.push(FragmentSourceGroup {
+                    dir,
+                    url_prefix: entry.url_prefix(),
+                });
+            }
+        }
+    }
+
+    groups.sort_by(|a, b| a.dir.cmp(&b.dir).then_with(|| a.url_prefix.cmp(&b.url_prefix)));
+    groups.dedup_by(|a, b| a.dir == b.dir && a.url_prefix == b.url_prefix);
+    Ok(groups)
+}
+
+fn has_glob_meta(value: &str) -> bool {
+    value.contains('*') || value.contains('?') || value.contains('[')
+}
+
+fn glob_fragment_url_prefix(
+    src_root: &Path,
+    pattern: &str,
+    dir: &Path,
+    entry: &crate::templating::build_config::FragmentEntry,
+) -> String {
+    let base_url = entry.url.clone().unwrap_or_else(|| {
+        dir.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("fragments")
+            .to_string()
+    });
+    let rel = dir
+        .strip_prefix(src_root)
+        .unwrap_or(dir)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let rel_segments = rel
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let pattern_segments = pattern
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    let first_glob = pattern_segments
+        .iter()
+        .position(|segment| has_glob_meta(segment))
+        .unwrap_or(pattern_segments.len());
+    let last_glob = pattern_segments
+        .iter()
+        .rposition(|segment| has_glob_meta(segment))
+        .unwrap_or(first_glob);
+    let fixed_prefix_len = first_glob;
+    let fixed_suffix_len = pattern_segments
+        .len()
+        .saturating_sub(last_glob.saturating_add(1));
+    let capture_end = rel_segments.len().saturating_sub(fixed_suffix_len);
+    let capture = if fixed_prefix_len <= capture_end {
+        rel_segments[fixed_prefix_len..capture_end].join("/")
+    } else {
+        String::new()
+    };
+
+    if capture.is_empty() {
+        base_url
+    } else {
+        format!("{}/{}", base_url.trim_matches('/'), capture.trim_matches('/'))
+    }
+}
+
+fn collect_matching_dirs(
+    dir: &Path,
+    base: &Path,
+    set: &globset::GlobSet,
+    out: &mut Vec<PathBuf>,
+) -> io::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let rel = path.strip_prefix(base).unwrap_or(&path);
+        if set.is_match(rel) {
+            out.push(path.clone());
+        }
+        collect_matching_dirs(&path, base, set, out)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 struct HtmlModuleSource {
     kind: HtmlSourceKind,
@@ -643,6 +667,7 @@ fn preprocess_discovered_sources(
         &pages_dir,
         &templates_root.join("auto_layouts"),
         &mut modules,
+        build_config,
     )?;
     // Error boundaries, not-found, and loading pages are also in pages/ but not routable.
     load_source_group(
@@ -652,6 +677,7 @@ fn preprocess_discovered_sources(
         &pages_dir,
         &templates_root.join("error_pages"),
         &mut modules,
+        build_config,
     )?;
     load_source_group(
         src_root,
@@ -660,6 +686,7 @@ fn preprocess_discovered_sources(
         &pages_dir,
         &templates_root.join("not_found_pages"),
         &mut modules,
+        build_config,
     )?;
     load_source_group(
         src_root,
@@ -668,6 +695,7 @@ fn preprocess_discovered_sources(
         &pages_dir,
         &templates_root.join("loading_pages"),
         &mut modules,
+        build_config,
     )?;
     load_source_group(
         src_root,
@@ -676,6 +704,7 @@ fn preprocess_discovered_sources(
         &pages_dir,
         &templates_root.join("pages"),
         &mut modules,
+        build_config,
     )?;
     load_source_group(
         src_root,
@@ -684,6 +713,13 @@ fn preprocess_discovered_sources(
         &src_root.join("ui"),
         &templates_root.join("ui"),
         &mut modules,
+        build_config,
+    )?;
+    load_imported_modules(
+        src_root,
+        &templates_root.join("imported"),
+        &mut modules,
+        build_config,
     )?;
 
     // Now that all modules are loaded, inject auto-layout wrapping for each page.
@@ -809,6 +845,7 @@ fn load_source_group(
     source_root: &Path,
     out_root: &Path,
     modules: &mut HashMap<PathBuf, HtmlModuleSource>,
+    build_config: &PilcrowBuildConfig,
 ) -> io::Result<()> {
     for source_path in source_files {
         let source = fs::read_to_string(source_path)?;
@@ -838,7 +875,7 @@ fn load_source_group(
             HtmlSourceKind::ErrorPage | HtmlSourceKind::NotFoundPage | HtmlSourceKind::LoadingPage
         ) {
             let (leftover, imports) =
-                strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+                strip_frontmatter_imports(&parts.rust, src_root, source_path, build_config)?;
             if !leftover.trim().is_empty() {
                 return Err(template_compile_error(
                     source_path,
@@ -862,7 +899,7 @@ fn load_source_group(
             let codebehind_path = source_path.with_extension("rs");
             if codebehind_path.exists() {
                 let (leftover, imports) =
-                    strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+                    strip_frontmatter_imports(&parts.rust, src_root, source_path, build_config)?;
                 if !leftover.trim().is_empty() {
                     return Err(template_compile_error(
                         source_path,
@@ -881,7 +918,7 @@ fn load_source_group(
                 })?;
                 (rs_content, imports)
             } else {
-                strip_frontmatter_imports(&parts.rust, src_root, source_path)?
+                strip_frontmatter_imports(&parts.rust, src_root, source_path, build_config)?
             }
         };
 
@@ -930,6 +967,7 @@ fn load_fragment_source_group(
     fragment_dir: &Path,
     out_root: &Path,
     modules: &mut HashMap<PathBuf, HtmlModuleSource>,
+    build_config: &PilcrowBuildConfig,
 ) -> io::Result<()> {
     for source_path in source_files {
         let source = fs::read_to_string(source_path)?;
@@ -955,7 +993,7 @@ fn load_fragment_source_group(
         let codebehind_path = source_path.with_extension("rs");
         let (cleaned_frontmatter, imports) = if codebehind_path.exists() {
             let (leftover, imports) =
-                strip_frontmatter_imports(&parts.rust, src_root, source_path)?;
+                strip_frontmatter_imports(&parts.rust, src_root, source_path, build_config)?;
             if !leftover.trim().is_empty() {
                 return Err(template_compile_error(
                     source_path,
@@ -974,7 +1012,7 @@ fn load_fragment_source_group(
             })?;
             (rs_content, imports)
         } else {
-            strip_frontmatter_imports(&parts.rust, src_root, source_path)?
+            strip_frontmatter_imports(&parts.rust, src_root, source_path, build_config)?
         };
 
         let relative_in_dir = source_path
@@ -1009,6 +1047,40 @@ fn load_fragment_source_group(
     Ok(())
 }
 
+fn load_imported_modules(
+    src_root: &Path,
+    out_root: &Path,
+    modules: &mut HashMap<PathBuf, HtmlModuleSource>,
+    build_config: &PilcrowBuildConfig,
+) -> io::Result<()> {
+    loop {
+        let mut missing = modules
+            .values()
+            .flat_map(|module| module.imports.values())
+            .filter(|path| !modules.contains_key(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        missing.dedup();
+
+        if missing.is_empty() {
+            break;
+        }
+
+        load_source_group(
+            src_root,
+            HtmlSourceKind::Ui,
+            &missing,
+            src_root,
+            out_root,
+            modules,
+            build_config,
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Walk up from a page's directory (within `pages_dir`) and collect any
 /// `_layout.html` auto-layout files found along the way.
 ///
@@ -1039,6 +1111,44 @@ fn build_auto_layout_chain(
     // Collected innermost-first; reverse to get outermost-first.
     chain.reverse();
     chain
+}
+
+fn nearest_special_module_for_routes(
+    files: &[PreprocessedHtmlFile],
+    routes: &[GeneratedPageRoute],
+    root_dir: &Path,
+    kind: HtmlSourceKind,
+) -> HashMap<String, String> {
+    let dir_map: HashMap<String, String> = files
+        .iter()
+        .filter(|file| file.kind == kind)
+        .filter_map(|file| {
+            let dir = file.source_path.parent()?;
+            let dir_rel = dir.strip_prefix(root_dir).ok()?;
+            Some((normalize_path_text(dir_rel), file.module_name.clone()))
+        })
+        .collect();
+
+    routes
+        .iter()
+        .filter_map(|route| {
+            let abs_path = PathBuf::from(&route.template_path);
+            let page_dir = abs_path.parent()?;
+            let mut dir = page_dir.strip_prefix(root_dir).ok()?;
+
+            loop {
+                let key = normalize_path_text(dir);
+                if let Some(module) = dir_map.get(&key) {
+                    return Some((route.symbol.clone(), module.clone()));
+                }
+                if dir.as_os_str().is_empty() {
+                    break;
+                }
+                dir = dir.parent().unwrap_or(Path::new(""));
+            }
+            None
+        })
+        .collect()
 }
 
 fn build_module_name(kind: HtmlSourceKind, relative: &Path) -> String {
@@ -1290,6 +1400,7 @@ fn strip_frontmatter_imports(
     rust_frontmatter: &str,
     src_root: &Path,
     source_path: &Path,
+    build_config: &PilcrowBuildConfig,
 ) -> io::Result<(String, HashMap<String, PathBuf>)> {
     let mut imports = HashMap::<String, PathBuf>::new();
     let mut kept_lines = Vec::new();
@@ -1305,7 +1416,7 @@ fn strip_frontmatter_imports(
                 ));
             }
 
-            let resolved = resolve_import_path(src_root, source_path, &import_path)?;
+            let resolved = resolve_import_path(src_root, source_path, &import_path, build_config)?;
             if imports.insert(alias.clone(), resolved).is_some() {
                 return Err(template_compile_error(
                     source_path,
@@ -1375,12 +1486,13 @@ fn resolve_import_path(
     src_root: &Path,
     source_path: &Path,
     import_path: &str,
+    build_config: &PilcrowBuildConfig,
 ) -> io::Result<PathBuf> {
     let normalized = import_path.replace('\\', "/");
     if normalized.is_empty() || normalized.starts_with('/') {
         return Err(template_compile_error(
             source_path,
-            format!("invalid import path `{normalized}`; expected src-root relative path"),
+            format!("invalid import path `{normalized}`; expected relative path or import alias"),
         ));
     }
     if !normalized.ends_with(".html") {
@@ -1389,34 +1501,55 @@ fn resolve_import_path(
             format!("invalid import path `{normalized}`; expected `.html` import"),
         ));
     }
-    if !normalized.starts_with("ui/") {
-        return Err(template_compile_error(
-            source_path,
-            format!(
-                "invalid import path `{normalized}`; only `ui/...` imports are allowed \
-                 (layouts are handled automatically via `_layout.html`)"
-            ),
-        ));
-    }
+    let absolute = if normalized.starts_with("./") || normalized.starts_with("../") {
+        source_path
+            .parent()
+            .unwrap_or(src_root)
+            .join(Path::new(&normalized))
+    } else {
+        let (alias, rest) = normalized.split_once('/').ok_or_else(|| {
+            template_compile_error(
+                source_path,
+                format!("invalid import path `{normalized}`; expected `<alias>/...`"),
+            )
+        })?;
+        let default_ui = "ui".to_string();
+        let alias_root = build_config
+            .imports
+            .get(alias)
+            .or_else(|| (alias == "ui").then_some(&default_ui))
+            .ok_or_else(|| {
+                template_compile_error(
+                    source_path,
+                    format!("unknown import alias `{alias}` in `{normalized}`"),
+                )
+            })?;
+        if alias_root.is_empty() || alias_root.starts_with('/') {
+            return Err(template_compile_error(
+                source_path,
+                format!("invalid import alias `{alias}` target `{alias_root}`"),
+            ));
+        }
+        src_root.join(alias_root).join(rest)
+    };
 
-    let rel_path = Path::new(&normalized);
-    if rel_path.components().any(|part| {
-        matches!(
-            part,
-            Component::ParentDir | Component::CurDir | Component::RootDir | Component::Prefix(_)
+    let canonical_root = src_root.canonicalize().map_err(|err| {
+        template_compile_error(
+            source_path,
+            format!("failed to resolve project root `{}`: {err}", src_root.display()),
         )
-    }) {
-        return Err(template_compile_error(
-            source_path,
-            format!("invalid import path `{normalized}`; relative traversal is not allowed"),
-        ));
-    }
-
-    let absolute = src_root.join(rel_path);
-    if !absolute.exists() {
-        return Err(template_compile_error(
+    })?;
+    let canonical_absolute = absolute.canonicalize().map_err(|_| {
+        template_compile_error(
             source_path,
             format!("import path `{normalized}` was not found on disk"),
+        )
+    })?;
+
+    if !canonical_absolute.starts_with(&canonical_root) {
+        return Err(template_compile_error(
+            source_path,
+            format!("import path `{normalized}` escapes the project root"),
         ));
     }
 
@@ -2637,7 +2770,7 @@ pub struct Props {}
         let err = compile_to_out_dir(&src, &out).expect_err("pipeline should fail");
         let msg = err.to_string();
         assert!(msg.contains("file: pages/index.html"));
-        assert!(msg.contains("only `ui/...` imports are allowed"));
+        assert!(msg.contains("unknown import alias `pages`"));
 
         cleanup(&root);
     }
@@ -3451,6 +3584,131 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
             block_mod.is_some(),
             "frag_blocks_card module present with overridden prefix"
         );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_excludes_configured_fragments_inside_pages() {
+        use crate::templating::build_config::{FragmentEntry, PilcrowBuildConfig};
+
+        let root = mk_temp_root("fragments_inside_pages");
+        let out = root.join("out");
+
+        write_file(&root.join("pages/products/index.html"), "<h1>Products</h1>");
+        write_file(
+            &root.join("pages/products/fragments/row.html"),
+            "<tr><td>{{ name }}</td></tr>",
+        );
+        write_file(
+            &root.join("pages/products/fragments/row.rs"),
+            "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"row\".into() }) }",
+        );
+        write_file(
+            &root.join("pages/products/fragments/_error.html"),
+            "<p>Fragment failed: {{ message }}</p>",
+        );
+        write_file(
+            &root.join("pages/products/fragments/_loading.html"),
+            "<p>Loading fragment</p>",
+        );
+
+        let config = PilcrowBuildConfig {
+            fragments: vec![FragmentEntry {
+                dir: "pages/products/fragments".to_string(),
+                url: Some("products/fragments".to_string()),
+            }],
+            ..Default::default()
+        };
+
+        let result = compile_to_out_dir_with_config(&root, &out, &config)
+            .expect("fragment inside pages should compile");
+        let patterns = result
+            .generated_routes
+            .iter()
+            .map(|route| route.pattern.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(patterns.contains(&"/products"));
+        assert!(
+            !patterns.contains(&"/products/fragments/row"),
+            "fragment file must not become a page route"
+        );
+
+        let app = fs::read_to_string(out.join("generated_app.rs")).expect("read generated app");
+        assert!(app.contains("\"/products/fragments/row\""));
+        assert!(app.contains("error_pages_products_fragments"));
+        assert!(app.contains("loading_pages_products_fragments"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_expands_fragment_dir_globs() {
+        use crate::templating::build_config::{FragmentEntry, PilcrowBuildConfig};
+
+        let root = mk_temp_root("fragment_globs");
+        let out = root.join("out");
+
+        write_file(&root.join("pages/products/fragments/row.html"), "<p>Product</p>");
+        write_file(&root.join("pages/admin/fragments/row.html"), "<p>Admin</p>");
+
+        let config = PilcrowBuildConfig {
+            fragments: vec![FragmentEntry {
+                dir: "pages/**/fragments".to_string(),
+                url: Some("fragments".to_string()),
+            }],
+            ..Default::default()
+        };
+
+        let result = compile_to_out_dir_with_config(&root, &out, &config)
+            .expect("fragment globs should compile");
+        let fragment_count = result
+            .preprocessed_files
+            .iter()
+            .filter(|file| file.module_name.starts_with("frag_fragments"))
+            .count();
+        assert_eq!(fragment_count, 2);
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_imports_from_ignored_relative_directory() {
+        let root = mk_temp_root("ignored_relative_import");
+        let out = root.join("out");
+
+        write_file(
+            &root.join("pages/products/index.html"),
+            r#"---
+import FilterPanel from "./components/FilterPanel.html";
+---
+<FilterPanel />"#,
+        );
+        write_file(
+            &root.join("pages/products/components/FilterPanel.html"),
+            r#"---
+pub struct Props {}
+---
+<aside>Filters</aside>"#,
+        );
+
+        let config = PilcrowBuildConfig {
+            routing: crate::templating::build_config::RoutingConfig {
+                ignore_directories: vec!["components".to_string()],
+            },
+            ..Default::default()
+        };
+
+        let result = compile_to_out_dir_with_config(&root, &out, &config)
+            .expect("ignored relative import should compile");
+        let patterns = result
+            .generated_routes
+            .iter()
+            .map(|route| route.pattern.as_str())
+            .collect::<Vec<_>>();
+        assert!(patterns.contains(&"/products"));
+        assert!(!patterns.contains(&"/products/components/FilterPanel"));
 
         cleanup(&root);
     }

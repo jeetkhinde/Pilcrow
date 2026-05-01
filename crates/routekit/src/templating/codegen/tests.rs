@@ -15,7 +15,7 @@ mod tests {
         write_file(&src.join("pages/about.html"), "<h1>About</h1>");
         write_file(&src.join("pages/posts/[id].html"), "<h1>Post</h1>");
 
-        let entries = build_generated_page_manifest(&src, &[]).expect("manifest should build");
+        let entries = build_generated_page_manifest(&src, &[], &[]).expect("manifest should build");
         let patterns = entries
             .iter()
             .map(|e| e.pattern.as_str())
@@ -62,7 +62,7 @@ mod tests {
         write_file(&src.join("pages/index.html"), "<h1>Home</h1>");
         write_file(&src.join("pages/blog/[slug].html"), "<h1>Blog</h1>");
 
-        let entries = write_generated_routes_module(&src, &out_file, &[])
+        let entries = write_generated_routes_module(&src, &out_file, &[], &[])
             .expect("should write generated file");
         assert_eq!(entries.len(), 2);
         assert!(out_file.exists());

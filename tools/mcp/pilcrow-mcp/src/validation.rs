@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn rejects_wrong_island_syntax() {
         let report =
-            validate_implementation("<Island client:load />", Some("src/pages/index.html"), None);
+            validate_implementation("<Island client:load />", Some("pages/index.html"), None);
         assert!(!report.valid);
         assert!(report
             .findings
@@ -640,7 +640,7 @@ mod tests {
     fn accepts_current_load_shape() {
         let report = validate_implementation(
             "pub struct Props {}\npub async fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }",
-            Some("src/pages/index.rs"),
+            Some("pages/index.rs"),
             None,
         );
         assert!(report.valid, "{:?}", report.findings);
@@ -650,7 +650,7 @@ mod tests {
     fn accepts_typed_page_load_shape() {
         let report = validate_implementation(
             "pub struct Props {}\npub async fn load(ctx: Page) -> AppResult<Props> { Ok(Props {}) }",
-            Some("src/pages/products/[id].rs"),
+            Some("pages/products/[id].rs"),
             None,
         );
         assert!(report.valid, "{:?}", report.findings);
@@ -660,7 +660,7 @@ mod tests {
     fn rejects_non_async_load() {
         let report = validate_implementation(
             "pub struct Props {}\npub fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }",
-            Some("src/pages/index.rs"),
+            Some("pages/index.rs"),
             None,
         );
         assert!(!report.valid);
@@ -674,7 +674,7 @@ mod tests {
     fn rejects_invalid_trailing_slash_value() {
         let report = validate_implementation(
             "pub const TRAILING_SLASH: &str = \"redirect\";",
-            Some("src/pages/index.rs"),
+            Some("pages/index.rs"),
             None,
         );
         assert!(!report.valid);
@@ -688,7 +688,7 @@ mod tests {
     fn rejects_layout_with_action() {
         let report = validate_implementation(
             "pub async fn create(req: Req) -> ActionResult { redirect(\"/\") }",
-            Some("src/pages/_layout.rs"),
+            Some("pages/_layout.rs"),
             None,
         );
         // This should warn about actions in layout
@@ -702,7 +702,7 @@ mod tests {
     fn finding_has_source_ref() {
         let report = validate_implementation(
             "pub fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }",
-            Some("src/pages/index.rs"),
+            Some("pages/index.rs"),
             None,
         );
         let async_finding = report.findings.iter().find(|f| f.rule_id == "pilcrow-load-async");
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn finding_has_line_number_for_wrong_island_syntax() {
         let html = "line1\n<Island client:load />\nline3";
-        let report = validate_implementation(html, Some("src/pages/index.html"), None);
+        let report = validate_implementation(html, Some("pages/index.html"), None);
         let f = report
             .findings
             .iter()
@@ -726,7 +726,7 @@ mod tests {
     fn rejects_prerender_as_string_literal() {
         let report = validate_implementation(
             "pub const PRERENDER: &str = \"true\";",
-            Some("src/pages/about.rs"),
+            Some("pages/about.rs"),
             None,
         );
         assert!(
@@ -739,7 +739,7 @@ mod tests {
     fn accepts_prerender_as_bool_literal() {
         let report = validate_implementation(
             "pub const PRERENDER: bool = true;",
-            Some("src/pages/about.rs"),
+            Some("pages/about.rs"),
             None,
         );
         assert!(
@@ -752,7 +752,7 @@ mod tests {
     fn rejects_revalidate_as_string_literal() {
         let report = validate_implementation(
             "pub const REVALIDATE: &str = \"60\";",
-            Some("src/pages/products/index.rs"),
+            Some("pages/products/index.rs"),
             None,
         );
         assert!(
@@ -765,7 +765,7 @@ mod tests {
     fn accepts_revalidate_as_integer_literal() {
         let report = validate_implementation(
             "pub const REVALIDATE: u64 = 60;",
-            Some("src/pages/products/index.rs"),
+            Some("pages/products/index.rs"),
             None,
         );
         assert!(
@@ -778,7 +778,7 @@ mod tests {
     fn suggests_typed_routes_for_hardcoded_redirect_url() {
         let report = validate_implementation(
             "pub async fn create(req: Req) -> ActionResult { redirect(\"/products\") }",
-            Some("src/pages/products/index.rs"),
+            Some("pages/products/index.rs"),
             None,
         );
         assert!(
@@ -791,7 +791,7 @@ mod tests {
     fn does_not_suggest_typed_routes_for_root_redirect() {
         let report = validate_implementation(
             "pub async fn create(req: Req) -> ActionResult { redirect(\"/\") }",
-            Some("src/pages/index.rs"),
+            Some("pages/index.rs"),
             None,
         );
         assert!(
@@ -810,7 +810,7 @@ pub async fn load(req: Req) -> AppResult<Props> {
     Ok(Props {})
 }
 "#,
-            Some("src/pages/products/index.rs"),
+            Some("pages/products/index.rs"),
             None,
         );
         assert!(
@@ -830,7 +830,7 @@ pub async fn load(req: Req) -> AppResult<Props> {
     Ok(Props {})
 }
 "#,
-            Some("src/pages/products/index.rs"),
+            Some("pages/products/index.rs"),
             None,
         );
         assert!(

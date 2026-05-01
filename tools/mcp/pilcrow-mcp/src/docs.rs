@@ -597,37 +597,37 @@ fn document_specs() -> Vec<DocumentSpec> {
         DocumentSpec {
             id: "sandbox-index-page",
             title: "Sandbox index page",
-            path: "sandbox/apps/web/src/pages/index.html",
+            path: "sandbox/pages/index.html",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "sandbox-index-code",
             title: "Sandbox index code-behind",
-            path: "sandbox/apps/web/src/pages/index.rs",
+            path: "sandbox/pages/index.rs",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "sandbox-products-page",
             title: "Sandbox products page",
-            path: "sandbox/apps/web/src/pages/products/index.html",
+            path: "sandbox/pages/products/index.html",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "sandbox-products-code",
             title: "Sandbox products code-behind",
-            path: "sandbox/apps/web/src/pages/products/index.rs",
+            path: "sandbox/pages/products/index.rs",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "sandbox-layout",
             title: "Sandbox root layout",
-            path: "sandbox/apps/web/src/pages/_layout.html",
+            path: "sandbox/pages/_layout.html",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
             id: "sandbox-api-products",
             title: "Sandbox API route",
-            path: "sandbox/apps/web/src/api/products.rs",
+            path: "sandbox/api/products.rs",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {
@@ -669,7 +669,7 @@ fn document_specs() -> Vec<DocumentSpec> {
         DocumentSpec {
             id: "sandbox-products-page-head-meta",
             title: "Sandbox products page (multi-tag <pilcrow:head> example)",
-            path: "sandbox/apps/web/src/pages/products/index.html",
+            path: "sandbox/pages/products/index.html",
             category: KnowledgeCategory::Examples,
         },
         DocumentSpec {

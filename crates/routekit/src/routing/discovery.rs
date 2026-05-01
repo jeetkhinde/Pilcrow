@@ -53,35 +53,44 @@ pub(crate) struct ApiRoute {
 pub struct DiscoveredHtmlFiles {
     pub pages: Vec<PathBuf>,
     pub ui: Vec<PathBuf>,
-    /// Auto-layouts: `_layout.html` files found inside `src/pages/` subdirectories.
+    /// Auto-layouts: `_layout.html` files found inside `pages/` subdirectories.
     /// These are NOT page routes — they automatically wrap sibling and child pages.
     pub auto_layouts: Vec<PathBuf>,
-    /// Error boundaries: `_error.html` files found inside `src/pages/` subdirectories.
+    /// Error boundaries: `_error.html` files found inside `pages/` subdirectories.
     /// Rendered when a page's `load()` returns `Err`. Not routable.
     pub error_pages: Vec<PathBuf>,
-    /// Not-found pages: `_not_found.html` files found inside `src/pages/`.
+    /// Not-found pages: `_not_found.html` files found inside `pages/`.
     /// Rendered for unmatched routes. Not routable.
     pub not_found_pages: Vec<PathBuf>,
-    /// Loading skeletons: `_loading.html` files found inside `src/pages/` subdirectories.
+    /// Loading skeletons: `_loading.html` files found inside `pages/` subdirectories.
     /// Their rendered HTML is embedded as a `<template>` in sibling/descendant pages
     /// so silcrow.js can show them immediately while a navigation is in-flight.
     pub loading_pages: Vec<PathBuf>,
 }
 
-/// Discover all `.html` files from `src/pages` and `src/ui`.
+/// Discover all `.html` files from `pages` and `ui`.
 ///
-/// Special files inside `src/pages/` are separated from routable pages:
+/// Special files inside `pages/` are separated from routable pages:
 /// - `_layout.html`    → `auto_layouts`
 /// - `_error.html`     → `error_pages`
 /// - `_not_found.html` → `not_found_pages`
 ///
-/// `src_root` should point to the project `src` directory.
+/// `src_root` should point to the project root.
 pub fn discover_html_files(
     src_root: impl AsRef<Path>,
     ignored_dirs: &[String],
 ) -> io::Result<DiscoveredHtmlFiles> {
+    discover_html_files_with_fragment_dirs(src_root, ignored_dirs, &[])
+}
+
+pub fn discover_html_files_with_fragment_dirs(
+    src_root: impl AsRef<Path>,
+    ignored_dirs: &[String],
+    fragment_dirs: &[PathBuf],
+) -> io::Result<DiscoveredHtmlFiles> {
     let src_root = src_root.as_ref();
-    let filter = IgnoreFilter::new(ignored_dirs);
+    let ignored = ignored_with_fragment_dirs(src_root, ignored_dirs, fragment_dirs);
+    let filter = IgnoreFilter::new(&ignored);
 
     let all_page_files = collect_html_files(&src_root.join("pages"), src_root, &filter)?;
 
@@ -159,14 +168,23 @@ fn is_special_page_file(path: &Path) -> bool {
         || is_loading_page_file(path)
 }
 
-/// Build `Route` entries from discovered page files in `src/pages`.
+/// Build `Route` entries from discovered page files in `pages`.
 pub fn build_page_routes(
     src_root: impl AsRef<Path>,
     ignored_dirs: &[String],
 ) -> io::Result<Vec<Route>> {
+    build_page_routes_with_fragment_dirs(src_root, ignored_dirs, &[])
+}
+
+pub fn build_page_routes_with_fragment_dirs(
+    src_root: impl AsRef<Path>,
+    ignored_dirs: &[String],
+    fragment_dirs: &[PathBuf],
+) -> io::Result<Vec<Route>> {
     let src_root = src_root.as_ref();
     let pages_dir = src_root.join("pages");
-    let filter = IgnoreFilter::new(ignored_dirs);
+    let ignored = ignored_with_fragment_dirs(src_root, ignored_dirs, fragment_dirs);
+    let filter = IgnoreFilter::new(&ignored);
     let mut page_files = collect_html_files(&pages_dir, src_root, &filter)?;
     // Special files (_layout, _error, _not_found) are not routable pages.
     page_files.retain(|p| !is_special_page_file(p));
@@ -204,6 +222,8 @@ pub struct DiscoveredFragmentFiles {
     pub error_pages: Vec<PathBuf>,
     /// `_layout.html` files within this fragment group (optional fragment wrapper).
     pub auto_layouts: Vec<PathBuf>,
+    /// `_loading.html` files within this fragment group.
+    pub loading_pages: Vec<PathBuf>,
 }
 
 pub fn discover_fragment_files(
@@ -224,6 +244,8 @@ pub fn discover_fragment_files(
             result.error_pages.push(path);
         } else if is_auto_layout_file(&path) {
             result.auto_layouts.push(path);
+        } else if is_loading_page_file(&path) {
+            result.loading_pages.push(path);
         } else {
             result.fragments.push(path);
         }
@@ -232,6 +254,7 @@ pub fn discover_fragment_files(
     result.fragments.sort();
     result.error_pages.sort();
     result.auto_layouts.sort();
+    result.loading_pages.sort();
     Ok(result)
 }
 
@@ -277,9 +300,9 @@ pub fn build_fragment_routes(
     Ok(routes)
 }
 
-/// Discover `.rs` route files from `src/api/` (excludes `mod.rs`).
+/// Discover `.rs` route files from `api/` (excludes `mod.rs`).
 ///
-/// `src_root` should point to the project `src` directory.
+/// `src_root` should point to the project root.
 #[allow(dead_code)]
 pub(crate) fn discover_api_files(
     src_root: impl AsRef<Path>,
@@ -292,7 +315,7 @@ pub(crate) fn discover_api_files(
     Ok(files)
 }
 
-/// Build `ApiRoute` entries from `.rs` files discovered in `src/api/`.
+/// Build `ApiRoute` entries from `.rs` files discovered in `api/`.
 pub(crate) fn build_api_routes(
     src_root: impl AsRef<Path>,
     ignored_dirs: &[String],
@@ -426,6 +449,22 @@ pub fn collect_html_files_pub(
 ) -> io::Result<Vec<PathBuf>> {
     let filter = IgnoreFilter::new(ignored_dirs);
     collect_html_files(root, src_root, &filter)
+}
+
+fn ignored_with_fragment_dirs(
+    src_root: &Path,
+    ignored_dirs: &[String],
+    fragment_dirs: &[PathBuf],
+) -> Vec<String> {
+    let mut ignored = ignored_dirs.to_vec();
+    for dir in fragment_dirs {
+        let rel = dir.strip_prefix(src_root).unwrap_or(dir);
+        let rel = path_to_unix_slashes(rel).trim_matches('/').to_string();
+        if !rel.is_empty() {
+            ignored.push(rel);
+        }
+    }
+    ignored
 }
 
 fn collect_html_files(root: &Path, base: &Path, filter: &IgnoreFilter) -> io::Result<Vec<PathBuf>> {

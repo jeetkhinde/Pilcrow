@@ -33,7 +33,7 @@ pub struct CodegenReadResult {
 pub fn codegen_build(project_root: &Path, manifest: Option<&str>) -> Result<CodegenBuildResult> {
     let manifest_path = manifest
         .map(|path| resolve_against(project_root, path))
-        .unwrap_or_else(|| project_root.join("sandbox/apps/web/Cargo.toml"));
+        .unwrap_or_else(|| project_root.join("sandbox/Cargo.toml"));
     if !manifest_path.exists() {
         bail!("manifest not found: {}", manifest_path.display());
     }
@@ -109,7 +109,7 @@ pub fn codegen_read(
 fn default_manifest(project_root: &Path, manifest: Option<&str>) -> PathBuf {
     manifest
         .map(|path| resolve_against(project_root, path))
-        .unwrap_or_else(|| project_root.join("sandbox/apps/web/Cargo.toml"))
+        .unwrap_or_else(|| project_root.join("sandbox/Cargo.toml"))
 }
 
 fn ensure_inside(root: &Path, path: &Path) -> Result<()> {

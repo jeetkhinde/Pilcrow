@@ -27,28 +27,24 @@ Pilcrow is a Rust full-stack web framework inspired by SvelteKit/Astro. It uses:
 - **silcrow.js** — Always read `crates/runtime/assets/silcrow.js` via MCP tool `silcrow-docs` before writing anything about it.
 - A **build.rs** pipeline (`routekit`) that compiles `.html` + `.rs` files into a wired axum `Router` — no manual route registration
 
-The workspace root `Cargo.toml` has the framework crates as `members`, while `tools/cli` and `sandbox` are `exclude`d and must be built separately.
+The Pilcrow repo workspace root `Cargo.toml` has only the framework crates as members. `tools/cli` is a separate workspace and must be built separately. In the `pilcrow-silcrow` integration workspace, `sandbox/` is an external production-style app beside the `pilcrow` symlink, not a directory inside the Pilcrow repo.
 
 ## Build Commands
 
 ```bash
-# Framework crates (all must pass before touching sandbox)
+# From the Pilcrow repo root
 cargo build -p pilcrow-routekit
 cargo build -p pilcrow-runtime
 cargo build -p pilcrow-web
-
-# Sandbox web app (exercises the full build pipeline including build.rs codegen)
-cargo build --manifest-path sandbox/apps/web/Cargo.toml
-
-# CLI tool (separate workspace)
 cargo build --manifest-path tools/cli/Cargo.toml
-
-# Tests (routekit has the most meaningful test suite)
 cargo test -p pilcrow-routekit
 cargo test -p pilcrow-routekit -- <test_name>   # single test
 
-# Run sandbox app
-cargo run --manifest-path sandbox/apps/web/Cargo.toml
+# From the pilcrow-silcrow integration workspace root
+cargo build --manifest-path pilcrow/Cargo.toml -p pilcrow-routekit
+cargo test --manifest-path pilcrow/Cargo.toml -p pilcrow-routekit
+cargo build --manifest-path sandbox/Cargo.toml
+cargo run --manifest-path sandbox/Cargo.toml
 ```
 
 Config is in `Pilcrow.toml` (walks up from cwd). Defaults: web on `127.0.0.1:3000`, backend on `127.0.0.1:4000`. Env overrides: `PILCROW_WEB_HOST`, `PILCROW_WEB_PORT`, `PILCROW_BACKEND_URL`.
@@ -69,13 +65,13 @@ Config is in `Pilcrow.toml` (walks up from cwd). Defaults: web on `127.0.0.1:300
 
 `build.rs` in a web app calls `routekit::compile_current_crate_sources()`, which:
 
-1. **Discovers** `src/pages/**/*.html`, `src/ui/**/*.html`, and their `.rs` code-behind files
+1. **Discovers** `pages/**/*.html`, configured `[[fragments]]`, `ui/**/*.html`, and their `.rs` code-behind files
 2. **Classifies** special files: `_layout.html`, `_error.html`, `_not_found.html`, `_loading.html`
 3. **Reads** `Pilcrow.toml` for fragment directory configuration (`[[fragments]]`)
 4. **Transpiles** Askama-dialect HTML → Askama templates in `$OUT_DIR/pilcrow_templates/`
 5. **Generates** `$OUT_DIR/generated_app.rs` — a `build_router()` fn wiring all routes
 6. **Generates** `$OUT_DIR/generated_routes.rs` and `$OUT_DIR/generated_api_mods.rs`
-7. **Detects** `src/middleware.rs` — if present, wraps the router in an axum middleware layer
+7. **Detects** `hooks.rs` — if present, wires global request/error/startup hooks
 
 The `pilcrow_app!()` macro in `main.rs` includes these generated files.
 
@@ -83,39 +79,40 @@ The `pilcrow_app!()` macro in `main.rs` includes these generated files.
 
 ```
 src/
-  pages/
-    index.html          # Route: GET /
-    index.rs            # Code-behind: Props struct, load(), named action fns
-    products.html       # Route: GET /products
-    products.rs
-    _layout.html        # Auto-wraps all sibling/child pages — not a route
-    _error.html         # Shown when load() returns Err — not a route
-    _not_found.html     # axum fallback — not a route
-    _loading.html       # Skeleton shown during navigation — injected as <template>
-    [id]/
-      index.html        # Route: GET /:id
-    [id=integer]/
-      index.html        # Route: GET /:id, but only when id passes src/params/integer::match_param
-    (admin)/
-      _layout.html      # Layout group — wraps children, NOT part of the URL
-      dashboard.html    # Route: GET /dashboard  (group name stripped from URL)
-  ui/
-    Button.html         # Reusable components, imported with {% import %}
-  widgets/              # Example fragment dir (configured in Pilcrow.toml)
-    user-card.html      # Route: GET /widgets/user-card (no layout wrapping)
-    user-card.rs        # Optional code-behind: same as pages (load, actions, etc.)
-  api/
-    health.rs           # API route: handlers live here, separate from page routes
-  params/
-    integer.rs          # Param matcher: `pub fn match_param(value: &str) -> bool`
-  middleware.rs         # Optional: global request middleware
+  main.rs               # Cargo binary entrypoint only
+pages/
+  index.html            # Route: GET /
+  index.rs              # Code-behind: Props struct, load(), named action fns
+  products.html         # Route: GET /products
+  products.rs
+  _layout.html          # Auto-wraps all sibling/child pages — not a route
+  _error.html           # Shown when load() returns Err — not a route
+  _not_found.html       # axum fallback — not a route
+  _loading.html         # Skeleton shown during navigation — injected as <template>
+  [id]/
+    index.html          # Route: GET /:id
+  [id=integer]/
+    index.html          # Route: GET /:id, but only when id passes params/integer::match_param
+  (admin)/
+    _layout.html        # Layout group — wraps children, NOT part of the URL
+    dashboard.html      # Route: GET /dashboard  (group name stripped from URL)
+ui/
+  Button.html           # Reusable components, imported with frontmatter imports
+widgets/                # Example fragment dir (configured in Pilcrow.toml)
+  user-card.html        # Route: GET /widgets/user-card (no layout wrapping)
+  user-card.rs          # Optional code-behind: same as pages (load, actions, etc.)
+api/
+  health.rs             # API route: handlers live here, separate from page routes
+params/
+  integer.rs            # Param matcher: `pub fn match_param(value: &str) -> bool`
+hooks.rs                # Optional: global request/error/startup hooks
 ```
 
 Route parameters use `:param` in axum style. Folder names in brackets (`[id]`) become URL params.
 
 ### Param Matchers
 
-`[id=integer]` maps to `src/params/integer.rs`. The file must export:
+`[id=integer]` maps to `params/integer.rs`. The file must export:
 
 ```rust
 pub fn match_param(value: &str) -> bool { ... }
@@ -133,14 +130,14 @@ Fragment directories contain URL-accessible HTML partials — like pages but wit
 
 ```toml
 [[fragments]]
-dir = "widgets"          # relative to src/; URL prefix = "widgets" → /widgets/**
+dir = "widgets"          # relative to project root; URL prefix = "widgets" → /widgets/**
 
 [[fragments]]
 dir = "ui-blocks"
 url = "blocks"           # explicit URL prefix override → /blocks/**
 ```
 
-- Each `.html` file in the directory becomes a GET route: `src/widgets/user-card.html` → `GET /widgets/user-card`
+- Each `.html` file in the directory becomes a GET route: `widgets/user-card.html` → `GET /widgets/user-card`
 - Code-behind `.rs` files work exactly like pages (`load()`, named actions, `_error.html`)
 - No layout is applied — the response is the raw fragment HTML
 - Fragments can import `ui/` components with `import … from "ui/…";`
@@ -181,7 +178,7 @@ Each page has two files: `products.html` (template) and `products.rs` (logic).
 - `pub async fn load(req: Req) -> AppResult<Props>` — GET handler (**required** if `.rs` file exists)
 - `pub async fn <name>(req: Req) -> ActionResult` — one fn per named action. The URL fragment `?/<name>` dispatches to `fn <name>` (POST only). Any number of action fns may be defined; none are required.
 
-**`load()` signature is enforced by the build pipeline.** Any `load()` in `src/pages/` (pages and layouts) must be `async`, return `AppResult<Props>`, and take `req: Req`. The build fails with a clear error otherwise. If you don't need the request, use `_req: Req`. If a page needs no dynamic data, omit the `.rs` file entirely — the page is served as a static template.
+**`load()` signature is enforced by the build pipeline.** Any `load()` in `pages/` (pages and layouts) must be `async`, return `AppResult<Props>`, and take `req: Req`. The build fails with a clear error otherwise. If you don't need the request, use `_req: Req`. If a page needs no dynamic data, omit the `.rs` file entirely — the page is served as a static template.
 
 The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`, and `use pilcrow_web::redirect;` at the top of code-behind files automatically (unless already imported).
 
@@ -295,7 +292,7 @@ Fragment modules are auto-available via `fragments::{url_prefix}::{leaf_name}` w
 Each named action is its own `pub async fn <name>(req: Req) -> ActionResult`. The URL fragment `?/<name>` maps 1:1 to the function named `<name>` in the code-behind file.
 
 ```rust
-// src/pages/items.rs
+// pages/items.rs
 pub async fn create(req: Req) -> ActionResult {
     let name = req.form.get("name").unwrap_or("");
     // ...
@@ -344,14 +341,14 @@ pub async fn load(req: Req) -> AppResult<Props> {
 
 ## Middleware
 
-Place `src/middleware.rs` at the source root. The build pipeline detects it and wraps the entire axum router automatically:
+Place `hooks.rs` at the project root. The build pipeline detects it and wires global request/error/startup hooks automatically:
 
 ```rust
-// src/middleware.rs
+// hooks.rs
 use pilcrow_web::{AppError, Next, Req, Response};
 use axum::response::IntoResponse;
 
-pub async fn middleware(req: Req, next: Next) -> Response {
+pub async fn handle(req: Req, next: Next) -> Response {
     let token = req.cookies.get("session").map(|c| c.value().to_string());
     match auth::verify(token).await {
         Ok(user) => req.locals.set(user),
@@ -364,10 +361,10 @@ pub async fn middleware(req: Req, next: Next) -> Response {
 }
 ```
 
-- `req.locals` and `req.res` set in middleware are shared with all downstream `load()` and action fns
+- `req.locals` and `req.res` set in hooks are shared with all downstream `load()` and action fns
 - `next.run().await` forwards the original request (body intact) to the route handler
 - Short-circuit by returning a `Response` directly without calling `next.run()`
-- `src/middleware.rs` is auto-added to Cargo's rerun-if-changed watch list
+- `hooks.rs` is auto-added to Cargo's rerun-if-changed watch list
 
 ## AppError
 
@@ -523,7 +520,7 @@ When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeli
 
 | Feature | Status |
 |---------|--------|
-| Server hooks (`handle`, `handleError`, `handleFetch`) | ❌ Only `src/middleware.rs` |
+| Server hooks (`handle`, `handle_error`, `init`) | 🟡 `hooks.rs` at project root |
 | `$env` modules (static/private, static/public, dynamic) | 🟡 `env_codegen.rs` exists but early |
 | Head/meta management (`svelte:head`, `<head>` injection) | ❌ Manual only |
 | Snapshot/state preservation across navigations | ❌ Not implemented |

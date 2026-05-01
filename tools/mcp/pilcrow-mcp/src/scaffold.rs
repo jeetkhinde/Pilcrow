@@ -233,7 +233,7 @@ fn scaffold_nested_layout(
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
     let route_path = request.route_path.unwrap_or(request.name);
     let dir = app_root
-        .join("src/pages")
+        .join("pages")
         .join(route_path.trim_start_matches('/').trim_end_matches('/'));
     let html_path = dir.join("_layout.html");
 
@@ -269,10 +269,10 @@ fn scaffold_loading_page(
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
     let route_path = request.route_path.unwrap_or("");
     let dir = if route_path.is_empty() || route_path == "/" {
-        app_root.join("src/pages")
+        app_root.join("pages")
     } else {
         app_root
-            .join("src/pages")
+            .join("pages")
             .join(route_path.trim_start_matches('/').trim_end_matches('/'))
     };
     let path = dir.join("_loading.html");
@@ -300,10 +300,10 @@ fn scaffold_error_page(
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
     let route_path = request.route_path.unwrap_or("");
     let dir = if route_path.is_empty() || route_path == "/" {
-        app_root.join("src/pages")
+        app_root.join("pages")
     } else {
         app_root
-            .join("src/pages")
+            .join("pages")
             .join(route_path.trim_start_matches('/').trim_end_matches('/'))
     };
     let path = dir.join("_error.html");
@@ -325,7 +325,7 @@ fn scaffold_not_found_page(
     app_root: &Path,
     _request: ScaffoldRequest<'_>,
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
-    let path = app_root.join("src/pages/_not_found.html");
+    let path = app_root.join("pages/_not_found.html");
 
     Ok((
         vec![ScaffoldFile {
@@ -346,7 +346,7 @@ fn scaffold_api_route(
     request: ScaffoldRequest<'_>,
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
     let filename = format!("{}.rs", kebab_name(request.name));
-    let path = app_root.join("src/api").join(&filename);
+    let path = app_root.join("api").join(&filename);
     let fn_name = snake_name(request.name);
 
     Ok((
@@ -372,7 +372,7 @@ fn scaffold_middleware(
     app_root: &Path,
     _request: ScaffoldRequest<'_>,
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
-    let path = app_root.join("src/middleware.rs");
+    let path = app_root.join("hooks.rs");
 
     Ok((
         vec![ScaffoldFile {
@@ -381,7 +381,7 @@ fn scaffold_middleware(
             content: "use pilcrow_web::{AppError, Next, Req, Response};\nuse axum::response::IntoResponse;\n\npub async fn middleware(req: Req, next: Next) -> Response {\n    // Example: auth check for /admin routes\n    // let token = req.cookies.get(\"session\").map(|c| c.value().to_string());\n    // if req.path.starts_with(\"/admin\") && token.is_none() {\n    //     return AppError::Unauthorized.into_response();\n    // }\n    next.run().await\n}\n".to_string(),
         }],
         vec![
-            "Middleware must be named `middleware` and live at src/middleware.rs.".to_string(),
+            "Middleware must be named `middleware` and live at hooks.rs.".to_string(),
             "The build pipeline auto-detects this file and wraps the router.".to_string(),
             "req.locals and req.res set here are shared with all load() and action fns.".to_string(),
         ],
@@ -433,7 +433,7 @@ fn scaffold_typed_param(
     request: ScaffoldRequest<'_>,
 ) -> Result<(Vec<ScaffoldFile>, Vec<String>)> {
     let filename = format!("{}.rs", kebab_name(request.name));
-    let path = app_root.join("src/params").join(&filename);
+    let path = app_root.join("params").join(&filename);
     let param_name = kebab_name(request.name);
 
     let validation_body = match param_name.as_str() {
@@ -498,7 +498,7 @@ fn scaffold_component(
     let dir = request
         .target_dir
         .map(|dir| app_root.join(dir))
-        .unwrap_or_else(|| app_root.join("src/ui"));
+        .unwrap_or_else(|| app_root.join("ui"));
     let path = dir.join(format!("{}.html", pascal_name(request.name)));
     Ok((
         vec![ScaffoldFile {
@@ -527,7 +527,7 @@ fn scaffold_fragment(
     let target_dir = request
         .target_dir
         .map(|dir| app_root.join(dir))
-        .unwrap_or_else(|| app_root.join("src").join(&fragment_dir));
+        .unwrap_or_else(|| app_root.join(&fragment_dir));
     let path = target_dir.join(format!("{}.html", kebab_name(request.name)));
     let mut files = vec![ScaffoldFile {
         path: display_path(&path),
@@ -567,10 +567,10 @@ fn route_file(app_root: &Path, route_path: &str, ext: &str) -> PathBuf {
         .trim_start_matches('/')
         .trim_end_matches('/');
     if cleaned.is_empty() {
-        app_root.join("src/pages").join(format!("index.{ext}"))
+        app_root.join("pages").join(format!("index.{ext}"))
     } else {
         app_root
-            .join("src/pages")
+            .join("pages")
             .join(cleaned)
             .join(format!("index.{ext}"))
     }
@@ -595,7 +595,7 @@ fn configured_fragment_dir(source: &str) -> Option<String> {
         .first()?
         .get("dir")?
         .as_str()
-        .map(|dir| dir.trim_start_matches("src/").to_string())
+        .map(|dir| dir.trim_start_matches('/').to_string())
 }
 
 fn titleize(input: &str) -> String {
@@ -670,20 +670,20 @@ mod tests {
         assert_eq!(result.files.len(), 2);
         assert!(result.files[0]
             .path
-            .ends_with("src/pages/reports/index.html"));
+            .ends_with("pages/reports/index.html"));
     }
 
     #[test]
     fn existing_file_is_skipped_without_overwrite() {
         let temp = tempfile::tempdir().unwrap();
         let app = temp.path().join("app");
-        fs::create_dir_all(app.join("src/pages/reports")).unwrap();
+        fs::create_dir_all(app.join("pages/reports")).unwrap();
         fs::write(
             app.join("Cargo.toml"),
             "[package]\nname=\"app\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
         )
         .unwrap();
-        fs::write(app.join("src/pages/reports/index.html"), "old").unwrap();
+        fs::write(app.join("pages/reports/index.html"), "old").unwrap();
         let result = orchestrate_feature(
             temp.path(),
             Some(temp.path().to_str().unwrap()),
@@ -701,7 +701,7 @@ mod tests {
         .unwrap();
         assert!(matches!(result.files[0].action, ScaffoldAction::SkipExists));
         assert_eq!(
-            fs::read_to_string(app.join("src/pages/reports/index.html")).unwrap(),
+            fs::read_to_string(app.join("pages/reports/index.html")).unwrap(),
             "old"
         );
     }
@@ -732,7 +732,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.files.len(), 1);
         assert!(result.files[0].content.contains("pub fn router()"));
-        assert!(result.files[0].path.ends_with("src/api/users.rs"));
+        assert!(result.files[0].path.ends_with("api/users.rs"));
     }
 
     #[test]
@@ -761,7 +761,7 @@ mod tests {
         .unwrap();
         assert_eq!(result.files.len(), 1);
         assert!(result.files[0].content.contains("pub async fn middleware"));
-        assert!(result.files[0].path.ends_with("src/middleware.rs"));
+        assert!(result.files[0].path.ends_with("hooks.rs"));
     }
 
     #[test]
@@ -790,6 +790,6 @@ mod tests {
         .unwrap();
         assert_eq!(result.files.len(), 1);
         assert!(result.files[0].content.contains("pub fn match_param"));
-        assert!(result.files[0].path.ends_with("src/params/integer.rs"));
+        assert!(result.files[0].path.ends_with("params/integer.rs"));
     }
 }

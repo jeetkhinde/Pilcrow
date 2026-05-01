@@ -24,7 +24,6 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
             format!("CARGO_MANIFEST_DIR must be set: {err}"),
         )
     })?);
-    let src_root = manifest_dir.join("src");
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|err| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -34,9 +33,9 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
 
     let build_config = PilcrowBuildConfig::load_from(&manifest_dir);
 
-    compile_to_out_dir_with_config(&src_root, &out_dir, &build_config)?;
+    compile_to_out_dir_with_config(&manifest_dir, &out_dir, &build_config)?;
 
-    for dir in watched_source_directories(&src_root) {
+    for dir in watched_source_directories(&manifest_dir) {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
     // Watch each configured fragment directory for changes.
@@ -52,7 +51,7 @@ pub fn compile_current_crate_sources() -> io::Result<()> {
 
     // Watch the locales directory when i18n is configured.
     if !build_config.i18n.locales.is_empty() {
-        let locales_dir = src_root.join(&build_config.i18n.locales_dir);
+        let locales_dir = manifest_dir.join(&build_config.i18n.locales_dir);
         println!("cargo:rerun-if-changed={}", locales_dir.display());
     }
 
