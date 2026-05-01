@@ -325,6 +325,28 @@ fn smoke_get_feature_spec_for_ssr_pages() {
     assert!(resp["error"].is_null(), "get_feature_spec errored: {resp}");
 }
 
+/// Knowledge / registry group — React production pattern
+#[test]
+fn smoke_suggest_pattern_react_island_uses_hooks() {
+    let mut client = McpClient::spawn();
+    let resp = client.call_tool(
+        "suggest_pattern",
+        json!({
+            "description": "React 19 product island with hooks and action form",
+            "include_code": true
+        }),
+    );
+    assert!(resp["error"].is_null(), "suggest_pattern errored: {resp}");
+
+    let text = serde_json::to_string(&resp["result"]).unwrap_or_default();
+    assert!(text.contains("react-islands"), "missing React match: {text}");
+    assert!(text.contains("pilcrow/react"), "missing hook import: {text}");
+    assert!(
+        text.contains("ProductPanel.jsx"),
+        "missing JSX island example: {text}"
+    );
+}
+
 /// Expert Q&A group
 #[test]
 fn smoke_answer_pilcrow_question_returns_answer() {

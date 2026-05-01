@@ -743,6 +743,9 @@ impl PilcrowServer {
         if desc.contains("action") || desc.contains("form") || desc.contains("submit") || desc.contains("post") || desc.contains("creat") || desc.contains("updat") || desc.contains("delet") {
             matched.push(("named-actions", "form / action keywords"));
         }
+        if desc.contains("react") || desc.contains("jsx") || desc.contains("tsx") {
+            matched.push(("react-islands", "React island / JSX keywords"));
+        }
         if desc.contains("layout") || desc.contains("shared") || desc.contains("wrap") {
             matched.push(("layouts", "layout keywords"));
         }
@@ -755,7 +758,7 @@ impl PilcrowServer {
         if desc.contains("middleware") || desc.contains("auth") || desc.contains("session") || desc.contains("guard") {
             matched.push(("middleware", "middleware / auth keywords"));
         }
-        if desc.contains("hook") || desc.contains("global request") || desc.contains("before route") || desc.contains("startup init") {
+        if (desc.contains("hook") && !desc.contains("react")) || desc.contains("global request") || desc.contains("before route") || desc.contains("startup init") {
             matched.push(("server-hooks", "hook lifecycle keywords"));
         }
         if desc.contains("redirect") || desc.contains("navigate") || desc.contains("route") {
@@ -1163,7 +1166,15 @@ fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
     let has = |id: &str| ids.contains(&id);
 
     // Determine the primary pattern and produce the appropriate skeleton.
-    if has("incremental-ssr") && has("ssg") {
+    if has("react-islands") {
+        json!({
+            "toml": "// Pilcrow.toml\n[routing]\nignore_directories = [\"react\"]\n\n[client.react]\nenabled = true\ndirs = [\"react\"]",
+            "html": "<!-- pages/products/index.html -->\n<h1>{{ title }}</h1>\n<react src=\"./react/ProductPanel.jsx\" strategy=\"visible\" path=\"/products\" />",
+            "jsx": "import { Suspense, use, useMemo } from \"react\";\nimport { useSilcrowAtom, useSilcrowAction } from \"pilcrow/react\";\n\nfunction ProductRows({ promise }) {\n  const initial = use(promise);\n  const data = useSilcrowAtom(\"route:/products\", initial);\n  return <ul>{data.items.map((item) => <li key={item.id}>{item.name}</li>)}</ul>;\n}\n\nexport default function ProductPanel({ path = \"/products\" }) {\n  const promise = useMemo(() => window.Silcrow.prefetch(path), [path]);\n  const [state, createProduct, pending] = useSilcrowAction(\n    \"?/create\",\n    (result, prev) => result.data ?? prev,\n    { ok: true },\n    { scope: \"products:create\" },\n  );\n\n  return (\n    <section>\n      <Suspense fallback={<p>Loading products...</p>}>\n        <ProductRows promise={promise} />\n      </Suspense>\n      <form action={createProduct}>\n        <input name=\"name\" />\n        <button disabled={pending}>Add</button>\n        {state.message ? <p>{state.message}</p> : null}\n      </form>\n    </section>\n  );\n}",
+            "rs": "// pages/products/index.rs\nuse pilcrow_web::{form_errors, json, ActionResult, AppResult, Req};\n\npub struct Props { pub title: String }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { title: \"Products\".into() })\n}\n\npub async fn create(req: Req) -> ActionResult {\n    let name = req.form.get(\"name\").unwrap_or(\"\").trim();\n    if name.is_empty() {\n        return req.fail(form_errors().error(\"name\", \"Name is required\"));\n    }\n    req.res.invalidate_target(\"#products\");\n    json(serde_json::json!({ \"ok\": true, \"message\": \"Product created\" }))\n}",
+            "note": "React sources can be .jsx. TypeScript is optional. Server loading/actions stay in the containing page or fragment code-behind; React imports hooks from the generated pilcrow/react Vite alias.",
+        })
+    } else if has("incremental-ssr") && has("ssg") {
         // Combined PRERENDER + REVALIDATE
         json!({
             "rs": "// pages/products/index.rs\npub const PRERENDER: bool = true;\npub const REVALIDATE: u64 = 60;\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props { pub items: Vec<String> }\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props { items: vec![] })\n}",

@@ -176,8 +176,10 @@ pub fn build_react_assets(
     let react_root = out_dir.join("pilcrow_react");
     let entries_dir = react_root.join("entries");
     let dist_dir = react_root.join("dist");
+    let hooks_path = react_root.join("pilcrow_react_hooks.jsx");
     fs::create_dir_all(&entries_dir)?;
     fs::create_dir_all(&dist_dir)?;
+    fs::write(&hooks_path, render_hooks_module())?;
 
     let mut inputs = BTreeMap::new();
     for source in sources_by_id.values() {
@@ -190,7 +192,7 @@ pub fn build_react_assets(
     }
 
     let config_path = react_root.join("vite.config.mjs");
-    fs::write(&config_path, render_vite_config(&inputs, &dist_dir))?;
+    fs::write(&config_path, render_vite_config(&inputs, &dist_dir, &hooks_path))?;
     run_vite(manifest_dir, &config_path)?;
 
     let manifest_path = dist_dir.join(".vite/manifest.json");
@@ -333,8 +335,65 @@ window.__pilcrowReactMounts[{id_json}] = mount;
     )
 }
 
-fn render_vite_config(inputs: &BTreeMap<String, PathBuf>, dist_dir: &Path) -> String {
+fn render_hooks_module() -> &'static str {
+    r#"import { use, useActionState, useMemo, useSyncExternalStore } from "react";
+
+function silcrow() {
+  if (!window.Silcrow) {
+    throw new Error("Silcrow is not loaded. Include pilcrow_web::assets::assets::script_tag() in the page layout.");
+  }
+  return window.Silcrow;
+}
+
+export function silcrowRouteScope(path) {
+  try {
+    return `route:${new URL(path, window.location.origin).pathname}`;
+  } catch (_err) {
+    return `route:${path}`;
+  }
+}
+
+export function useSilcrowAtom(scope, initialValue) {
+  return useSyncExternalStore(
+    (notify) => window.Silcrow?.subscribe(scope, notify) ?? (() => {}),
+    () => window.Silcrow?.snapshot(scope) ?? initialValue,
+    () => window.Silcrow?.snapshot(scope) ?? initialValue,
+  );
+}
+
+export function publishSilcrowAtom(scope, data) {
+  window.Silcrow?.publish(scope, data);
+}
+
+export function useSilcrowPrefetch(path) {
+  return useMemo(() => silcrow().prefetch(path), [path]);
+}
+
+export function useSilcrowRoute(path, initialValue) {
+  const promise = useSilcrowPrefetch(path);
+  const initial = use(promise);
+  return useSilcrowAtom(silcrowRouteScope(path), initial ?? initialValue);
+}
+
+export function useSilcrowAction(url, reducer, initialState, options = {}) {
+  return useActionState(async (prev, body) => {
+    const result = await silcrow().submit(url, body, {
+      method: options.method ?? "POST",
+      scope: options.scope,
+    });
+    return reducer ? reducer(result, prev) : (result.data ?? prev);
+  }, initialState);
+}
+"#
+}
+
+fn render_vite_config(
+    inputs: &BTreeMap<String, PathBuf>,
+    dist_dir: &Path,
+    hooks_path: &Path,
+) -> String {
     let out = dist_dir.to_string_lossy().replace('\\', "/");
+    let hooks = hooks_path.to_string_lossy().replace('\\', "/");
     let input = inputs
         .iter()
         .map(|(id, path)| {
@@ -358,7 +417,8 @@ export default {{
     alias: [
       {{ find: /^react$/, replacement: require.resolve("react") }},
       {{ find: /^react-dom\/client$/, replacement: require.resolve("react-dom/client") }},
-      {{ find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") }}
+      {{ find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") }},
+      {{ find: /^pilcrow\/react$/, replacement: {} }}
     ]
   }},
   esbuild: {{ jsx: "automatic" }},
@@ -382,6 +442,7 @@ export default {{
   }}
 }};
 "#,
+        serde_json::to_string(&hooks).unwrap(),
         serde_json::to_string(&out).unwrap(),
         input
     )
@@ -814,5 +875,64 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("ignore_directories"));
+    }
+
+    #[test]
+    fn react_tag_accepts_jsx_source() {
+        let root = std::env::temp_dir().join("pilcrow_react_tag_jsx");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/pages/dashboard/react")).unwrap();
+        let page = root.join("src/pages/dashboard/index.html");
+        fs::write(
+            root.join("src/pages/dashboard/react/Counter.jsx"),
+            "export default function Counter() { return <button>Count</button> }",
+        )
+        .unwrap();
+
+        let (out, refs) = transpile_react_tags(
+            r#"<react src="./react/Counter.jsx" strategy="visible" />"#,
+            &page,
+            &root.join("src"),
+            &ReactBuildConfig {
+                enabled: true,
+                dirs: vec!["react".into()],
+                ..Default::default()
+            },
+            &RoutingConfig {
+                ignore_directories: vec!["react".into()],
+            },
+        )
+        .unwrap();
+
+        assert!(out.contains("data-pilcrow-react"));
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].source_path.ends_with("Counter.jsx"));
+    }
+
+    #[test]
+    fn vite_config_aliases_pilcrow_react_hooks() {
+        let mut inputs = BTreeMap::new();
+        inputs.insert("counter".to_string(), PathBuf::from("/tmp/counter.tsx"));
+
+        let config = render_vite_config(
+            &inputs,
+            Path::new("/tmp/dist"),
+            Path::new("/tmp/pilcrow_react_hooks.jsx"),
+        );
+
+        assert!(config.contains("find: /^pilcrow\\/react$/"));
+        assert!(config.contains(r#"replacement: "/tmp/pilcrow_react_hooks.jsx""#));
+        assert!(config.contains(r#"outDir: "/tmp/dist""#));
+    }
+
+    #[test]
+    fn react_hooks_module_exposes_hook_api() {
+        let hooks = render_hooks_module();
+
+        assert!(hooks.contains("export function useSilcrowAtom"));
+        assert!(hooks.contains("export function useSilcrowPrefetch"));
+        assert!(hooks.contains("export function useSilcrowRoute"));
+        assert!(hooks.contains("export function useSilcrowAction"));
+        assert!(hooks.contains("export function publishSilcrowAtom"));
     }
 }
