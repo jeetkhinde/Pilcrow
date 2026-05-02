@@ -44,31 +44,46 @@ impl PilcrowAdapter for TokioAdapter {
     fn serve(self, bind_addr: &str, app: Router) -> AdapterFuture {
         let bind_addr = bind_addr.to_string();
         Box::pin(async move {
-            let listener = tokio::net::TcpListener::bind(&bind_addr)
-                .await
-                .unwrap_or_else(|e| panic!("Failed to bind to {bind_addr}: {e}"));
+            let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
+                Ok(listener) => listener,
+                Err(err) => {
+                    tracing::error!(addr = %bind_addr, error = %err, "failed to bind server");
+                    eprintln!("pilcrow: failed to bind {bind_addr}: {err}");
+                    std::process::exit(1);
+                }
+            };
             tracing::info!("listening on http://{bind_addr}");
-            axum::serve(listener, app)
+            if let Err(err) = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
-                .expect("serve");
+            {
+                tracing::error!(error = %err, "server failed");
+                eprintln!("pilcrow: server failed: {err}");
+                std::process::exit(1);
+            }
         })
     }
 }
 
 pub(super) async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("install Ctrl+C handler");
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %err, "failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]
     let sigterm = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]

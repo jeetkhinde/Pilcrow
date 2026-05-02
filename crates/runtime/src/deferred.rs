@@ -3,11 +3,28 @@ use std::future::Future;
 use std::pin::Pin;
 
 use axum::body::Body;
+use axum::http::StatusCode;
 use axum::response::Response;
 use futures_core::Stream;
+use futures_util::stream::FuturesUnordered;
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+
+fn html_stream_response(body: Body) -> Response {
+    match axum::http::Response::builder()
+        .header("content-type", "text/html; charset=utf-8")
+        .body(body)
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to build deferred response");
+            let mut response = Response::new(Body::from("internal server error"));
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            response
+        }
+    }
+}
 
 // ── DeferredHtml ─────────────────────────────────────────────────────────────
 
@@ -74,7 +91,10 @@ impl DeferredHtml {
     ) {
         match self.inner {
             DeferredHtmlInner::Future(f) => (f, self.loading),
-            DeferredHtmlInner::Slot(_) => panic!("DeferredHtml::__into_parts called on a slot"),
+            DeferredHtmlInner::Slot(_) => {
+                tracing::error!("DeferredHtml::__into_parts called on a slot placeholder");
+                (Box::pin(async { String::new() }), self.loading)
+            }
         }
     }
 
@@ -128,15 +148,13 @@ pub struct DeferredHtmlPatch {
 pub fn __deferred_html_patch_stream(
     pairs: Vec<(&'static str, Pin<Box<dyn Future<Output = String> + Send>>)>,
 ) -> impl Stream<Item = DeferredHtmlPatch> + Send {
-    let (tx, rx) = mpsc::channel::<DeferredHtmlPatch>(pairs.len().max(1));
-    for (slot, fut) in pairs {
-        let tx = tx.clone();
-        tokio::spawn(async move {
+    pairs
+        .into_iter()
+        .map(|(slot, fut)| async move {
             let html = fut.await;
-            let _ = tx.send(DeferredHtmlPatch { slot, html }).await;
-        });
-    }
-    ReceiverStream::new(rx)
+            DeferredHtmlPatch { slot, html }
+        })
+        .collect::<FuturesUnordered<_>>()
 }
 
 /// Build a streaming `Response` for pages with both `Deferred<T>` (JSON) and `DeferredHtml` fields.
@@ -148,7 +166,7 @@ pub fn deferred_response_combined(
     json_patches: impl Stream<Item = DeferredPatch> + Send + 'static,
     html_patches: impl Stream<Item = DeferredHtmlPatch> + Send + 'static,
 ) -> Response {
-    use tokio_stream::StreamExt as _;
+    use futures_util::StreamExt as _;
 
     let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, std::convert::Infallible>>(8);
 
@@ -193,10 +211,7 @@ pub fn deferred_response_combined(
     let stream = ReceiverStream::new(rx);
     let body = Body::from_stream(stream);
 
-    axum::http::Response::builder()
-        .header("content-type", "text/html; charset=utf-8")
-        .body(body)
-        .expect("valid response")
+    html_stream_response(body)
 }
 
 /// A lazily-resolved value that the framework can stream to the client after the shell renders.
@@ -296,7 +311,7 @@ pub fn deferred_response(
     shell_html: String,
     patches: impl Stream<Item = DeferredPatch> + Send + 'static,
 ) -> Response {
-    use tokio_stream::StreamExt as _;
+    use futures_util::StreamExt as _;
 
     let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, std::convert::Infallible>>(8);
 
@@ -321,10 +336,7 @@ pub fn deferred_response(
     let stream = ReceiverStream::new(rx);
     let body = Body::from_stream(stream);
 
-    axum::http::Response::builder()
-        .header("content-type", "text/html; charset=utf-8")
-        .body(body)
-        .expect("valid response")
+    html_stream_response(body)
 }
 
 /// Serialize a resolved deferred value to JSON string, or `"null"` on error.
@@ -359,10 +371,7 @@ pub fn __streaming_props_response(
     let stream = ReceiverStream::new(rx);
     let body = Body::from_stream(stream);
 
-    axum::http::Response::builder()
-        .header("content-type", "text/html; charset=utf-8")
-        .body(body)
-        .expect("valid response")
+    html_stream_response(body)
 }
 
 /// Serialize page Props to a JSON object string for STREAMING patches.
@@ -380,13 +389,54 @@ pub fn __serialize_page_props<T: Serialize>(value: T) -> String {
 pub fn __deferred_patch_stream(
     pairs: Vec<(&'static str, Pin<Box<dyn Future<Output = String> + Send>>)>,
 ) -> impl Stream<Item = DeferredPatch> + Send {
-    let (tx, rx) = mpsc::channel::<DeferredPatch>(pairs.len().max(1));
-    for (field, fut) in pairs {
-        let tx = tx.clone();
-        tokio::spawn(async move {
+    pairs
+        .into_iter()
+        .map(|(field, fut)| async move {
             let json = fut.await;
-            let _ = tx.send(DeferredPatch { field, json }).await;
-        });
+            DeferredPatch { field, json }
+        })
+        .collect::<FuturesUnordered<_>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::task::{Context, Poll};
+
+    struct PendingUntilDropped {
+        dropped: Arc<AtomicBool>,
     }
-    ReceiverStream::new(rx)
+
+    impl Future for PendingUntilDropped {
+        type Output = String;
+
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PendingUntilDropped {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn dropping_deferred_patch_stream_drops_pending_future() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let stream = __deferred_patch_stream(vec![(
+            "count",
+            Box::pin(PendingUntilDropped {
+                dropped: Arc::clone(&dropped),
+            }),
+        )]);
+
+        drop(stream);
+
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 }

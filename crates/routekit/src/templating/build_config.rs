@@ -34,6 +34,8 @@ pub struct PilcrowBuildConfig {
 pub struct ClientBuildConfig {
     #[serde(default)]
     pub react: ReactBuildConfig,
+    #[serde(default)]
+    pub solid: SolidBuildConfig,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -55,6 +57,13 @@ pub struct ReactBuildConfig {
     pub warn: bool,
     #[serde(default)]
     pub fail_on_budget: bool,
+    /// Enable SSR strategies (`strategy="shell"` and `strategy="ssr"`).
+    /// Requires Node.js at build time (shell) and optionally at runtime (ssr).
+    #[serde(default)]
+    pub ssr: bool,
+    /// Path to the Node.js binary used for SSR rendering. Defaults to `"node"`.
+    #[serde(default = "default_node_bin")]
+    pub node_bin: String,
 }
 
 impl Default for ReactBuildConfig {
@@ -66,12 +75,56 @@ impl Default for ReactBuildConfig {
             max_page_react_kb: None,
             warn: false,
             fail_on_budget: false,
+            ssr: false,
+            node_bin: default_node_bin(),
         }
     }
 }
 
+fn default_node_bin() -> String {
+    "node".to_string()
+}
+
 fn default_react_dirs() -> Vec<String> {
     vec!["react".to_string()]
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SolidBuildConfig {
+    /// Enables the Solid island build when `<solid>` tags are present.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory names that may contain Solid source. These directories must also
+    /// be excluded with `[routing].ignore_directories`.
+    #[serde(default = "default_solid_dirs")]
+    pub dirs: Vec<String>,
+    /// Warn when a single generated island entry exceeds this approximate size.
+    #[serde(default)]
+    pub max_island_kb: Option<u64>,
+    /// Warn when all Solid JS for one build exceeds this approximate size.
+    #[serde(default)]
+    pub max_page_solid_kb: Option<u64>,
+    #[serde(default)]
+    pub warn: bool,
+    #[serde(default)]
+    pub fail_on_budget: bool,
+}
+
+impl Default for SolidBuildConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dirs: default_solid_dirs(),
+            max_island_kb: None,
+            max_page_solid_kb: None,
+            warn: false,
+            fail_on_budget: false,
+        }
+    }
+}
+
+fn default_solid_dirs() -> Vec<String> {
+    vec!["solid".to_string()]
 }
 
 /// Build-time i18n configuration. Mirrors `I18nConfig` in `pilcrow-core`.

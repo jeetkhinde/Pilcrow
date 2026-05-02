@@ -166,7 +166,7 @@ pub fn scan_project(
     manifest_path: Option<&str>,
 ) -> Result<ProjectContext> {
     let resolved = resolve_project(current_root, project_root, manifest_path)?;
-    let app_src = &resolved.app_root;
+    let app_src = app_source_root(&resolved.app_root);
     let pages = app_src.join("pages");
 
     let pilcrow_toml_path = resolved.app_root.join("Pilcrow.toml");
@@ -198,7 +198,13 @@ pub fn scan_project(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let middleware_path = app_src.join("hooks.rs");
+    let hooks_path = resolved.app_root.join("hooks.rs");
+    let legacy_middleware_path = app_src.join("middleware.rs");
+    let middleware_path = if hooks_path.exists() {
+        hooks_path
+    } else {
+        legacy_middleware_path
+    };
     let middleware = if middleware_path.exists() {
         Some(file_info(&resolved.app_root, &middleware_path)?)
     } else {
@@ -244,6 +250,18 @@ pub fn scan_project(
         has_not_found_fallback,
         has_global_error,
     })
+}
+
+fn app_source_root(app_root: &Path) -> PathBuf {
+    if app_root.join("pages").exists()
+        || app_root.join("ui").exists()
+        || app_root.join("api").exists()
+        || app_root.join("params").exists()
+    {
+        app_root.to_path_buf()
+    } else {
+        app_root.join("src")
+    }
 }
 
 fn build_route_graph(pages_root: &Path, route_files: &[FileInfo]) -> Vec<RouteNode> {
@@ -490,7 +508,9 @@ fn is_action_fn(f: &syn::ItemFn) -> bool {
         type_contains_name(&arg.ty, "Req")
     });
     let returns_action = match &f.sig.output {
-        ReturnType::Type(_, ty) => type_contains_name(ty, "ActionResult") || type_contains_name(ty, "Result"),
+        ReturnType::Type(_, ty) => {
+            type_contains_name(ty, "ActionResult") || type_contains_name(ty, "Result")
+        }
         ReturnType::Default => false,
     };
     has_req && returns_action
@@ -555,7 +575,11 @@ fn type_contains_name(ty: &Type, expected: &str) -> bool {
 
 fn type_last_ident(ty: &Type) -> Option<String> {
     match ty {
-        Type::Path(path) => path.path.segments.last().map(|segment| segment.ident.to_string()),
+        Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string()),
         Type::Reference(reference) => type_last_ident(&reference.elem),
         _ => None,
     }
@@ -643,14 +667,21 @@ fn out_dir_status(manifest_path: &Path) -> Result<OutDirStatus> {
 
 fn crate_versions(project_root: &Path, app_manifest: &Path) -> Result<BTreeMap<String, String>> {
     let mut versions = BTreeMap::new();
+    let framework_root = if project_root.join("crates/web/Cargo.toml").exists() {
+        project_root.to_path_buf()
+    } else if project_root.join("pilcrow/crates/web/Cargo.toml").exists() {
+        project_root.join("pilcrow")
+    } else {
+        project_root.to_path_buf()
+    };
     for manifest in [
         app_manifest.to_path_buf(),
-        project_root.join("crates/web/Cargo.toml"),
-        project_root.join("crates/routekit/Cargo.toml"),
-        project_root.join("crates/runtime/Cargo.toml"),
-        project_root.join("crates/core/Cargo.toml"),
-        project_root.join("crates/client/Cargo.toml"),
-        project_root.join("crates/macros/Cargo.toml"),
+        framework_root.join("crates/web/Cargo.toml"),
+        framework_root.join("crates/routekit/Cargo.toml"),
+        framework_root.join("crates/runtime/Cargo.toml"),
+        framework_root.join("crates/core/Cargo.toml"),
+        framework_root.join("crates/client/Cargo.toml"),
+        framework_root.join("crates/macros/Cargo.toml"),
     ] {
         if let Ok(source) = fs::read_to_string(&manifest) {
             if let Ok(value) = toml::from_str::<toml::Value>(&source) {
@@ -786,9 +817,8 @@ fn existing_ancestor(path: &Path) -> &Path {
 mod tests {
     use super::*;
 
-    #[test]
-    fn default_scan_finds_sandbox_routes_and_versions() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    fn sandbox_workspace_root() -> PathBuf {
+        let pilcrow_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
@@ -796,6 +826,20 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf();
+        let integration_root = pilcrow_root
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("workspaces/pilcrow-silcrow");
+        if integration_root.join("sandbox/Cargo.toml").exists() {
+            integration_root
+        } else {
+            pilcrow_root
+        }
+    }
+
+    #[test]
+    fn default_scan_finds_sandbox_routes_and_versions() {
+        let root = sandbox_workspace_root();
         let context = scan_project(&root, None, None).unwrap();
         assert!(context.crate_versions.contains_key("pilcrow-web"));
         assert!(context
@@ -834,7 +878,10 @@ mod tests {
 
     #[test]
     fn derive_url_pattern_typed_constraint() {
-        assert_eq!(derive_url_pattern("products/[id:int].html"), "/products/:id");
+        assert_eq!(
+            derive_url_pattern("products/[id:int].html"),
+            "/products/:id"
+        );
     }
 
     #[test]
@@ -849,21 +896,18 @@ mod tests {
 
     #[test]
     fn route_graph_includes_url_patterns() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        let root = sandbox_workspace_root();
         let context = scan_project(&root, None, None).unwrap();
         let patterns: Vec<&str> = context
             .route_graph
             .iter()
             .map(|n| n.url_pattern.as_str())
             .collect();
-        assert!(patterns.contains(&"/"), "expected / route, got {:?}", patterns);
+        assert!(
+            patterns.contains(&"/"),
+            "expected / route, got {:?}",
+            patterns
+        );
     }
 
     #[test]

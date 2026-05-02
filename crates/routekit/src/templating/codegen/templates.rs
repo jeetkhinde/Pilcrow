@@ -67,6 +67,7 @@ pub fn render_generated_templates_module(
             &entry.template_source,
             &entry.source_path,
             &extra_fields,
+            entry.fragment_url_prefix.is_some(),
         )?;
         if instrumented
             .load_signature

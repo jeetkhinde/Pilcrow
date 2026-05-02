@@ -1,17 +1,17 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::HeaderMap;
 use axum_extra::extract::CookieJar;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::context::FormMap;
 
 // ── Cache entry ───────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct CacheEntry {
     /// The cache key this entry belongs to (stored for filesystem round-trips).
     key: String,
@@ -80,12 +80,6 @@ pub struct CacheEntrySnapshot {
 
 // ── IsrCache ──────────────────────────────────────────────────
 
-struct IsrInner {
-    map: HashMap<String, CacheEntry>,
-    /// When set, entries are persisted to this directory as JSON files.
-    persist_dir: Option<PathBuf>,
-}
-
 /// In-process ISR cache backed by a `HashMap<String, CacheEntry>`.
 ///
 /// This is the default (`provider = "memory"`) backend. It is single-node and
@@ -95,20 +89,18 @@ struct IsrInner {
 ///
 /// `IsrCache` is `Clone` — cloning shares the same underlying storage.
 #[derive(Clone, Default)]
-pub struct IsrCache(Arc<Mutex<IsrInner>>);
-
-impl Default for IsrInner {
-    fn default() -> Self {
-        Self {
-            map: HashMap::new(),
-            persist_dir: None,
-        }
-    }
+pub struct IsrCache {
+    map: Arc<DashMap<String, CacheEntry>>,
+    /// When set, entries are persisted to this directory as JSON files.
+    persist_dir: Option<Arc<PathBuf>>,
 }
 
 impl IsrCache {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            map: Arc::new(DashMap::new()),
+            persist_dir: None,
+        }
     }
 
     /// Create a cache that persists entries as JSON files in `dir`.
@@ -125,9 +117,15 @@ impl IsrCache {
     /// ```
     pub fn with_persistence(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref().to_path_buf();
-        let _ = std::fs::create_dir_all(&dir);
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tracing::error!(
+                path = %dir.display(),
+                error = %err,
+                "failed to create ISR cache directory"
+            );
+        }
 
-        let mut map = HashMap::new();
+        let map = DashMap::new();
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -141,16 +139,15 @@ impl IsrCache {
             }
         }
 
-        Self(Arc::new(Mutex::new(IsrInner {
-            map,
-            persist_dir: Some(dir),
-        })))
+        Self {
+            map: Arc::new(map),
+            persist_dir: Some(Arc::new(dir)),
+        }
     }
 
     /// Check the cache state for a given key.
     pub async fn check(&self, key: &str, max_stale: Option<u64>) -> IsrCacheState {
-        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        match inner.map.get(key) {
+        match self.map.get(key) {
             None => IsrCacheState::Miss,
             Some(entry) => {
                 if entry.is_fresh() {
@@ -173,10 +170,9 @@ impl IsrCache {
     /// Returns `false` if another concurrent request has already claimed it
     /// (thundering-herd coalescing).
     pub async fn begin_revalidation(&self, key: &str) -> bool {
-        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        match inner.map.get_mut(key) {
+        match self.map.get_mut(key) {
             None => true,
-            Some(entry) => {
+            Some(mut entry) => {
                 if entry.revalidating {
                     false
                 } else {
@@ -189,70 +185,60 @@ impl IsrCache {
 
     /// Clear the `revalidating` flag. Always called at the end of a revalidation task.
     pub async fn end_revalidation(&self, key: &str) {
-        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = inner.map.get_mut(key) {
+        if let Some(mut entry) = self.map.get_mut(key) {
             entry.revalidating = false;
         }
     }
 
     /// Write a rendered HTML string to the cache with the given TTL and tags.
     pub async fn store(&self, key: &str, html: String, ttl_secs: u64, tags: Vec<String>) {
-        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let entry = CacheEntry::new(key.to_string(), html, ttl_secs, tags);
-        if let Some(dir) = &inner.persist_dir {
-            let filename = format!("{:016x}.json", crc32fast::hash(key.as_bytes()));
-            let path = dir.join(filename);
-            if let Ok(json) = serde_json::to_string(&entry) {
-                let _ = std::fs::write(path, json);
+        if let Some(dir) = &self.persist_dir {
+            if let Err(err) = persist_entry(dir, key, &entry).await {
+                tracing::error!(
+                    key,
+                    path = %dir.display(),
+                    error = %err,
+                    "failed to persist ISR cache entry"
+                );
             }
         }
-        inner.map.insert(key.to_string(), entry);
+        self.map.insert(key.to_string(), entry);
     }
 
     /// Remove all cache entries whose key starts with `path`.
     pub fn invalidate_path(&self, path: &str) {
-        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let persist_dir = inner.persist_dir.clone();
-        inner.map.retain(|k, entry| {
-            if k.starts_with(path) {
-                if let Some(dir) = &persist_dir {
-                    let filename = format!("{:016x}.json", crc32fast::hash(k.as_bytes()));
-                    let _ = std::fs::remove_file(dir.join(filename));
-                }
-                false
-            } else {
-                let _ = entry; // suppress unused variable warning
-                true
-            }
-        });
+        let keys = self
+            .map
+            .iter()
+            .filter_map(|entry| entry.key().starts_with(path).then(|| entry.key().clone()))
+            .collect::<Vec<_>>();
+        self.remove_keys(keys);
     }
 
     /// Remove all cache entries that carry the given tag.
     pub fn invalidate_tag(&self, tag: &str) {
-        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let persist_dir = inner.persist_dir.clone();
-        inner.map.retain(|k, entry| {
-            if entry.tags.iter().any(|t| t == tag) {
-                if let Some(dir) = &persist_dir {
-                    let filename = format!("{:016x}.json", crc32fast::hash(k.as_bytes()));
-                    let _ = std::fs::remove_file(dir.join(filename));
-                }
-                false
-            } else {
-                true
-            }
-        });
+        let keys = self
+            .map
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .tags
+                    .iter()
+                    .any(|candidate| candidate == tag)
+                    .then(|| entry.key().clone())
+            })
+            .collect::<Vec<_>>();
+        self.remove_keys(keys);
     }
 
     /// Return all cached entries as `(key, html)` pairs for static file export.
     ///
     /// Used by [`pilcrow_web::export`] to write static HTML files to disk.
     pub fn export_entries(&self) -> Vec<(String, String)> {
-        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        inner
-            .map
-            .values()
-            .map(|e| (e.key.clone(), e.html.clone()))
+        self.map
+            .iter()
+            .map(|entry| (entry.key.clone(), entry.html.clone()))
             .collect()
     }
 
@@ -260,20 +246,61 @@ impl IsrCache {
     ///
     /// Used by the `GET /__pilcrow/isr` dev endpoint.
     pub fn snapshot(&self) -> Vec<CacheEntrySnapshot> {
-        let inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        inner
-            .map
-            .values()
-            .map(|e| CacheEntrySnapshot {
-                key: e.key.clone(),
-                age_secs: e.age_secs(),
-                ttl_secs: e.ttl_secs,
-                is_fresh: e.is_fresh(),
-                revalidating: e.revalidating,
-                tags: e.tags.clone(),
+        self.map
+            .iter()
+            .map(|entry| CacheEntrySnapshot {
+                key: entry.key.clone(),
+                age_secs: entry.age_secs(),
+                ttl_secs: entry.ttl_secs,
+                is_fresh: entry.is_fresh(),
+                revalidating: entry.revalidating,
+                tags: entry.tags.clone(),
             })
             .collect()
     }
+
+    fn remove_keys(&self, keys: Vec<String>) {
+        for key in keys {
+            self.map.remove(&key);
+            if let Some(dir) = &self.persist_dir {
+                let path = cache_file_path(dir, &key);
+                if let Err(err) = std::fs::remove_file(&path) {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        tracing::error!(
+                            key,
+                            path = %path.display(),
+                            error = %err,
+                            "failed to remove ISR cache entry"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn persist_entry(dir: &Path, key: &str, entry: &CacheEntry) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(dir).await?;
+    let path = cache_file_path(dir, key);
+    let tmp_path = path.with_extension(format!(
+        "json.tmp.{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let json = serde_json::to_vec(entry).map_err(std::io::Error::other)?;
+    tokio::fs::write(&tmp_path, json).await?;
+    tokio::fs::rename(&tmp_path, &path).await.or_else(|err| {
+        let _ = std::fs::remove_file(&tmp_path);
+        Err(err)
+    })?;
+    Ok(())
+}
+
+fn cache_file_path(dir: &Path, key: &str) -> PathBuf {
+    let filename = format!("{:016x}.json", crc32fast::hash(key.as_bytes()));
+    dir.join(filename)
 }
 
 // ── IsrHandle ─────────────────────────────────────────────────

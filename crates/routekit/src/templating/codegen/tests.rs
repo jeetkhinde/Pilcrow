@@ -557,7 +557,9 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             &HashMap::new(),
             HookFlags::default(),
             false,
-        );
+            false,
+        )
+        .expect("streaming app module should render");
 
         // Must spawn page load in background.
         assert!(
@@ -581,6 +583,70 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             source.contains("__resp_handle.apply_to"),
             "must apply response handle"
         );
+    }
+
+    #[test]
+    fn render_generated_app_module_reports_invalid_streaming_config() {
+        let page_route = GeneratedPageRoute {
+            pattern: "/products".to_string(),
+            template_path: "/tmp/src/pages/products.html".to_string(),
+            symbol: "page_products".to_string(),
+            render_symbol: "render_page_products".to_string(),
+            route_params: vec![],
+            param_matchers: HashMap::new(),
+        };
+        let load_sig = LoadSignature {
+            is_async: true,
+            returns_result: true,
+            wants_client: false,
+            wants_req: true,
+            wants_page: false,
+        };
+        let mut load_map: HashMap<String, Option<LoadSignature>> = HashMap::new();
+        load_map.insert("page_products".to_string(), Some(load_sig));
+
+        let mut page_opts: HashMap<String, PageOptions> = HashMap::new();
+        page_opts.insert(
+            "page_products".to_string(),
+            PageOptions {
+                streaming: true,
+                ..Default::default()
+            },
+        );
+        let mut isr_opts: HashMap<String, IsrOpts> = HashMap::new();
+        isr_opts.insert(
+            "page_products".to_string(),
+            IsrOpts {
+                revalidate: Some(60),
+                ..Default::default()
+            },
+        );
+
+        let err = render_generated_app_module(
+            &[page_route],
+            &[],
+            &load_map,
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            &page_opts,
+            &HashMap::new(),
+            &HashMap::new(),
+            &isr_opts,
+            &HashMap::new(),
+            HookFlags::default(),
+            false,
+            false,
+        )
+        .expect_err("invalid streaming + ISR config should be reported");
+
+        let message = err.to_string();
+        assert!(message.contains("invalid Pilcrow route configuration"));
+        assert!(message.contains("route: /products"));
+        assert!(message.contains("STREAMING = true is incompatible with REVALIDATE"));
+        assert!(message.contains("suggested fix:"));
     }
 
     #[test]

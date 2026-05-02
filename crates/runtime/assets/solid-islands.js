@@ -1,8 +1,8 @@
 (function () {
   "use strict";
 
-  if (window.PilcrowReact && window.PilcrowReact.scan) {
-    window.PilcrowReact.scan(document);
+  if (window.PilcrowSolid && window.PilcrowSolid.scan) {
+    window.PilcrowSolid.scan(document);
     return;
   }
 
@@ -17,24 +17,9 @@
   function readProps(el) {
     const props = {};
     for (const attr of Array.from(el.attributes)) {
-      if (attr.name.startsWith("data-prop-json-")) {
-        const name = camel(attr.name.slice("data-prop-json-".length));
-        try {
-          props[name] = JSON.parse(attr.value);
-        } catch (err) {
-          console.warn("[pilcrow-react] invalid JSON prop", name, err);
-          props[name] = null;
-        }
-        continue;
-      }
-      if (attr.name.startsWith("data-prop-")) {
-        props[camel(attr.name.slice("data-prop-".length))] = attr.value;
-      }
+      if (!attr.name.startsWith("data-prop-")) continue;
+      props[camel(attr.name.slice("data-prop-".length))] = attr.value;
     }
-    props.__pilcrowActionBase =
-      el.getAttribute("data-pilcrow-action-base") ||
-      props.__pilcrowActionBase ||
-      window.location.pathname;
     return props;
   }
 
@@ -59,16 +44,16 @@
     try {
       const mod = await import(src);
       const id = el.getAttribute("data-id");
-      const registered = id && window.__pilcrowReactMounts && window.__pilcrowReactMounts[id];
+      const registered = id && window.__pilcrowSolidMounts && window.__pilcrowSolidMounts[id];
       const mountFn = typeof mod.mount === "function" ? mod.mount : registered;
       if (typeof mountFn === "function") {
         mountFn(el, readProps(el));
       } else {
-        console.warn("[pilcrow-react] module has no mount() export", src);
+        console.warn("[pilcrow-solid] module has no mount() export", src);
       }
     } catch (err) {
       mounted.delete(el);
-      console.error("[pilcrow-react] failed to mount", src, err);
+      console.error("[pilcrow-solid] failed to mount", src, err);
     }
   }
 
@@ -76,8 +61,7 @@
     if (!el || scheduled.has(el)) return;
     scheduled.add(el);
     const strategy = el.getAttribute("data-strategy") || "visible";
-    if (strategy === "load" || strategy === "shell" || strategy === "ssr") {
-      // shell/ssr: server-rendered HTML already present, hydrate immediately
+    if (strategy === "load") {
       mount(el);
       return;
     }
@@ -100,15 +84,15 @@
 
   function scan(root) {
     const base = root && root.querySelectorAll ? root : document;
-    if (base.matches && base.matches("[data-pilcrow-react]")) {
+    if (base.matches && base.matches("[data-pilcrow-solid]")) {
       schedule(base);
     }
-    base.querySelectorAll("[data-pilcrow-react]").forEach(schedule);
+    base.querySelectorAll("[data-pilcrow-solid]").forEach(schedule);
   }
 
-  window.PilcrowReact = {scan};
+  window.PilcrowSolid = { scan };
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => scan(document), {once: true});
+    document.addEventListener("DOMContentLoaded", () => scan(document), { once: true });
   } else {
     scan(document);
   }

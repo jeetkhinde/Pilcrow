@@ -42,49 +42,54 @@ pub struct LambdaAdapter;
 impl PilcrowAdapter for LambdaAdapter {
     fn serve(self, _bind_addr: &str, app: Router) -> AdapterFuture {
         Box::pin(async move {
-            lambda_http::run(lambda_http::service_fn(move |req: lambda_http::Request| {
-                let app = app.clone();
-                async move {
-                    let (parts, lambda_body) = req.into_parts();
-                    let body_bytes: Bytes = match lambda_body {
-                        LambdaBody::Empty => Bytes::new(),
-                        LambdaBody::Text(s) => Bytes::from(s.into_bytes()),
-                        LambdaBody::Binary(b) => Bytes::from(b),
-                    };
-                    let http_req = http::Request::from_parts(parts, AxumBody::from(body_bytes));
+            if let Err(err) =
+                lambda_http::run(lambda_http::service_fn(move |req: lambda_http::Request| {
+                    let app = app.clone();
+                    async move {
+                        let (parts, lambda_body) = req.into_parts();
+                        let body_bytes: Bytes = match lambda_body {
+                            LambdaBody::Empty => Bytes::new(),
+                            LambdaBody::Text(s) => Bytes::from(s.into_bytes()),
+                            LambdaBody::Binary(b) => Bytes::from(b),
+                        };
+                        let http_req = http::Request::from_parts(parts, AxumBody::from(body_bytes));
 
-                    let resp = app
-                        .oneshot(http_req)
-                        .await
-                        .map_err(|e| -> lambda_http::Error {
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })?;
+                        let resp =
+                            app.oneshot(http_req)
+                                .await
+                                .map_err(|e| -> lambda_http::Error {
+                                    Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        e.to_string(),
+                                    ))
+                                })?;
 
-                    let (resp_parts, resp_body) = resp.into_parts();
-                    let resp_bytes = resp_body
-                        .collect()
-                        .await
-                        .map_err(|e| -> lambda_http::Error {
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })?
-                        .to_bytes();
+                        let (resp_parts, resp_body) = resp.into_parts();
+                        let resp_bytes = resp_body
+                            .collect()
+                            .await
+                            .map_err(|e| -> lambda_http::Error {
+                                Box::new(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    e.to_string(),
+                                ))
+                            })?
+                            .to_bytes();
 
-                    Ok::<lambda_http::Response<LambdaBody>, lambda_http::Error>(
-                        lambda_http::Response::from_parts(
-                            resp_parts,
-                            LambdaBody::from(resp_bytes.to_vec()),
-                        ),
-                    )
-                }
-            }))
-            .await
-            .expect("lambda runtime error");
+                        Ok::<lambda_http::Response<LambdaBody>, lambda_http::Error>(
+                            lambda_http::Response::from_parts(
+                                resp_parts,
+                                LambdaBody::from(resp_bytes.to_vec()),
+                            ),
+                        )
+                    }
+                }))
+                .await
+            {
+                tracing::error!(error = %err, "lambda runtime failed");
+                eprintln!("pilcrow: lambda runtime failed: {err}");
+                std::process::exit(1);
+            }
         })
     }
 }

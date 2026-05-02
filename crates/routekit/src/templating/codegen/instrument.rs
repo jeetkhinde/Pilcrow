@@ -9,6 +9,7 @@ pub fn instrument_frontmatter(
     template_source: &str,
     source_path: &str,
     extra_fields: &[syn::Field],
+    is_fragment: bool,
 ) -> io::Result<InstrumentedFrontmatter> {
     let mut file = syn::parse_file(rust_frontmatter).map_err(|err| {
         io::Error::new(
@@ -125,6 +126,12 @@ pub fn instrument_frontmatter(
     // key (`?/<name>`). `load` is excluded — it is the GET handler.
     let in_pages = source_path.contains("/pages/");
     let in_ui = source_path.contains("/ui/");
+    let is_layout = source_path
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.split('.').next())
+        .is_some_and(|name| name == "_layout");
+    let can_own_actions = in_pages || is_fragment;
     let mut actions: Vec<ActionFn> = Vec::new();
 
     for item in &file.items {
@@ -171,10 +178,19 @@ pub fn instrument_frontmatter(
                 ),
             ));
         }
+        if is_layout {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "action handler `{name}` is not allowed in `{source_path}`; \
+                     layouts cannot handle form actions — move it to a page or fragment."
+                ),
+            ));
+        }
 
         // Layouts do not own actions. Skip silently so users can still define
         // helper fns there if their signature happens to match.
-        if !in_pages {
+        if !can_own_actions {
             continue;
         }
 
@@ -183,7 +199,7 @@ pub fn instrument_frontmatter(
                 io::ErrorKind::InvalidData,
                 format!(
                     "action `{name}` in `{source_path}` must be declared `async`.\n\
-                     Required signature: pub async fn {name}(req: Req) -> ActionResult"
+                         Required signature: pub async fn {name}(req: Req) -> ActionResult"
                 ),
             ));
         }
@@ -221,7 +237,7 @@ pub fn instrument_frontmatter(
     // Pages and layouts must use a canonical load() signature so that
     // response modifiers (toasts, headers, cookies) are always applied.
     if let Some(ref sig) = load_signature {
-        if source_path.contains("/pages/") {
+        if source_path.contains("/pages/") || is_fragment {
             if !sig.is_async {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

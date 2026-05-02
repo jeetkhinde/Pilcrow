@@ -33,14 +33,23 @@ impl PilcrowAdapter for PortEnvAdapter {
             Err(_) => bind_addr.to_string(),
         };
         Box::pin(async move {
-            let listener = tokio::net::TcpListener::bind(&addr)
-                .await
-                .unwrap_or_else(|e| panic!("Failed to bind to {addr}: {e}"));
+            let listener = match tokio::net::TcpListener::bind(&addr).await {
+                Ok(listener) => listener,
+                Err(err) => {
+                    tracing::error!(addr = %addr, error = %err, "failed to bind server");
+                    eprintln!("pilcrow: failed to bind {addr}: {err}");
+                    std::process::exit(1);
+                }
+            };
             tracing::info!("listening on http://{addr}");
-            axum::serve(listener, app)
+            if let Err(err) = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await
-                .expect("serve");
+            {
+                tracing::error!(error = %err, "server failed");
+                eprintln!("pilcrow: server failed: {err}");
+                std::process::exit(1);
+            }
         })
     }
 }

@@ -126,6 +126,10 @@ fn explain_feature_fragment_returns_stable_spec() {
     );
     assert!(!explanation.evidence.is_empty(), "explain should return evidence");
     assert!(
+        explanation.feature.spec.contains("named actions"),
+        "fragment spec should mention named action support"
+    );
+    assert!(
         explanation.silcrow_boundary.is_none(),
         "fragments have no Silcrow boundary note"
     );

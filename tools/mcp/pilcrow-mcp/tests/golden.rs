@@ -324,6 +324,22 @@ fn invalid_action_wrong_return_type_warns() {
 }
 
 #[test]
+fn valid_action_in_fragment_accepted() {
+    let code = "pub async fn refresh(req: Req) -> ActionResult { redirect(\"/\") }";
+    let report = validate_implementation(code, Some("src/widgets/user-card.rs"), None);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.rule_id != "pilcrow-component-no-actions"
+                && f.rule_id != "pilcrow-layout-no-actions"
+                && f.rule_id != "pilcrow-action-return"),
+        "fragment action should be accepted; findings: {:?}",
+        report.findings
+    );
+}
+
+#[test]
 fn invalid_action_in_layout_rejected() {
     let code = "pub async fn save(req: Req) -> ActionResult { redirect(\"/\") }";
     let report = validate_implementation(code, Some("src/pages/_layout.rs"), None);

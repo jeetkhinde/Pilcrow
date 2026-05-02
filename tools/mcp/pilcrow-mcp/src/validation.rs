@@ -64,7 +64,14 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
         let lnum = idx + 1;
         let line_lower = line.to_ascii_lowercase();
 
-        for directive in ["s-boost", "s-target", "s-swap", "s-trigger", "client:", "<Island"] {
+        for directive in [
+            "s-boost",
+            "s-target",
+            "s-swap",
+            "s-trigger",
+            "client:",
+            "<Island",
+        ] {
             if line.contains(directive) {
                 findings.push(finding_with_line(
                     Severity::Error,
@@ -124,26 +131,13 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
             }
         }
 
-        // Detect PRERENDER combined with REVALIDATE in the same file (mutually exclusive at build time).
-        if line.contains("PRERENDER") && line.contains("const") && code.contains("REVALIDATE") {
-            findings.push(finding_with_line(
-                Severity::Error,
-                "pilcrow-ssg-isr-conflict",
-                "PRERENDER and REVALIDATE are mutually exclusive — the build will panic if both are declared.".to_string(),
-                path,
-                Some(lnum),
-                Some("registry.toml: feature ssg"),
-                Some("Use PRERENDER for full SSG prerendering, or REVALIDATE for stale-while-revalidate ISR. Not both."),
-            ));
-        }
-
         // STREAMING conflicts: detect incompatible const combinations at build time.
         if line.contains("STREAMING") && line.contains("const") {
             if code.contains("REVALIDATE") {
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-streaming-isr-conflict",
-                    "STREAMING = true is incompatible with REVALIDATE — the build will panic.".to_string(),
+                    "STREAMING = true is incompatible with REVALIDATE — routekit reports this as a structured build error.".to_string(),
                     path,
                     Some(lnum),
                     Some("registry.toml: feature SSR Streaming"),
@@ -154,7 +148,7 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-streaming-ssg-conflict",
-                    "STREAMING = true is incompatible with PRERENDER = true — the build will panic.".to_string(),
+                    "STREAMING = true is incompatible with PRERENDER = true — routekit reports this as a structured build error.".to_string(),
                     path,
                     Some(lnum),
                     Some("registry.toml: feature SSR Streaming"),
@@ -214,7 +208,9 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
     };
 
     let is_layout = path.map(|p| p.contains("_layout")).unwrap_or(false);
-    let is_ui_component = path.map(|p| p.contains("/ui/") || p.contains("\\ui\\")).unwrap_or(false);
+    let is_ui_component = path
+        .map(|p| p.contains("/ui/") || p.contains("\\ui\\"))
+        .unwrap_or(false);
 
     for item in &parsed.items {
         match item {
@@ -265,16 +261,16 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                             format!("Layouts cannot define named action `{name}`. Only load() is permitted in layout code-behind."),
                             path,
                             Some("crates/routekit/src/templating/codegen/instrument.rs"),
-                            Some("Remove the action fn from _layout.rs. Move it to the page code-behind instead."),
+                            Some("Remove the action fn from _layout.rs. Move it to the page or fragment code-behind instead."),
                         ));
                     } else if is_ui_component {
                         findings.push(finding(
                             Severity::Error,
                             "pilcrow-component-no-actions",
-                            format!("UI components cannot define named action `{name}`. Actions belong in page code-behind files."),
+                            format!("UI components cannot define named action `{name}`. Actions belong in page or fragment code-behind files."),
                             path,
                             Some("crates/routekit/src/templating/codegen/instrument.rs"),
-                            Some("Move the action to the page .rs file that uses this component."),
+                            Some("Move the action to the page or fragment .rs file that uses this component."),
                         ));
                     } else if !returns_named_type(&function.sig.output, "ActionResult") {
                         findings.push(finding(
@@ -284,7 +280,7 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                             path,
                             Some("crates/routekit/src/templating/codegen/instrument.rs"),
                             Some(
-                                "Named page actions should use `pub async fn name(req: Req) -> ActionResult`.",
+                                "Named page/fragment actions should use `pub async fn name(req: Req) -> ActionResult`.",
                             ),
                         ));
                     }
@@ -389,7 +385,13 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
 
         // Old PascalCase <Island> and client: directives were the planned (never-shipped) API.
         // The stable API is lowercase <island src="..." strategy="...">.
-        for directive in ["<Island", "client:load", "client:idle", "client:visible", "s-island"] {
+        for directive in [
+            "<Island",
+            "client:load",
+            "client:idle",
+            "client:visible",
+            "s-island",
+        ] {
             if line.contains(directive) {
                 findings.push(finding_with_line(
                     Severity::Error,
@@ -408,7 +410,8 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
                 findings.push(finding_with_line(
                     Severity::Error,
                     "pilcrow-react-missing-src",
-                    "`<react>` requires a static src attribute pointing at a React component.".to_string(),
+                    "`<react>` requires a static src attribute pointing at a React component."
+                        .to_string(),
                     path,
                     Some(lnum),
                     Some("registry.toml: feature react-islands (stable)"),
@@ -452,7 +455,8 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
                 Some("Add pub const PRERENDER: bool = true; in your paired .rs file instead."),
             ));
         }
-        if line.contains("REVALIDATE") || line.contains("CACHE_TAGS") || line.contains("CACHE_VARY") {
+        if line.contains("REVALIDATE") || line.contains("CACHE_TAGS") || line.contains("CACHE_VARY")
+        {
             findings.push(finding_with_line(
                 Severity::Warning,
                 "pilcrow-isr-const-in-html",
@@ -534,7 +538,9 @@ fn extract_action_name(line: &str) -> Option<String> {
     // Match ?/name in action= or s-post=
     let pos = line.find("?/")?;
     let rest = &line[pos + 2..];
-    let end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(rest.len());
     Some(rest[..end].to_string())
 }
 
@@ -695,7 +701,8 @@ mod tests {
         assert!(report
             .findings
             .iter()
-            .any(|f| f.rule_id == "pilcrow-layout-no-actions" || f.rule_id == "pilcrow-action-return"));
+            .any(|f| f.rule_id == "pilcrow-layout-no-actions"
+                || f.rule_id == "pilcrow-action-return"));
     }
 
     #[test]
@@ -705,7 +712,10 @@ mod tests {
             Some("pages/index.rs"),
             None,
         );
-        let async_finding = report.findings.iter().find(|f| f.rule_id == "pilcrow-load-async");
+        let async_finding = report
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "pilcrow-load-async");
         assert!(async_finding.is_some());
         assert!(async_finding.unwrap().source_ref.is_some());
     }
@@ -730,8 +740,12 @@ mod tests {
             None,
         );
         assert!(
-            report.findings.iter().any(|f| f.rule_id == "pilcrow-prerender-wrong-type"),
-            "expected pilcrow-prerender-wrong-type, got: {:?}", report.findings
+            report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-prerender-wrong-type"),
+            "expected pilcrow-prerender-wrong-type, got: {:?}",
+            report.findings
         );
     }
 
@@ -743,8 +757,12 @@ mod tests {
             None,
         );
         assert!(
-            !report.findings.iter().any(|f| f.rule_id == "pilcrow-prerender-wrong-type"),
-            "unexpected finding: {:?}", report.findings
+            !report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-prerender-wrong-type"),
+            "unexpected finding: {:?}",
+            report.findings
         );
     }
 
@@ -756,8 +774,12 @@ mod tests {
             None,
         );
         assert!(
-            report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-const-wrong-type"),
-            "expected pilcrow-isr-const-wrong-type, got: {:?}", report.findings
+            report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-isr-const-wrong-type"),
+            "expected pilcrow-isr-const-wrong-type, got: {:?}",
+            report.findings
         );
     }
 
@@ -769,8 +791,12 @@ mod tests {
             None,
         );
         assert!(
-            !report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-const-wrong-type"),
-            "unexpected finding: {:?}", report.findings
+            !report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-isr-const-wrong-type"),
+            "unexpected finding: {:?}",
+            report.findings
         );
     }
 
@@ -782,8 +808,12 @@ mod tests {
             None,
         );
         assert!(
-            report.findings.iter().any(|f| f.rule_id == "pilcrow-typed-routes-suggestion"),
-            "expected pilcrow-typed-routes-suggestion, got: {:?}", report.findings
+            report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-typed-routes-suggestion"),
+            "expected pilcrow-typed-routes-suggestion, got: {:?}",
+            report.findings
         );
     }
 
@@ -795,8 +825,12 @@ mod tests {
             None,
         );
         assert!(
-            !report.findings.iter().any(|f| f.rule_id == "pilcrow-typed-routes-suggestion"),
-            "unexpected suggestion for root path: {:?}", report.findings
+            !report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-typed-routes-suggestion"),
+            "unexpected suggestion for root path: {:?}",
+            report.findings
         );
     }
 
@@ -814,8 +848,12 @@ pub async fn load(req: Req) -> AppResult<Props> {
             None,
         );
         assert!(
-            report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
-            "expected pilcrow-isr-missing-cache-vary, got: {:?}", report.findings
+            report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
+            "expected pilcrow-isr-missing-cache-vary, got: {:?}",
+            report.findings
         );
     }
 
@@ -834,8 +872,12 @@ pub async fn load(req: Req) -> AppResult<Props> {
             None,
         );
         assert!(
-            !report.findings.iter().any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
-            "unexpected pilcrow-isr-missing-cache-vary: {:?}", report.findings
+            !report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
+            "unexpected pilcrow-isr-missing-cache-vary: {:?}",
+            report.findings
         );
     }
 }

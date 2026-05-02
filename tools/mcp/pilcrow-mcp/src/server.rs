@@ -1,6 +1,5 @@
 use crate::{
-    codegen,
-    diagnostics,
+    codegen, diagnostics,
     docs::{self, KnowledgeBase},
     inspect,
     registry::{FeatureDomain, FeatureStatus, Registry},
@@ -604,7 +603,10 @@ impl PilcrowServer {
         &self,
         Parameters(args): Parameters<ComparePatternArgs>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(structured(compare_patterns_for(&args.goal, args.options.as_ref())))
+        Ok(structured(compare_patterns_for(
+            &args.goal,
+            args.options.as_ref(),
+        )))
     }
 
     #[tool(
@@ -725,13 +727,26 @@ impl PilcrowServer {
         // Detect which features apply based on keyword matching.
         let mut matched: Vec<(&str, &str)> = Vec::new(); // (feature_id, reason)
 
-        if desc.contains("cache") || desc.contains("isr") || desc.contains("revalidat") || desc.contains("stale") {
+        if desc.contains("cache")
+            || desc.contains("isr")
+            || desc.contains("revalidat")
+            || desc.contains("stale")
+        {
             matched.push(("incremental-ssr", "caching / revalidation keywords"));
         }
-        if desc.contains("prerender") || desc.contains("ssg") || desc.contains("static") || desc.contains("startup") {
+        if desc.contains("prerender")
+            || desc.contains("ssg")
+            || desc.contains("static")
+            || desc.contains("startup")
+        {
             matched.push(("ssg", "static site generation keywords"));
         }
-        if desc.contains("sse") || desc.contains("server-sent") || desc.contains("real-time") || desc.contains("live") || desc.contains("stream") {
+        if desc.contains("sse")
+            || desc.contains("server-sent")
+            || desc.contains("real-time")
+            || desc.contains("live")
+            || desc.contains("stream")
+        {
             matched.push(("sse", "real-time / streaming keywords"));
         }
         if desc.contains("websocket") || desc.contains("ws") || desc.contains("socket") {
@@ -740,7 +755,14 @@ impl PilcrowServer {
         if desc.contains("defer") || desc.contains("lazy") || desc.contains("after shell") {
             matched.push(("deferred-streams", "deferred / lazy loading keywords"));
         }
-        if desc.contains("action") || desc.contains("form") || desc.contains("submit") || desc.contains("post") || desc.contains("creat") || desc.contains("updat") || desc.contains("delet") {
+        if desc.contains("action")
+            || desc.contains("form")
+            || desc.contains("submit")
+            || desc.contains("post")
+            || desc.contains("creat")
+            || desc.contains("updat")
+            || desc.contains("delet")
+        {
             matched.push(("named-actions", "form / action keywords"));
         }
         if desc.contains("react") || desc.contains("jsx") || desc.contains("tsx") {
@@ -755,22 +777,38 @@ impl PilcrowServer {
         if desc.contains("fragment") || desc.contains("partial") || desc.contains("widget") {
             matched.push(("fragments", "fragment / partial keywords"));
         }
-        if desc.contains("middleware") || desc.contains("auth") || desc.contains("session") || desc.contains("guard") {
+        if desc.contains("middleware")
+            || desc.contains("auth")
+            || desc.contains("session")
+            || desc.contains("guard")
+        {
             matched.push(("middleware", "middleware / auth keywords"));
         }
-        if (desc.contains("hook") && !desc.contains("react")) || desc.contains("global request") || desc.contains("before route") || desc.contains("startup init") {
+        if (desc.contains("hook") && !desc.contains("react"))
+            || desc.contains("global request")
+            || desc.contains("before route")
+            || desc.contains("startup init")
+        {
             matched.push(("server-hooks", "hook lifecycle keywords"));
         }
         if desc.contains("redirect") || desc.contains("navigate") || desc.contains("route") {
             matched.push(("typed-routes", "navigation / routing keywords"));
         }
-        if desc.contains("env") || desc.contains("config") || desc.contains("secret") || desc.contains("database_url") {
+        if desc.contains("env")
+            || desc.contains("config")
+            || desc.contains("secret")
+            || desc.contains("database_url")
+        {
             matched.push(("env-config", "environment / config keywords"));
         }
         if desc.contains("csrf") || desc.contains("forgery") || desc.contains("origin check") {
             matched.push(("csrf", "csrf / request safety keywords"));
         }
-        if desc.contains("api") || desc.contains("json") || desc.contains("rest") || desc.contains("endpoint") {
+        if desc.contains("api")
+            || desc.contains("json")
+            || desc.contains("rest")
+            || desc.contains("endpoint")
+        {
             matched.push(("api-routes", "API / JSON endpoint keywords"));
         }
         if desc.contains("load") || desc.contains("page") || desc.contains("props") {
@@ -781,7 +819,10 @@ impl PilcrowServer {
 
         // If no features matched, default to ssr-pages as a safe starting point.
         if matched.is_empty() {
-            matched.push(("ssr-pages", "default starting point — refine your description for more specific patterns"));
+            matched.push((
+                "ssr-pages",
+                "default starting point — refine your description for more specific patterns",
+            ));
         }
 
         // Collect specs for matched features.
@@ -995,7 +1036,11 @@ impl ServerHandler for PilcrowServer {
             "pilcrow-code-review" => {
                 let code = get("code");
                 let path = get("path");
-                let path_note = if path.is_empty() { String::new() } else { format!(" (file: {path})") };
+                let path_note = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (file: {path})")
+                };
                 vec![PromptMessage::new_text(PromptMessageRole::User, format!(
                     "Please review this Pilcrow code{path_note} for:\n\
                     1. Convention compliance (load signature, action return types, Props struct)\n\
@@ -1023,12 +1068,15 @@ impl ServerHandler for PilcrowServer {
             "pilcrow-build-diagnosis" => {
                 let error_log = get("error_log");
                 let log_section = if error_log.is_empty() {
-                    "Run why_build_failed without an error_log to trigger a fresh build.".to_string()
+                    "Run why_build_failed without an error_log to trigger a fresh build."
+                        .to_string()
                 } else {
                     format!("Error log:\n```\n{error_log}\n```")
                 };
-                vec![PromptMessage::new_text(PromptMessageRole::User, format!(
-                    "Diagnose this Pilcrow build failure.\n\
+                vec![PromptMessage::new_text(
+                    PromptMessageRole::User,
+                    format!(
+                        "Diagnose this Pilcrow build failure.\n\
                     Steps:\n\
                     1. Use why_build_failed to categorize the error.\n\
                     2. Use diagnose_codegen to check OUT_DIR and generated file status.\n\
@@ -1036,7 +1084,8 @@ impl ServerHandler for PilcrowServer {
                     4. Use propose_fix for each finding.\n\
                     5. Apply safe automatic fixes with apply_safe_fix (dry_run=true first).\n\n\
                     {log_section}"
-                ))]
+                    ),
+                )]
             }
             "pilcrow-feature-explanation" => {
                 let feature = get("feature");
@@ -1135,14 +1184,24 @@ fn suggest_from_context(
     let deferred_routes: Vec<_> = context
         .route_graph
         .iter()
-        .filter(|n| n.code_behind.as_ref().map(|cb| cb.has_deferred).unwrap_or(false) && !n.has_loading)
+        .filter(|n| {
+            n.code_behind
+                .as_ref()
+                .map(|cb| cb.has_deferred)
+                .unwrap_or(false)
+                && !n.has_loading
+        })
         .collect();
     if !deferred_routes.is_empty() {
         recommendations.push(Optimization {
             rule_id: "pilcrow-deferred-needs-skeleton",
             severity: "warning",
-            message: format!("{} route(s) use Deferred<T> but have no _loading.html skeleton.", deferred_routes.len()),
-            suggested_fix: "Add _loading.html templates near deferred routes for better UX.".to_string(),
+            message: format!(
+                "{} route(s) use Deferred<T> but have no _loading.html skeleton.",
+                deferred_routes.len()
+            ),
+            suggested_fix: "Add _loading.html templates near deferred routes for better UX."
+                .to_string(),
         });
     }
     if matches!(focus.as_deref(), Some("silcrow")) {
@@ -1182,7 +1241,13 @@ fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
             "note": "Prerendered at startup, then ISR-revalidated every 60s. Use pilcrow_start() in main.rs.",
         })
     } else if has("incremental-ssr") {
-        let ttl = if desc.contains("60") { 60 } else if desc.contains("300") { 300 } else { 60 };
+        let ttl = if desc.contains("60") {
+            60
+        } else if desc.contains("300") {
+            300
+        } else {
+            60
+        };
         json!({
             "rs": format!("// pages/products/index.rs\npub const REVALIDATE: u64 = {ttl};\npub const CACHE_TAGS: &[&str] = &[\"products\"];\n\npub struct Props {{ pub items: Vec<String> }}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{ items: vec![] }})\n}}"),
             "html": "<!-- pages/products/index.html -->\n{% for item in items %}<li>{{ item }}</li>{% endfor %}",
@@ -1236,7 +1301,10 @@ fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
 fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparison {
     let goal_lower = goal.to_ascii_lowercase();
 
-    let patterns = if goal_lower.contains("form") || goal_lower.contains("action") || goal_lower.contains("submit") {
+    let patterns = if goal_lower.contains("form")
+        || goal_lower.contains("action")
+        || goal_lower.contains("submit")
+    {
         vec![
             Pattern {
                 name: "Silcrow enhanced form".to_string(),
@@ -1261,7 +1329,10 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
                 status: "stable".to_string(),
             },
         ]
-    } else if goal_lower.contains("stream") || goal_lower.contains("defer") || goal_lower.contains("lazy") {
+    } else if goal_lower.contains("stream")
+        || goal_lower.contains("defer")
+        || goal_lower.contains("lazy")
+    {
         vec![
             Pattern {
                 name: "Deferred<T>".to_string(),
@@ -1286,7 +1357,10 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
                 status: "stable".to_string(),
             },
         ]
-    } else if goal_lower.contains("layout") || goal_lower.contains("shell") || goal_lower.contains("nav") {
+    } else if goal_lower.contains("layout")
+        || goal_lower.contains("shell")
+        || goal_lower.contains("nav")
+    {
         vec![
             Pattern {
                 name: "Root _layout.html".to_string(),
@@ -1309,7 +1383,10 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
                 status: "stable".to_string(),
             },
         ]
-    } else if goal_lower.contains("api") || goal_lower.contains("endpoint") || goal_lower.contains("rest") {
+    } else if goal_lower.contains("api")
+        || goal_lower.contains("endpoint")
+        || goal_lower.contains("rest")
+    {
         vec![
             Pattern {
                 name: "API route file".to_string(),
@@ -1324,7 +1401,7 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
             },
             Pattern {
                 name: "Named action on page".to_string(),
-                description: "pub async fn action_name(req: Req) -> ActionResult on a page code-behind. Invoked by POST ?/action_name.".to_string(),
+                description: "pub async fn action_name(req: Req) -> ActionResult on a page or fragment code-behind. Invoked by POST ?/action_name on that route.".to_string(),
                 tradeoffs: vec![
                     "Pro: co-located with the page that uses it".to_string(),
                     "Pro: shares the page's load() and layout context".to_string(),
@@ -1335,15 +1412,16 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
             },
         ]
     } else {
-        vec![
-            Pattern {
-                name: "SSR page with load()".to_string(),
-                description: "Standard Pilcrow page with Props and load() for server data.".to_string(),
-                tradeoffs: vec!["Pro: full server control".to_string(), "Pro: no client state".to_string()],
-                scaffold_kind: Some("loaded-page".to_string()),
-                status: "stable".to_string(),
-            },
-        ]
+        vec![Pattern {
+            name: "SSR page with load()".to_string(),
+            description: "Standard Pilcrow page with Props and load() for server data.".to_string(),
+            tradeoffs: vec![
+                "Pro: full server control".to_string(),
+                "Pro: no client state".to_string(),
+            ],
+            scaffold_kind: Some("loaded-page".to_string()),
+            status: "stable".to_string(),
+        }]
     };
 
     let recommendation = patterns
@@ -1362,7 +1440,9 @@ fn analyse_build_error(error_log: &str) -> Value {
     let mut categories = Vec::new();
     let mut suggestions = Vec::new();
 
-    if error_log.contains("load") && (error_log.contains("async") || error_log.contains("not async")) {
+    if error_log.contains("load")
+        && (error_log.contains("async") || error_log.contains("not async"))
+    {
         categories.push("load() signature mismatch");
         suggestions.push("Ensure load() is `pub async fn load(req: Req) -> AppResult<Props>` or, on dynamic pages, `pub async fn load(ctx: Page) -> AppResult<Props>`. Missing async is the most common cause.");
     }
@@ -1372,9 +1452,14 @@ fn analyse_build_error(error_log: &str) -> Value {
     }
     if error_log.contains("ActionResult") {
         categories.push("ActionResult type error");
-        suggestions.push("Named action functions must return ActionResult. Check imports and return type.");
+        suggestions.push(
+            "Named action functions must return ActionResult. Check imports and return type.",
+        );
     }
-    if error_log.contains("OUT_DIR") || error_log.contains("generated_app") || error_log.contains("include!") {
+    if error_log.contains("OUT_DIR")
+        || error_log.contains("generated_app")
+        || error_log.contains("include!")
+    {
         categories.push("Generated code error");
         suggestions.push("Run codegen_build to regenerate OUT_DIR. Check routekit pipeline output for template or code-behind errors.");
     }
@@ -1389,6 +1474,10 @@ fn analyse_build_error(error_log: &str) -> Value {
     if error_log.contains("field collision") || error_log.contains("defined in both") {
         categories.push("Layout/page Props field collision");
         suggestions.push("A field name is defined in both the layout's Props and the page's Props. Rename one to avoid the collision.");
+    }
+    if error_log.contains("invalid Pilcrow route configuration") {
+        categories.push("Invalid route configuration");
+        suggestions.push("Read the route/module and suggested fix in the build error. Common causes include STREAMING combined with REVALIDATE, STREAMING combined with PRERENDER, STREAMING with Deferred fields, or dynamic PRERENDER without entries().");
     }
 
     if categories.is_empty() {

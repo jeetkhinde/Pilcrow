@@ -18,6 +18,45 @@ pub struct PilcrowConfig {
     pub i18n: I18nConfig,
     #[serde(default)]
     pub images: ImageConfig,
+    #[serde(default)]
+    pub client: ClientRuntimeConfig,
+}
+
+/// Runtime client-side feature configuration (mirrors the build-time `[client]` table).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ClientRuntimeConfig {
+    #[serde(default)]
+    pub react: ReactRuntimeConfig,
+}
+
+/// Runtime React island configuration.
+///
+/// ```toml
+/// [client.react]
+/// ssr      = true        # allow strategy="ssr" and strategy="shell" at runtime
+/// node_bin = "node"      # path to Node binary if not on PATH
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReactRuntimeConfig {
+    /// Allow `strategy="ssr"` islands — requires a persistent Node process at runtime.
+    #[serde(default)]
+    pub ssr: bool,
+    /// Path to the Node.js binary. Defaults to `"node"`.
+    #[serde(default = "default_node_bin")]
+    pub node_bin: String,
+}
+
+impl Default for ReactRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            ssr: false,
+            node_bin: default_node_bin(),
+        }
+    }
+}
+
+fn default_node_bin() -> String {
+    "node".to_string()
 }
 
 /// Image optimisation configuration. Disabled by default (`enabled = false`).

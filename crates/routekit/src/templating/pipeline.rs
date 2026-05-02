@@ -21,8 +21,13 @@ use crate::templating::compiler::{
 };
 use crate::templating::markdown::transpile_markdown;
 use crate::templating::react::{
-    build_react_assets, replace_react_placeholders, transpile_react_tags, ReactIslandRef,
+    build_react_assets, replace_react_placeholders, replace_react_shell_placeholders,
+    transpile_react_tags, ReactIslandRef,
 };
+use crate::templating::solid::{
+    build_solid_assets, replace_solid_placeholders, transpile_solid_tags, SolidIslandRef,
+};
+use crate::Route;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
@@ -117,12 +122,14 @@ pub fn compile_to_out_dir_with_config(
     )?;
     let templates_root = out_dir.join("pilcrow_templates");
     let mut react_islands = Vec::<ReactIslandRef>::new();
+    let mut solid_islands = Vec::<SolidIslandRef>::new();
     let mut files = preprocess_discovered_sources(
         src_root,
         &templates_root,
         &discovered,
         build_config,
         &mut react_islands,
+        &mut solid_islands,
     )?;
 
     // ── Fragment groups ──────────────────────────────────────────────────────
@@ -218,15 +225,25 @@ pub fn compile_to_out_dir_with_config(
             )?;
             let fragment_base = format!("/{url_prefix}");
             let after_islands = transpile_island_tags(&expanded, &fragment_base);
+            let action_base = fragment_action_base(&module.source_path, fragment_dir, &url_prefix);
             let (after_react, mut found_react) = transpile_react_tags(
                 &after_islands,
                 &module.source_path,
                 src_root,
                 &build_config.client.react,
                 &build_config.routing,
+                action_base.as_deref(),
             )?;
             react_islands.append(&mut found_react);
-            let after_components = transpile_component_tags(&after_react);
+            let (after_solid, mut found_solid) = transpile_solid_tags(
+                &after_react,
+                &module.source_path,
+                src_root,
+                &build_config.client.solid,
+                &build_config.routing,
+            )?;
+            solid_islands.append(&mut found_solid);
+            let after_components = transpile_component_tags(&after_solid);
             let after_pilcrow = transpile_pilcrow_tags(&after_components);
             let final_template = inject_form_method_attrs(&after_pilcrow);
 
@@ -260,10 +277,18 @@ pub fn compile_to_out_dir_with_config(
             &url_prefix,
             &build_config.routing.ignore_directories,
         )?;
-        let fragment_error_map =
-            nearest_special_module_for_routes(&files, &frag_page_routes, fragment_dir, HtmlSourceKind::ErrorPage);
-        let fragment_loading_map =
-            nearest_special_module_for_routes(&files, &frag_page_routes, fragment_dir, HtmlSourceKind::LoadingPage);
+        let fragment_error_map = nearest_special_module_for_routes(
+            &files,
+            &frag_page_routes,
+            fragment_dir,
+            HtmlSourceKind::ErrorPage,
+        );
+        let fragment_loading_map = nearest_special_module_for_routes(
+            &files,
+            &frag_page_routes,
+            fragment_dir,
+            HtmlSourceKind::LoadingPage,
+        );
         fragment_error_module_for_route.extend(fragment_error_map);
         fragment_loading_module_for_route.extend(fragment_loading_map);
         fragment_routes.extend(frag_page_routes);
@@ -279,16 +304,32 @@ pub fn compile_to_out_dir_with_config(
     )?;
     let generated_templates_file = out_dir.join("generated_templates.rs");
     let manifest_dir = src_root;
-    let react_urls = build_react_assets(
+    let (react_urls, react_shells) = build_react_assets(
         manifest_dir,
         out_dir,
         &react_islands,
         &build_config.client.react,
     )?;
-    if !react_urls.is_empty() {
+    let solid_urls = build_solid_assets(
+        manifest_dir,
+        out_dir,
+        &solid_islands,
+        &build_config.client.solid,
+    )?;
+    if !react_urls.is_empty() || !react_shells.is_empty() || !solid_urls.is_empty() {
         for file in &mut files {
-            file.transpiled_template =
-                replace_react_placeholders(&file.transpiled_template, &react_urls);
+            if !react_urls.is_empty() {
+                file.transpiled_template =
+                    replace_react_placeholders(&file.transpiled_template, &react_urls);
+            }
+            if !react_shells.is_empty() {
+                file.transpiled_template =
+                    replace_react_shell_placeholders(&file.transpiled_template, &react_shells);
+            }
+            if !solid_urls.is_empty() {
+                file.transpiled_template =
+                    replace_solid_placeholders(&file.transpiled_template, &solid_urls);
+            }
             fs::write(
                 &file.template_output_path,
                 file.transpiled_template.as_bytes(),
@@ -399,6 +440,7 @@ pub fn compile_to_out_dir_with_config(
         &templates_output.ssg_config_map,
         hook_flags,
         !react_urls.is_empty(),
+        !solid_urls.is_empty(),
         src_root,
         out_dir,
     )?;
@@ -465,6 +507,41 @@ fn page_url_base(source_path: &Path, pages_dir: &Path) -> String {
     } else {
         format!("/{}", segments.join("/"))
     }
+}
+
+fn page_action_base(source_path: &Path, pages_dir: &Path) -> Option<String> {
+    let file_path = path_to_unix(source_path);
+    let pages_dir = path_to_unix(pages_dir);
+    static_action_base(Route::from_path(&file_path, &pages_dir).pattern)
+}
+
+fn fragment_action_base(
+    source_path: &Path,
+    fragment_dir: &Path,
+    url_prefix: &str,
+) -> Option<String> {
+    let file_path = path_to_unix(source_path);
+    let fragment_dir = path_to_unix(fragment_dir);
+    let mut route = Route::from_path(&file_path, &fragment_dir);
+    let clean_prefix = url_prefix.trim_matches('/');
+    route.pattern = if route.pattern == "/" {
+        format!("/{clean_prefix}")
+    } else {
+        format!("/{clean_prefix}{}", route.pattern)
+    };
+    static_action_base(route.pattern)
+}
+
+fn static_action_base(pattern: String) -> Option<String> {
+    if pattern.contains(':') || pattern.contains('*') {
+        None
+    } else {
+        Some(pattern)
+    }
+}
+
+fn path_to_unix(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Scan `hooks.rs` for known hook function signatures.
@@ -546,7 +623,11 @@ fn expand_fragment_entries(
         }
     }
 
-    groups.sort_by(|a, b| a.dir.cmp(&b.dir).then_with(|| a.url_prefix.cmp(&b.url_prefix)));
+    groups.sort_by(|a, b| {
+        a.dir
+            .cmp(&b.dir)
+            .then_with(|| a.url_prefix.cmp(&b.url_prefix))
+    });
     groups.dedup_by(|a, b| a.dir == b.dir && a.url_prefix == b.url_prefix);
     Ok(groups)
 }
@@ -603,7 +684,11 @@ fn glob_fragment_url_prefix(
     if capture.is_empty() {
         base_url
     } else {
-        format!("{}/{}", base_url.trim_matches('/'), capture.trim_matches('/'))
+        format!(
+            "{}/{}",
+            base_url.trim_matches('/'),
+            capture.trim_matches('/')
+        )
     }
 }
 
@@ -654,6 +739,7 @@ fn preprocess_discovered_sources(
     discovered: &DiscoveredHtmlFiles,
     build_config: &PilcrowBuildConfig,
     react_islands: &mut Vec<ReactIslandRef>,
+    solid_islands: &mut Vec<SolidIslandRef>,
 ) -> io::Result<Vec<PreprocessedHtmlFile>> {
     let mut modules = HashMap::<PathBuf, HtmlModuleSource>::new();
 
@@ -799,15 +885,29 @@ fn preprocess_discovered_sources(
             "/".to_string()
         };
         let after_islands = transpile_island_tags(&expanded, &url_base);
+        let action_base = if module.kind == HtmlSourceKind::Page {
+            page_action_base(&module.source_path, &pages_dir)
+        } else {
+            None
+        };
         let (after_react, mut found_react) = transpile_react_tags(
             &after_islands,
             &module.source_path,
             src_root,
             &build_config.client.react,
             &build_config.routing,
+            action_base.as_deref(),
         )?;
         react_islands.append(&mut found_react);
-        let after_components = transpile_component_tags(&after_react);
+        let (after_solid, mut found_solid) = transpile_solid_tags(
+            &after_react,
+            &module.source_path,
+            src_root,
+            &build_config.client.solid,
+            &build_config.routing,
+        )?;
+        solid_islands.append(&mut found_solid);
+        let after_components = transpile_component_tags(&after_solid);
         let after_pilcrow = transpile_pilcrow_tags(&after_components);
         let final_template = inject_form_method_attrs(&after_pilcrow);
 
@@ -1536,7 +1636,10 @@ fn resolve_import_path(
     let canonical_root = src_root.canonicalize().map_err(|err| {
         template_compile_error(
             source_path,
-            format!("failed to resolve project root `{}`: {err}", src_root.display()),
+            format!(
+                "failed to resolve project root `{}`: {err}",
+                src_root.display()
+            ),
         )
     })?;
     let canonical_absolute = absolute.canonicalize().map_err(|_| {
@@ -3486,7 +3589,7 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
         write_file(&src.join("widgets/user-card.html"), "<div>{{ name }}</div>");
         write_file(
             &src.join("widgets/user-card.rs"),
-            "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }",
+            "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }\npub async fn refresh(_req: Req) -> ActionResult { pilcrow_web::html(\"<div>ok</div>\") }",
         );
         write_file(&src.join("partials/nav.html"), "<nav>Navigation</nav>");
 
@@ -3547,10 +3650,50 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
             "frag_widgets_user_card module present"
         );
 
+        let app = fs::read_to_string(out.join("generated_app.rs")).expect("read generated app");
+        assert!(
+            app.contains(".route(\"/widgets/user-card\", ::pilcrow_web::axum::routing::post"),
+            "fragment action POST route emitted"
+        );
+        assert!(
+            app.contains("\"refresh\" => match __pilcrow_gen::frag_widgets_user_card::refresh(req).await"),
+            "fragment action dispatches to code-behind"
+        );
+
         let nav_mod = frag_mods
             .iter()
             .find(|f| f.module_name == "frag_partials_nav");
         assert!(nav_mod.is_some(), "frag_partials_nav module present");
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn compile_pipeline_rejects_invalid_fragment_action_signature() {
+        use crate::templating::build_config::{FragmentEntry, PilcrowBuildConfig};
+
+        let root = mk_temp_root("fragment_invalid_action");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(&src.join("widgets/user-card.html"), "<div>{{ name }}</div>");
+        write_file(
+            &src.join("widgets/user-card.rs"),
+            "pub struct Props { pub name: String }\npub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { name: \"test\".into() }) }\npub fn refresh(_req: Req) -> ActionResult { todo!() }",
+        );
+
+        let config = PilcrowBuildConfig {
+            fragments: vec![FragmentEntry {
+                dir: "widgets".to_string(),
+                url: None,
+            }],
+            ..Default::default()
+        };
+
+        let err = compile_to_out_dir_with_config(&src, &out, &config)
+            .expect_err("invalid fragment action should fail");
+        assert!(err.to_string().contains("action `refresh`"));
+        assert!(err.to_string().contains("must be declared `async`"));
 
         cleanup(&root);
     }
@@ -3650,7 +3793,10 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
         let root = mk_temp_root("fragment_globs");
         let out = root.join("out");
 
-        write_file(&root.join("pages/products/fragments/row.html"), "<p>Product</p>");
+        write_file(
+            &root.join("pages/products/fragments/row.html"),
+            "<p>Product</p>",
+        );
         write_file(&root.join("pages/admin/fragments/row.html"), "<p>Admin</p>");
 
         let config = PilcrowBuildConfig {

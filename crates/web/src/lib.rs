@@ -40,6 +40,7 @@ pub use pilcrow_core::{
 
 pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
+pub use runtime::island_ssr::IslandSsrWorker;
 pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 
@@ -139,6 +140,28 @@ macro_rules! pilcrow_app {
         /// `pilcrow_web::start(pilcrow_router()).await` when your app has pages with
         /// `pub const PRERENDER: bool = true`.
         async fn pilcrow_start(router: ::pilcrow_web::axum::Router) {
+            // Wire up the React SSR Node worker when [client.react] ssr = true.
+            let config =
+                ::pilcrow_web::PilcrowConfig::load_from_current_dir().expect("load Pilcrow.toml");
+            let router = {
+                let bundles = __pilcrow_app::__pilcrow_ssr_bundles();
+                if config.client.react.ssr && !bundles.is_empty() {
+                    match ::pilcrow_web::IslandSsrWorker::spawn_with_sources(
+                        bundles,
+                        &config.client.react.node_bin,
+                    ) {
+                        Ok(worker) => router.layer(::pilcrow_web::axum::Extension(
+                            ::std::sync::Arc::new(::std::sync::Mutex::new(worker)),
+                        )),
+                        Err(e) => {
+                            eprintln!("[pilcrow] failed to spawn React SSR worker: {e}");
+                            router
+                        }
+                    }
+                } else {
+                    router
+                }
+            };
             __pilcrow_app::__pilcrow_init().await;
             ::pilcrow_web::start_with_prerender(router, |cache| async move {
                 __pilcrow_app::__pilcrow_prerender_all(&cache).await

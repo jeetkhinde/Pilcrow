@@ -115,52 +115,56 @@ impl std::fmt::Debug for Res {
 }
 
 impl Res {
+    fn state(&self) -> std::sync::MutexGuard<'_, BaseResponse> {
+        self.0.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
     /// Set an explicit HTTP status code on the rendered page response.
     pub fn with_status(&self, status: StatusCode) -> &Self {
-        self.0.lock().unwrap().set_status(status);
+        self.state().set_status(status);
         self
     }
 
     /// Append a raw response header.
     pub fn with_header(&self, key: &'static str, value: impl Into<String>) -> &Self {
-        self.0.lock().unwrap().set_header(key, value);
+        self.state().set_header(key, value);
         self
     }
 
     /// Add `silcrow-cache: no-cache` so silcrow.js skips the response cache.
     pub fn no_cache(&self) -> &Self {
-        self.0.lock().unwrap().set_no_cache();
+        self.state().set_no_cache();
         self
     }
 
     /// Add a `Set-Cookie` header to the response.
     pub fn with_cookie(&self, cookie: Cookie<'static>) -> &Self {
-        self.0.lock().unwrap().add_cookie(cookie);
+        self.state().add_cookie(cookie);
         self
     }
 
     /// Queue a toast notification. The client reads this from the `silcrow_toasts` cookie.
     pub fn with_toast(&self, message: impl Into<String>, level: ToastLevel) -> &Self {
-        self.0.lock().unwrap().add_toast(message, level);
+        self.state().add_toast(message, level);
         self
     }
 
     /// Fire a custom DOM event on the client via `silcrow-trigger`.
     /// Multiple calls accumulate — all named events are sent in a single header.
     pub fn trigger_event(&self, event_name: &str) -> &Self {
-        self.0.lock().unwrap().add_trigger_event(event_name);
+        self.state().add_trigger_event(event_name);
         self
     }
 
     /// Override the swap target selector via `silcrow-retarget`.
     pub fn retarget(&self, selector: &str) -> &Self {
-        self.0.lock().unwrap().set_retarget(selector);
+        self.state().set_retarget(selector);
         self
     }
 
     /// Push a URL to the browser history via `silcrow-push`.
     pub fn push_history(&self, url: &str) -> &Self {
-        self.0.lock().unwrap().set_push_history(url);
+        self.state().set_push_history(url);
         self
     }
 
@@ -168,7 +172,7 @@ impl Res {
     /// Multiple calls accumulate — each `{target, data}` entry is carried in
     /// a single JSON-array header and applied in call order on the client.
     pub fn patch_target(&self, selector: &str, data: &impl Serialize) -> &Self {
-        self.0.lock().unwrap().add_patch_target(selector, data);
+        self.state().add_patch_target(selector, data);
         self
     }
 
@@ -176,25 +180,25 @@ impl Res {
     /// Multiple calls accumulate — all selectors are carried in a single
     /// JSON-array header and invalidated in call order on the client.
     pub fn invalidate_target(&self, selector: &str) -> &Self {
-        self.0.lock().unwrap().add_invalidate_target(selector);
+        self.state().add_invalidate_target(selector);
         self
     }
 
     /// Trigger a client-side navigation via `silcrow-navigate`.
     pub fn client_navigate(&self, path: &str) -> &Self {
-        self.0.lock().unwrap().set_client_navigate(path);
+        self.state().set_client_navigate(path);
         self
     }
 
     /// Open an SSE connection on the client via `silcrow-sse`.
     pub fn sse(&self, path: impl AsRef<str>) -> &Self {
-        self.0.lock().unwrap().set_sse(path.as_ref());
+        self.state().set_sse(path.as_ref());
         self
     }
 
     /// Open a WebSocket connection on the client via `silcrow-ws`.
     pub fn ws(&self, path: impl AsRef<str>) -> &Self {
-        self.0.lock().unwrap().set_ws(path.as_ref());
+        self.state().set_ws(path.as_ref());
         self
     }
 
@@ -212,21 +216,21 @@ impl Res {
     /// }
     /// ```
     pub fn bypass_cache(&self) -> &Self {
-        self.0.lock().unwrap().set_bypass_cache();
+        self.state().set_bypass_cache();
         self
     }
 
     /// Check the bypass-cache flag. Used by generated ISR handler code.
     #[doc(hidden)]
     pub fn __is_bypass_cache(&self) -> bool {
-        self.0.lock().unwrap().is_bypass_cache()
+        self.state().is_bypass_cache()
     }
 
     /// Apply all accumulated modifications to an existing response.
     ///
     /// Called by generated handler code after rendering is complete.
     pub fn apply_to(&self, response: &mut Response) {
-        self.0.lock().unwrap().apply_to_response(response);
+        self.state().apply_to_response(response);
     }
 }
 

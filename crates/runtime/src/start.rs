@@ -15,11 +15,13 @@ use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
 use crate::assets::assets::{
-    react_islands_js_path, serve_react_islands_js, serve_silcrow_js, silcrow_js_path,
+    react_islands_js_path, serve_react_islands_js, serve_silcrow_js, serve_solid_islands_js,
+    silcrow_js_path, solid_islands_js_path,
 };
 use crate::dev::{dev_inject_layer, dev_reload_handler, spawn_css_watcher, DevState};
 use crate::i18n::{locale_middleware_impl, I18nBundles};
 use crate::image::handler::{image_handler, ImageState};
+use crate::island_ssr::{replace_ssr_placeholders, IslandSsrWorker};
 use crate::isr::{IsrCache, IsrHandle};
 use crate::sw::{sw_handler, sw_inject_layer};
 
@@ -53,7 +55,7 @@ where
     Fut: Future<Output = ()>,
     A: PilcrowAdapter,
 {
-    let config = Arc::new(PilcrowConfig::load_from_current_dir().expect("load Pilcrow.toml"));
+    let config = Arc::new(load_config_or_exit());
     let bind_addr = config.web_bind_addr();
     let http = reqwest::Client::new();
 
@@ -78,12 +80,23 @@ where
     };
 
     let isr_cache = Arc::new(match &config.cache.provider {
+        CacheProvider::Memory => IsrCache::new(),
         CacheProvider::Filesystem => {
             let dir = config.cache.dir.as_deref().unwrap_or(".pilcrow-cache");
             tracing::info!("ISR cache: filesystem backend at {dir}");
             IsrCache::with_persistence(dir)
         }
-        _ => IsrCache::new(),
+        CacheProvider::Sqlite | CacheProvider::Redis => {
+            tracing::error!(
+                provider = ?config.cache.provider,
+                "configured ISR cache provider is not implemented"
+            );
+            eprintln!(
+                "pilcrow: cache provider {:?} is not implemented; use memory or filesystem",
+                config.cache.provider
+            );
+            std::process::exit(1);
+        }
     });
 
     let dev_mode = std::env::var("PILCROW_DEV").is_ok();
@@ -95,13 +108,21 @@ where
 
     let silcrow_path = silcrow_js_path();
     let react_islands_path = react_islands_js_path();
+    let solid_islands_path = solid_islands_js_path();
     let mut app = app
-        .route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler))
         .route(&silcrow_path, axum::routing::get(serve_silcrow_js))
         .route(
             &react_islands_path,
             axum::routing::get(serve_react_islands_js),
+        )
+        .route(
+            &solid_islands_path,
+            axum::routing::get(serve_solid_islands_js),
         );
+
+    if dev_mode {
+        app = app.route("/__pilcrow/isr", axum::routing::get(isr_inspect_handler));
+    }
 
     if sw_enabled {
         app = app.route("/sw.js", axum::routing::get(sw_handler));
@@ -180,7 +201,71 @@ where
         app
     };
 
+    // SSR placeholder middleware — no-op when no worker Extension is present.
+    let app = app.layer(axum::middleware::from_fn(island_ssr_middleware));
+
     adapter.serve(&bind_addr, app).await;
+}
+
+/// Replace `__PILCROW_REACT_SSR_{id}__` placeholders in HTML responses.
+/// Reads props from the surrounding `data-prop-*` attributes and sends them to
+/// the persistent Node worker for rendering. No-op when no worker is registered.
+async fn island_ssr_middleware(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let worker = req
+        .extensions()
+        .get::<Arc<std::sync::Mutex<IslandSsrWorker>>>()
+        .cloned();
+
+    let response = next.run(req).await;
+
+    let Some(worker) = worker else {
+        return response;
+    };
+
+    let is_html = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("text/html"))
+        .unwrap_or(false);
+
+    if !is_html {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(_) => return axum::response::Response::from_parts(parts, axum::body::Body::empty()),
+    };
+
+    let html = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
+        }
+    };
+
+    if !html.contains("__PILCROW_REACT_SSR_") {
+        return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
+
+    let replaced = replace_ssr_placeholders(html, &worker);
+    axum::response::Response::from_parts(parts, axum::body::Body::from(replaced))
+}
+
+fn load_config_or_exit() -> PilcrowConfig {
+    match PilcrowConfig::load_from_current_dir() {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to load Pilcrow configuration");
+            eprintln!("pilcrow: failed to load Pilcrow configuration: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Export all pre-rendered pages as static HTML files to `dir`.

@@ -9,3 +9,4 @@ pub mod page_options;
 pub mod pipeline;
 pub mod react;
 pub mod routes_codegen;
+pub mod solid;

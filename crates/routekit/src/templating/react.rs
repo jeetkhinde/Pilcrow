@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde::Deserialize;
 
@@ -11,11 +11,15 @@ use crate::templating::build_config::{ReactBuildConfig, RoutingConfig};
 
 pub const REACT_ENTRY_PLACEHOLDER_PREFIX: &str = "__PILCROW_REACT_ENTRY_";
 pub const REACT_CSS_PLACEHOLDER_PREFIX: &str = "__PILCROW_REACT_CSS_";
+pub const REACT_SHELL_PLACEHOLDER_PREFIX: &str = "__PILCROW_REACT_SHELL_";
+pub const REACT_SSR_PLACEHOLDER_PREFIX: &str = "__PILCROW_REACT_SSR_";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReactIslandRef {
     pub id: String,
     pub source_path: PathBuf,
+    /// The strategy attribute value: "load", "idle", "visible", "shell", or "ssr".
+    pub strategy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +47,7 @@ pub fn transpile_react_tags(
     src_root: &Path,
     react_config: &ReactBuildConfig,
     routing: &RoutingConfig,
+    action_base: Option<&str>,
 ) -> io::Result<(String, Vec<ReactIslandRef>)> {
     let mut output = String::with_capacity(template.len());
     let mut refs = Vec::new();
@@ -60,6 +65,7 @@ pub fn transpile_react_tags(
                     src_root,
                     react_config,
                     routing,
+                    action_base,
                     counter,
                 )?;
                 output.push_str(&html);
@@ -83,6 +89,7 @@ fn parse_react_tag(
     src_root: &Path,
     react_config: &ReactBuildConfig,
     routing: &RoutingConfig,
+    action_base: Option<&str>,
     tag_index: usize,
 ) -> io::Result<(String, usize, ReactIslandRef)> {
     debug_assert!(input.starts_with("<react"));
@@ -91,11 +98,23 @@ fn parse_react_tag(
     let attrs = parse_attrs(&raw_attrs);
     let src = required_attr(&attrs, "src", template_path)?;
     let strategy = required_attr(&attrs, "strategy", template_path)?;
-    if !matches!(strategy.as_str(), "load" | "visible" | "idle") {
+    if !matches!(
+        strategy.as_str(),
+        "load" | "visible" | "idle" | "shell" | "ssr"
+    ) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "`strategy` on <react> in {} must be one of: load, visible, idle",
+                "`strategy` on <react> in {} must be one of: load, visible, idle, shell, ssr",
+                template_path.display()
+            ),
+        ));
+    }
+    if matches!(strategy.as_str(), "shell" | "ssr") && !react_config.ssr {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "`strategy=\"{strategy}\"` on <react> in {} requires `[client.react] ssr = true` in Pilcrow.toml",
                 template_path.display()
             ),
         ));
@@ -126,35 +145,75 @@ fn parse_react_tag(
         html_escape_attr(&strategy),
         html_escape_attr(&css_placeholder),
     );
+    if let Some(action_base) = action_base {
+        html.push_str(&format!(
+            " data-pilcrow-action-base=\"{}\" data-prop-__pilcrow-action-base=\"{}\"",
+            html_escape_attr(action_base),
+            html_escape_attr(action_base)
+        ));
+    }
 
-    for (name, value) in attrs {
+    for (name, value) in &attrs {
         if name == "src" || name == "strategy" {
             continue;
         }
+        let (attr_prefix, prop_name) = if let Some(prop_name) = name.strip_prefix("json-") {
+            ("data-prop-json-", prop_name)
+        } else {
+            ("data-prop-", name.as_str())
+        };
         if value.is_empty() {
-            html.push_str(&format!(" data-prop-{}=\"true\"", html_escape_attr(&name)));
+            html.push_str(&format!(
+                " {attr_prefix}{}=\"true\"",
+                html_escape_attr(prop_name)
+            ));
         } else {
             html.push_str(&format!(
-                " data-prop-{}=\"{}\"",
-                html_escape_attr(&name),
-                html_escape_attr(&value)
+                " {attr_prefix}{}=\"{}\"",
+                html_escape_attr(prop_name),
+                html_escape_attr(value)
             ));
         }
     }
-    html.push_str("></div><script type=\"module\" src=\"{{ pilcrow_web::assets::assets::react_islands_js_path() }}\"></script>");
 
-    Ok((html, consumed, ReactIslandRef { id, source_path }))
+    // Close the opening tag and embed the strategy-specific placeholder or leave empty.
+    match strategy.as_str() {
+        "shell" => html.push_str(&format!(">{REACT_SHELL_PLACEHOLDER_PREFIX}{id}__</div>")),
+        "ssr" => html.push_str(&format!(">{REACT_SSR_PLACEHOLDER_PREFIX}{id}__</div>")),
+        _ => html.push_str("></div>"),
+    }
+
+    html.push_str("<script type=\"module\" src=\"{{ pilcrow_web::assets::assets::react_islands_js_path() }}\"></script>");
+
+    Ok((
+        html,
+        consumed,
+        ReactIslandRef {
+            id,
+            source_path,
+            strategy,
+        },
+    ))
 }
 
+/// Build all React island assets. Returns:
+/// - `id_to_urls`: island-id → (JS entry URL, CSS URLs) for entry/CSS placeholder replacement
+/// - `shell_html`: island-id → static shell HTML for shell placeholder replacement (build time)
 pub fn build_react_assets(
     manifest_dir: &Path,
     out_dir: &Path,
     islands: &[ReactIslandRef],
     react_config: &ReactBuildConfig,
-) -> io::Result<HashMap<String, (String, Vec<String>)>> {
+) -> io::Result<(
+    HashMap<String, (String, Vec<String>)>,
+    HashMap<String, String>,
+)> {
     write_empty_react_assets(out_dir)?;
+    write_empty_react_ssr(out_dir)?;
+    write_empty_react_shells(out_dir)?;
+
     if islands.is_empty() {
-        return Ok(HashMap::new());
+        return Ok((HashMap::new(), HashMap::new()));
     }
     if !react_config.enabled {
         return Err(io::Error::new(
@@ -176,11 +235,11 @@ pub fn build_react_assets(
     let react_root = out_dir.join("pilcrow_react");
     let entries_dir = react_root.join("entries");
     let dist_dir = react_root.join("dist");
-    let hooks_path = react_root.join("pilcrow_react_hooks.jsx");
     fs::create_dir_all(&entries_dir)?;
     fs::create_dir_all(&dist_dir)?;
-    fs::write(&hooks_path, render_hooks_module())?;
+    let support_module = write_react_support_module(&react_root)?;
 
+    // ── Client bundle ────────────────────────────────────────────────────────
     let mut inputs = BTreeMap::new();
     for source in sources_by_id.values() {
         let entry_path = entries_dir.join(format!("{}.tsx", source.id));
@@ -192,7 +251,10 @@ pub fn build_react_assets(
     }
 
     let config_path = react_root.join("vite.config.mjs");
-    fs::write(&config_path, render_vite_config(&inputs, &dist_dir, &hooks_path))?;
+    fs::write(
+        &config_path,
+        render_client_vite_config(&inputs, &dist_dir, &support_module),
+    )?;
     run_vite(manifest_dir, &config_path)?;
 
     let manifest_path = dist_dir.join(".vite/manifest.json");
@@ -258,7 +320,80 @@ pub fn build_react_assets(
     check_entry_budgets(&dist_dir, &id_to_urls, react_config)?;
     write_react_assets_module(out_dir, &dist_dir)?;
     check_budgets(&dist_dir, react_config)?;
-    Ok(id_to_urls)
+
+    // ── SSR bundle (for shell + ssr strategies) ──────────────────────────────
+    let ssr_islands: Vec<&ReactIslandRef> = islands
+        .iter()
+        .filter(|r| r.strategy == "shell" || r.strategy == "ssr")
+        .collect();
+
+    if ssr_islands.is_empty() {
+        return Ok((id_to_urls, HashMap::new()));
+    }
+
+    let mut ssr_sources_by_id: BTreeMap<String, ReactSource> = BTreeMap::new();
+    for island in &ssr_islands {
+        ssr_sources_by_id
+            .entry(island.id.clone())
+            .or_insert_with(|| ReactSource {
+                id: island.id.clone(),
+                source_path: island.source_path.clone(),
+            });
+    }
+
+    // Generate server entry files (.server.tsx)
+    let mut ssr_inputs = BTreeMap::new();
+    for source in ssr_sources_by_id.values() {
+        let entry_path = entries_dir.join(format!("{}.server.tsx", source.id));
+        fs::write(
+            &entry_path,
+            render_server_entry_wrapper(&source.source_path),
+        )?;
+        ssr_inputs.insert(source.id.clone(), entry_path);
+    }
+
+    let dist_ssr_dir = react_root.join("dist_ssr");
+    fs::create_dir_all(&dist_ssr_dir)?;
+
+    let ssr_config_path = react_root.join("vite.ssr.config.mjs");
+    fs::write(
+        &ssr_config_path,
+        render_ssr_vite_config(&ssr_inputs, &dist_ssr_dir, &support_module),
+    )?;
+    run_vite(manifest_dir, &ssr_config_path)?;
+
+    write_react_ssr_module(out_dir, &dist_ssr_dir, &ssr_sources_by_id)?;
+
+    // ── Static shells (for shell strategy only) ──────────────────────────────
+    let mut shell_html: HashMap<String, String> = HashMap::new();
+
+    for island in &ssr_islands {
+        if island.strategy != "shell" {
+            continue;
+        }
+        let bundle_path = dist_ssr_dir.join(format!("{}.ssr.js", island.id));
+        match render_static_shell(
+            &island.id,
+            &bundle_path,
+            manifest_dir,
+            &react_config.node_bin,
+        ) {
+            Ok(html) => {
+                shell_html.insert(island.id.clone(), html);
+            }
+            Err(err) => {
+                // Non-fatal: emit a build warning; the island falls back to CSR
+                println!(
+                    "cargo:warning=Pilcrow: failed to render static shell for island `{}`: {err}",
+                    island.id
+                );
+            }
+        }
+    }
+
+    write_react_shells_module(out_dir, &shell_html)?;
+
+    Ok((id_to_urls, shell_html))
 }
 
 pub fn replace_react_placeholders(
@@ -274,6 +409,22 @@ pub fn replace_react_placeholders(
         out = out.replace(
             &format!("{REACT_CSS_PLACEHOLDER_PREFIX}{id}__"),
             &css.join(","),
+        );
+    }
+    out
+}
+
+/// Replace `__PILCROW_REACT_SHELL_{id}__` placeholders with pre-rendered shell HTML.
+/// Called at build time after `build_react_assets` so static shells land in Askama templates.
+pub fn replace_react_shell_placeholders(
+    html: &str,
+    shell_html: &HashMap<String, String>,
+) -> String {
+    let mut out = html.to_string();
+    for (id, shell) in shell_html {
+        out = out.replace(
+            &format!("{REACT_SHELL_PLACEHOLDER_PREFIX}{id}__"),
+            shell.as_str(),
         );
     }
     out
@@ -311,22 +462,37 @@ fn run_vite(manifest_dir: &Path, config_path: &Path) -> io::Result<()> {
     }
 }
 
+/// Client-side entry wrapper: uses `hydrateRoot` when server-rendered HTML is present,
+/// falls back to `createRoot` for pure CSR islands.
 fn render_entry_wrapper(id: &str, source_path: &Path) -> String {
     let src = source_path.to_string_lossy().replace('\\', "/");
     let id_json = serde_json::to_string(id).unwrap();
     format!(
         r#"import React from "react";
-import {{ createRoot }} from "react-dom/client";
+import {{ createRoot, hydrateRoot }} from "react-dom/client";
+import {{ PilcrowReactProvider }} from "pilcrow/react";
 import Component from "{src}";
 
 export function mount(el, props) {{
+  const {{ __pilcrowActionBase, ...componentProps }} = props || {{}};
+  const actionBase = __pilcrowActionBase || el.getAttribute("data-pilcrow-action-base") || window.location.pathname;
+  const tree = React.createElement(
+    PilcrowReactProvider,
+    {{ value: {{ actionBase }} }},
+    React.createElement(Component, componentProps),
+  );
   if (el.__pilcrowReactRoot) {{
-    el.__pilcrowReactRoot.render(React.createElement(Component, props));
+    el.__pilcrowReactRoot.render(tree);
+    return;
+  }}
+  if (el.children.length > 0) {{
+    // Server-rendered HTML present — hydrate instead of replacing
+    hydrateRoot(el, tree);
     return;
   }}
   const root = createRoot(el);
   el.__pilcrowReactRoot = root;
-  root.render(React.createElement(Component, props));
+  root.render(tree);
 }}
 
 window.__pilcrowReactMounts = window.__pilcrowReactMounts || {{}};
@@ -335,65 +501,35 @@ window.__pilcrowReactMounts[{id_json}] = mount;
     )
 }
 
-fn render_hooks_module() -> &'static str {
-    r#"import { use, useActionState, useMemo, useSyncExternalStore } from "react";
+/// Server-side entry wrapper: renders to an HTML string via `renderToString`.
+fn render_server_entry_wrapper(source_path: &Path) -> String {
+    let src = source_path.to_string_lossy().replace('\\', "/");
+    format!(
+        r#"import React from "react";
+import {{ renderToString }} from "react-dom/server";
+import {{ PilcrowReactProvider }} from "pilcrow/react";
+import Component from "{src}";
 
-function silcrow() {
-  if (!window.Silcrow) {
-    throw new Error("Silcrow is not loaded. Include pilcrow_web::assets::assets::script_tag() in the page layout.");
-  }
-  return window.Silcrow;
-}
-
-export function silcrowRouteScope(path) {
-  try {
-    return `route:${new URL(path, window.location.origin).pathname}`;
-  } catch (_err) {
-    return `route:${path}`;
-  }
-}
-
-export function useSilcrowAtom(scope, initialValue) {
-  return useSyncExternalStore(
-    (notify) => window.Silcrow?.subscribe(scope, notify) ?? (() => {}),
-    () => window.Silcrow?.snapshot(scope) ?? initialValue,
-    () => window.Silcrow?.snapshot(scope) ?? initialValue,
+export function render(props) {{
+  const {{ __pilcrowActionBase, ...componentProps }} = props || {{}};
+  const tree = React.createElement(
+    PilcrowReactProvider,
+    {{ value: {{ actionBase: __pilcrowActionBase || "/" }} }},
+    React.createElement(Component, componentProps),
   );
-}
-
-export function publishSilcrowAtom(scope, data) {
-  window.Silcrow?.publish(scope, data);
-}
-
-export function useSilcrowPrefetch(path) {
-  return useMemo(() => silcrow().prefetch(path), [path]);
-}
-
-export function useSilcrowRoute(path, initialValue) {
-  const promise = useSilcrowPrefetch(path);
-  const initial = use(promise);
-  return useSilcrowAtom(silcrowRouteScope(path), initial ?? initialValue);
-}
-
-export function useSilcrowAction(url, reducer, initialState, options = {}) {
-  return useActionState(async (prev, body) => {
-    const result = await silcrow().submit(url, body, {
-      method: options.method ?? "POST",
-      scope: options.scope,
-    });
-    return reducer ? reducer(result, prev) : (result.data ?? prev);
-  }, initialState);
-}
+  return renderToString(tree);
+}}
 "#
+    )
 }
 
-fn render_vite_config(
+fn render_client_vite_config(
     inputs: &BTreeMap<String, PathBuf>,
     dist_dir: &Path,
-    hooks_path: &Path,
+    support_module: &Path,
 ) -> String {
     let out = dist_dir.to_string_lossy().replace('\\', "/");
-    let hooks = hooks_path.to_string_lossy().replace('\\', "/");
+    let support = support_module.to_string_lossy().replace('\\', "/");
     let input = inputs
         .iter()
         .map(|(id, path)| {
@@ -416,6 +552,7 @@ export default {{
   resolve: {{
     alias: [
       {{ find: /^react$/, replacement: require.resolve("react") }},
+      {{ find: /^react-dom$/, replacement: require.resolve("react-dom") }},
       {{ find: /^react-dom\/client$/, replacement: require.resolve("react-dom/client") }},
       {{ find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") }},
       {{ find: /^pilcrow\/react$/, replacement: {} }}
@@ -442,17 +579,381 @@ export default {{
   }}
 }};
 "#,
-        serde_json::to_string(&hooks).unwrap(),
+        serde_json::to_string(&support).unwrap(),
         serde_json::to_string(&out).unwrap(),
         input
     )
 }
+
+fn render_ssr_vite_config(
+    inputs: &BTreeMap<String, PathBuf>,
+    dist_ssr_dir: &Path,
+    support_module: &Path,
+) -> String {
+    let out = dist_ssr_dir.to_string_lossy().replace('\\', "/");
+    let support = support_module.to_string_lossy().replace('\\', "/");
+    let input = inputs
+        .iter()
+        .map(|(id, path)| {
+            format!(
+                "      {}: {},",
+                serde_json::to_string(id).unwrap(),
+                serde_json::to_string(&path.to_string_lossy().replace('\\', "/")).unwrap()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"import {{ createRequire }} from "node:module";
+
+const require = createRequire(process.cwd() + "/package.json");
+
+export default {{
+  root: process.cwd(),
+  resolve: {{
+    alias: [
+      {{ find: /^react$/, replacement: require.resolve("react") }},
+      {{ find: /^react-dom$/, replacement: require.resolve("react-dom") }},
+      {{ find: /^react-dom\/server$/, replacement: require.resolve("react-dom/server") }},
+      {{ find: /^react\/jsx-runtime$/, replacement: require.resolve("react/jsx-runtime") }},
+      {{ find: /^pilcrow\/react$/, replacement: {} }}
+    ]
+  }},
+  esbuild: {{ jsx: "automatic" }},
+  build: {{
+    ssr: true,
+    outDir: {},
+    emptyOutDir: true,
+    rollupOptions: {{
+      input: {{
+{}
+      }},
+      output: {{
+        entryFileNames: "[name].ssr.js",
+        format: "esm"
+      }}
+    }}
+  }}
+}};
+"#,
+        serde_json::to_string(&support).unwrap(),
+        serde_json::to_string(&out).unwrap(),
+        input
+    )
+}
+
+fn write_react_support_module(react_root: &Path) -> io::Result<PathBuf> {
+    let module_path = react_root.join("pilcrow-react.ts");
+    fs::write(&module_path, PILCROW_REACT_TS)?;
+    Ok(module_path)
+}
+
+const PILCROW_REACT_TS: &str = r#"import {
+  createContext,
+  useActionState,
+  useContext,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+  createElement,
+} from "react";
+
+/**
+ * Full response shape returned by `window.Silcrow.submit`.
+ *
+ * @example
+ * type CreateState = {ok: boolean; message?: string};
+ * const result: SilcrowSubmitResult<CreateState> =
+ *   await window.Silcrow!.submit("/cart/add/1", {quantity: 1});
+ * if (result.ok) console.log(result.data.message);
+ */
+export type SilcrowSubmitResult<T = unknown> = {
+  ok: boolean;
+  status: number;
+  data: T;
+  html: string | null;
+  headers: Headers;
+};
+
+/**
+ * Network options forwarded to `Silcrow.submit`.
+ *
+ * @example
+ * submitSilcrow<CreateState>("/cart/add/1", {
+ *   method: "POST",
+ *   scope: "cart:add",
+ *   headers: {"x-source": "react-island"},
+ * });
+ */
+export type SilcrowSubmitOptions = {
+  method?: string;
+  scope?: string;
+  headers?: Record<string, string>;
+};
+
+/**
+ * Options for the tiny React 19 action wrapper.
+ *
+ * `permalink` is passed to React's `useActionState`; the other fields are
+ * passed to Silcrow's submit transport.
+ *
+ * @example
+ * useSilcrowAction<CreateState>(
+ *   "/cart/add/1",
+ *   {ok: true},
+ *   {scope: "cart:add", permalink: "/cart"},
+ * );
+ */
+export type SilcrowActionOptions = SilcrowSubmitOptions & {
+  permalink?: string;
+};
+
+export type PilcrowReactContextValue = {
+  actionBase?: string;
+};
+
+const PilcrowReactContext = createContext<PilcrowReactContextValue>({});
+
+export function PilcrowReactProvider({
+  value,
+  children,
+}: {
+  value: PilcrowReactContextValue;
+  children: ReactNode;
+}) {
+  return createElement(PilcrowReactContext.Provider, {value}, children);
+}
+
+function appendActionName(base: string, name: string): string {
+  if (/^https?:\/\//.test(name) || name.startsWith("/") || name.startsWith("?/")) {
+    return name;
+  }
+  const cleanBase = base || (typeof window !== "undefined" ? window.location.pathname : "/");
+  const separator = cleanBase.includes("?") ? "&" : "?";
+  return `${cleanBase}${separator}/${encodeURIComponent(name)}`;
+}
+
+export function resolvePilcrowAction(name: string, base?: string): string {
+  return appendActionName(base ?? "", name);
+}
+
+/**
+ * Browser global installed by `silcrow.js`.
+ *
+ * Use this directly when integrating with another React library, such as
+ * React Hook Form. For simple native forms, prefer `submitSilcrow` or
+ * `useSilcrowAction`.
+ *
+ * @example
+ * const data = await window.Silcrow!.prefetch<ProductData>("/products");
+ * const unsubscribe = window.Silcrow!.subscribe("route:/cart", () => {});
+ * window.Silcrow!.publish("route:/cart", {count: 2});
+ */
+declare global {
+  interface Window {
+    Silcrow?: {
+      subscribe?: (scope: string, fn: () => void) => () => void;
+      snapshot?: <T = unknown>(scope: string) => T | undefined;
+      publish?: (scope: string, data: unknown) => void;
+      prefetch?: <T = unknown>(path: string) => Promise<T>;
+      submit?: <T = unknown>(
+        url: string,
+        body?: BodyInit | object | null,
+        options?: SilcrowSubmitOptions,
+      ) => Promise<SilcrowSubmitResult<T>>;
+    };
+  }
+}
+
+/**
+ * Subscribe a React component to a Silcrow atom scope.
+ *
+ * @example
+ * type Cart = {count: number; total: string};
+ * const cart = useSilcrowAtom<Cart>("route:/cart", {count: 0, total: "$0.00"});
+ * return <span>{cart.count}</span>;
+ */
+export function useSilcrowAtom<T>(scope: string, fallback: T): T {
+  return useSyncExternalStore<T>(
+    (notify) => window.Silcrow?.subscribe?.(scope, notify) ?? (() => {}),
+    () => window.Silcrow?.snapshot?.<T>(scope) ?? fallback,
+    () => window.Silcrow?.snapshot?.<T>(scope) ?? fallback,
+  );
+}
+
+/**
+ * Patch a Silcrow atom scope.
+ *
+ * This accepts patch data, not an updater function.
+ *
+ * @example
+ * publishSilcrowAtom("route:/cart", {count: 3});
+ */
+export function publishSilcrowAtom<T>(scope: string, data: T): void {
+  window.Silcrow?.publish?.(scope, data);
+}
+
+/**
+ * Prefetch a route and return Silcrow's memoized promise for React `use()`.
+ *
+ * @example
+ * function Products() {
+ *   const promise = useSilcrowPrefetch<ProductData>("/products");
+ *   return <Suspense fallback={<p>Loading...</p>}><Rows promise={promise} /></Suspense>;
+ * }
+ */
+export function useSilcrowPrefetch<T>(path: string): Promise<T> {
+  return useMemo(
+    () =>
+      window.Silcrow?.prefetch?.<T>(path) ??
+      Promise.reject(new Error("Silcrow is not loaded")),
+    [path],
+  );
+}
+
+/**
+ * Read a route atom by path.
+ *
+ * @example
+ * const products = useSilcrowRoute<ProductData>("/products", {items: []});
+ */
+export function useSilcrowRoute<T>(path: string, fallback: T): T {
+  return useSilcrowAtom<T>(`route:${path}`, fallback);
+}
+
+/**
+ * Create a React 19 form action backed by Silcrow transport.
+ *
+ * Use this with React's `useActionState` when you want the raw primitive.
+ *
+ * @example
+ * const [state, action, pending] = useActionState<CreateState, FormData>(
+ *   submitSilcrow<CreateState>("/cart/add/1"),
+ *   {ok: true},
+ * );
+ * return <form action={action}><button disabled={pending}>Add</button></form>;
+ */
+export function submitSilcrow<T>(
+  url: string,
+  options?: SilcrowSubmitOptions,
+) {
+  return async function action(_prev: T, formData: FormData): Promise<T> {
+    if (!window.Silcrow?.submit) {
+      throw new Error("Silcrow is not loaded");
+    }
+    const result = await window.Silcrow.submit<T>(url, formData, {
+      method: options?.method ?? "POST",
+      scope: options?.scope,
+      headers: options?.headers,
+    });
+    return result.data ?? ({ok: result.ok, status: result.status} as T);
+  };
+}
+
+/**
+ * Create an async submit callback for React Hook Form or other form libraries.
+ *
+ * Silcrow/Pilcrow stays responsible for transport; the form library owns
+ * validation, dirty/touched state, focus, arrays, and nested fields.
+ *
+ * @example
+ * const onSubmit = form.handleSubmit(async (values) => {
+ *   const result = await silcrowSubmitHandler<CreateState, CartValues>(
+ *     "/cart/add/1",
+ *   )(values);
+ *   if (!result.ok) form.setError("quantity", {message: "Invalid quantity"});
+ * });
+ */
+export function silcrowSubmitHandler<Result = unknown, Values = object>(
+  url: string,
+  options?: SilcrowSubmitOptions,
+) {
+  return async function submit(values: Values): Promise<SilcrowSubmitResult<Result>> {
+    if (!window.Silcrow?.submit) {
+      throw new Error("Silcrow is not loaded");
+    }
+    return window.Silcrow.submit<Result>(url, values as object, {
+      method: options?.method ?? "POST",
+      scope: options?.scope,
+      headers: options?.headers,
+    });
+  };
+}
+
+/**
+ * Tiny React 19 convenience wrapper over `useActionState(submitSilcrow(...))`.
+ *
+ * This is intentionally not a form framework. For complex client-side form UX,
+ * use React Hook Form and `silcrowSubmitHandler`.
+ *
+ * @example
+ * type CreateState = {ok: boolean; message?: string; errors?: Record<string, string>};
+ * const [state, action, pending] =
+ *   useSilcrowAction<CreateState>("/cart/add/1");
+ * return <form action={action}><button disabled={pending}>Add</button></form>;
+ */
+export function useSilcrowAction<State>(
+  url: string,
+  initialState = {ok: true} as State,
+  options?: SilcrowActionOptions,
+) {
+  const submitOptions = options
+    ? {method: options.method, scope: options.scope, headers: options.headers}
+    : undefined;
+  return useActionState<State, FormData>(
+    submitSilcrow<State>(url, submitOptions),
+    initialState,
+    options?.permalink,
+  );
+}
+
+/**
+ * React 19 action wrapper that resolves a Pilcrow page/fragment named action.
+ *
+ * @example
+ * const [state, action, pending] = usePilcrowAction<CreateState>("add");
+ */
+export function usePilcrowAction<State>(
+  name: string,
+  initialState = {ok: true} as State,
+  options?: SilcrowActionOptions & {base?: string},
+) {
+  const context = useContext(PilcrowReactContext);
+  const url = resolvePilcrowAction(name, options?.base ?? context.actionBase);
+  return useSilcrowAction<State>(url, initialState, options);
+}
+"#;
 
 fn write_empty_react_assets(out_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(out_dir)?;
     fs::write(
         out_dir.join("generated_react_assets.rs"),
         r#"pub fn asset(_path: &str) -> Option<(&'static str, &'static [u8])> {
+    None
+}
+"#,
+    )
+}
+
+fn write_empty_react_ssr(out_dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(out_dir)?;
+    fs::write(
+        out_dir.join("generated_react_ssr.rs"),
+        r#"pub const SSR_BUNDLES: &[(&str, &str)] = &[];
+
+pub fn ssr_bundle(_id: &str) -> Option<&'static str> {
+    None
+}
+"#,
+    )
+}
+
+fn write_empty_react_shells(out_dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(out_dir)?;
+    fs::write(
+        out_dir.join("generated_react_shells.rs"),
+        r#"pub fn shell(_id: &str) -> Option<&'static str> {
     None
 }
 "#,
@@ -484,6 +985,91 @@ fn write_react_assets_module(out_dir: &Path, dist_dir: &Path) -> io::Result<()> 
     src.push_str("    }\n");
     src.push_str("}\n");
     fs::write(out_dir.join("generated_react_assets.rs"), src)
+}
+
+fn write_react_ssr_module(
+    out_dir: &Path,
+    dist_ssr_dir: &Path,
+    sources: &BTreeMap<String, ReactSource>,
+) -> io::Result<()> {
+    let mut src = String::new();
+
+    src.push_str("pub const SSR_BUNDLES: &[(&str, &str)] = &[\n");
+    for source in sources.values() {
+        let bundle_path = dist_ssr_dir.join(format!("{}.ssr.js", source.id));
+        if bundle_path.exists() {
+            let abs_text = bundle_path.to_string_lossy().replace('\\', "/");
+            src.push_str(&format!(
+                "    ({:?}, include_str!({:?})),\n",
+                source.id, abs_text
+            ));
+        }
+    }
+    src.push_str("];\n\n");
+
+    src.push_str("pub fn ssr_bundle(id: &str) -> Option<&'static str> {\n");
+    src.push_str("    SSR_BUNDLES.iter().find(|(k, _)| *k == id).map(|(_, v)| *v)\n");
+    src.push_str("}\n");
+
+    fs::write(out_dir.join("generated_react_ssr.rs"), src)
+}
+
+fn write_react_shells_module(out_dir: &Path, shells: &HashMap<String, String>) -> io::Result<()> {
+    let mut src = String::new();
+    src.push_str("pub fn shell(id: &str) -> Option<&'static str> {\n");
+    if shells.is_empty() {
+        src.push_str("    let _ = id;\n");
+        src.push_str("    None\n");
+    } else {
+        src.push_str("    match id {\n");
+        for (id, html) in shells {
+            src.push_str(&format!("        {:?} => Some({:?}),\n", id, html));
+        }
+        src.push_str("        _ => None,\n");
+        src.push_str("    }\n");
+    }
+    src.push_str("}\n");
+    fs::write(out_dir.join("generated_react_shells.rs"), src)
+}
+
+/// Run the component with empty props via Node to capture the static shell HTML.
+/// Used at build time for `strategy="shell"` islands.
+fn render_static_shell(
+    id: &str,
+    ssr_bundle_path: &Path,
+    manifest_dir: &Path,
+    node_bin: &str,
+) -> io::Result<String> {
+    let runner_path = ssr_bundle_path
+        .parent()
+        .unwrap_or(manifest_dir)
+        .join(format!("__pilcrow_shell_{id}.mjs"));
+
+    let bundle_url = ssr_bundle_path.to_string_lossy().replace('\\', "/");
+    let script =
+        format!("import {{ render }} from {bundle_url:?};\nprocess.stdout.write(render({{}}));\n");
+    fs::write(&runner_path, &script)?;
+
+    let result = Command::new(node_bin)
+        .arg(&runner_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .current_dir(manifest_dir)
+        .output();
+
+    let _ = fs::remove_file(&runner_path);
+
+    let output = result?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Node shell render failed for island `{id}`: {stderr}"),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn collect_dist_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
@@ -840,13 +1426,47 @@ mod tests {
             &RoutingConfig {
                 ignore_directories: vec!["react".into()],
             },
+            Some("/dashboard"),
         )
         .unwrap();
 
         assert!(out.contains("data-pilcrow-react"));
         assert!(out.contains("data-strategy=\"visible\""));
         assert!(out.contains("data-prop-count=\"{{ props.count }}\""));
+        assert!(out.contains("data-pilcrow-action-base=\"/dashboard\""));
         assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].strategy, "visible");
+    }
+
+    #[test]
+    fn react_tag_supports_json_props() {
+        let root = std::env::temp_dir().join("pilcrow_react_json_props");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/pages/dashboard/react")).unwrap();
+        let page = root.join("src/pages/dashboard/index.html");
+        fs::write(
+            root.join("src/pages/dashboard/react/Grid.tsx"),
+            "export default function Grid() { return null }",
+        )
+        .unwrap();
+
+        let (out, _) = transpile_react_tags(
+            r#"<react src="./react/Grid.tsx" strategy="visible" json-rows="{{ rows_json }}" />"#,
+            &page,
+            &root.join("src"),
+            &ReactBuildConfig {
+                enabled: true,
+                dirs: vec!["react".into()],
+                ..Default::default()
+            },
+            &RoutingConfig {
+                ignore_directories: vec!["react".into()],
+            },
+            Some("/dashboard"),
+        )
+        .unwrap();
+
+        assert!(out.contains("data-prop-json-rows=\"{{ rows_json }}\""));
     }
 
     #[test]
@@ -871,6 +1491,7 @@ mod tests {
                 ..Default::default()
             },
             &RoutingConfig::default(),
+            None,
         )
         .unwrap_err();
 
@@ -878,61 +1499,114 @@ mod tests {
     }
 
     #[test]
-    fn react_tag_accepts_jsx_source() {
-        let root = std::env::temp_dir().join("pilcrow_react_tag_jsx");
+    fn shell_strategy_requires_ssr_flag() {
+        let root = std::env::temp_dir().join("pilcrow_react_shell_ssr_flag");
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("src/pages/dashboard/react")).unwrap();
-        let page = root.join("src/pages/dashboard/index.html");
+        fs::create_dir_all(root.join("src/pages/react")).unwrap();
+        let page = root.join("src/pages/index.html");
         fs::write(
-            root.join("src/pages/dashboard/react/Counter.jsx"),
-            "export default function Counter() { return <button>Count</button> }",
+            root.join("src/pages/react/Button.tsx"),
+            "export default function Button() { return null }",
         )
         .unwrap();
 
-        let (out, refs) = transpile_react_tags(
-            r#"<react src="./react/Counter.jsx" strategy="visible" />"#,
+        let err = transpile_react_tags(
+            r#"<react src="./react/Button.tsx" strategy="shell" />"#,
             &page,
             &root.join("src"),
             &ReactBuildConfig {
                 enabled: true,
+                ssr: false,
                 dirs: vec!["react".into()],
                 ..Default::default()
             },
             &RoutingConfig {
                 ignore_directories: vec!["react".into()],
             },
+            None,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("ssr = true"));
+    }
+
+    #[test]
+    fn shell_strategy_emits_shell_placeholder() {
+        let root = std::env::temp_dir().join("pilcrow_react_shell_placeholder");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/pages/react")).unwrap();
+        let page = root.join("src/pages/index.html");
+        fs::write(
+            root.join("src/pages/react/Button.tsx"),
+            "export default function Button() { return null }",
         )
         .unwrap();
 
-        assert!(out.contains("data-pilcrow-react"));
-        assert_eq!(refs.len(), 1);
-        assert!(refs[0].source_path.ends_with("Counter.jsx"));
+        let (out, refs) = transpile_react_tags(
+            r#"<react src="./react/Button.tsx" strategy="shell" />"#,
+            &page,
+            &root.join("src"),
+            &ReactBuildConfig {
+                enabled: true,
+                ssr: true,
+                dirs: vec!["react".into()],
+                ..Default::default()
+            },
+            &RoutingConfig {
+                ignore_directories: vec!["react".into()],
+            },
+            None,
+        )
+        .unwrap();
+
+        assert!(out.contains(REACT_SHELL_PLACEHOLDER_PREFIX));
+        assert!(out.contains("data-strategy=\"shell\""));
+        assert_eq!(refs[0].strategy, "shell");
     }
 
     #[test]
-    fn vite_config_aliases_pilcrow_react_hooks() {
-        let mut inputs = BTreeMap::new();
-        inputs.insert("counter".to_string(), PathBuf::from("/tmp/counter.tsx"));
+    fn ssr_strategy_emits_ssr_placeholder() {
+        let root = std::env::temp_dir().join("pilcrow_react_ssr_placeholder");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/pages/react")).unwrap();
+        let page = root.join("src/pages/index.html");
+        fs::write(
+            root.join("src/pages/react/Counter.tsx"),
+            "export default function Counter() { return null }",
+        )
+        .unwrap();
 
-        let config = render_vite_config(
-            &inputs,
-            Path::new("/tmp/dist"),
-            Path::new("/tmp/pilcrow_react_hooks.jsx"),
-        );
+        let (out, refs) = transpile_react_tags(
+            r#"<react src="./react/Counter.tsx" strategy="ssr" />"#,
+            &page,
+            &root.join("src"),
+            &ReactBuildConfig {
+                enabled: true,
+                ssr: true,
+                dirs: vec!["react".into()],
+                ..Default::default()
+            },
+            &RoutingConfig {
+                ignore_directories: vec!["react".into()],
+            },
+            None,
+        )
+        .unwrap();
 
-        assert!(config.contains("find: /^pilcrow\\/react$/"));
-        assert!(config.contains(r#"replacement: "/tmp/pilcrow_react_hooks.jsx""#));
-        assert!(config.contains(r#"outDir: "/tmp/dist""#));
+        assert!(out.contains(REACT_SSR_PLACEHOLDER_PREFIX));
+        assert!(out.contains("data-strategy=\"ssr\""));
+        assert_eq!(refs[0].strategy, "ssr");
     }
 
     #[test]
-    fn react_hooks_module_exposes_hook_api() {
-        let hooks = render_hooks_module();
-
-        assert!(hooks.contains("export function useSilcrowAtom"));
-        assert!(hooks.contains("export function useSilcrowPrefetch"));
-        assert!(hooks.contains("export function useSilcrowRoute"));
-        assert!(hooks.contains("export function useSilcrowAction"));
-        assert!(hooks.contains("export function publishSilcrowAtom"));
+    fn react_support_module_exposes_action_api_without_form_dependencies() {
+        assert!(PILCROW_REACT_TS.contains("export function submitSilcrow"));
+        assert!(PILCROW_REACT_TS.contains("export function silcrowSubmitHandler"));
+        assert!(PILCROW_REACT_TS.contains("export function useSilcrowAction"));
+        assert!(PILCROW_REACT_TS.contains("useActionState<State, FormData>"));
+        assert!(!PILCROW_REACT_TS.contains("zodFormValidator"));
+        assert!(!PILCROW_REACT_TS.contains("safeParse"));
+        assert!(!PILCROW_REACT_TS.contains("react-hook-form"));
+        assert!(!PILCROW_REACT_TS.contains("from \"zod\""));
     }
 }

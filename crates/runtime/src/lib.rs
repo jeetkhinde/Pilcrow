@@ -10,6 +10,7 @@ pub(crate) mod dev;
 pub mod generated_routes;
 pub mod i18n;
 pub mod image;
+pub mod island_ssr;
 pub mod isr;
 pub mod middleware;
 pub mod response;
