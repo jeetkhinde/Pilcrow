@@ -912,9 +912,9 @@ export function useSilcrowAction<State>(
  * React 19 action wrapper that resolves a Pilcrow page/fragment named action.
  *
  * @example
- * const [state, action, pending] = usePilcrowAction<CreateState>("add");
+ * const [state, action, pending] = usePilcrowNamedAction<CreateState>("add");
  */
-export function usePilcrowAction<State>(
+export function usePilcrowNamedAction<State>(
   name: string,
   initialState = {ok: true} as State,
   options?: SilcrowActionOptions & {base?: string},
