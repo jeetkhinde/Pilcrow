@@ -99,4 +99,8 @@
   document.addEventListener("silcrow:patched", event => {
     scan(event.detail && event.detail.target ? event.detail.target : document);
   });
+
+  document.addEventListener("silcrow:load", event => {
+    scan(event.detail && event.detail.target ? event.detail.target : document);
+  });
 })();

@@ -651,6 +651,7 @@ fn write_react_support_module(react_root: &Path) -> io::Result<PathBuf> {
 
 const PILCROW_REACT_TS: &str = r#"import {
   createContext,
+  use,
   useActionState,
   useContext,
   useMemo,
@@ -922,6 +923,72 @@ export function usePilcrowNamedAction<State>(
   const context = useContext(PilcrowReactContext);
   const url = resolvePilcrowAction(name, options?.base ?? context.actionBase);
   return useSilcrowAction<State>(url, initialState, options);
+}
+
+/**
+ * Prefetch a route, suspend until ready, then subscribe to live updates.
+ *
+ * Requires a `<Suspense>` boundary above the component that calls this hook.
+ *
+ * @example
+ * function Products() {
+ *   const products = useSilcrowResource<ProductData>("/products", {items: []});
+ *   return <ul>{products.items.map(p => <li key={p.id}>{p.name}</li>)}</ul>;
+ * }
+ */
+export function useSilcrowResource<T>(path: string, fallback: T): T {
+  const initial = use(useSilcrowPrefetch<T>(path));
+  return useSilcrowRoute<T>(path, initial ?? fallback);
+}
+
+/**
+ * Shared form state shape expected by `useSilcrowForm`.
+ *
+ * Servers should return `{ok, message?, errors?}` to use this hook.
+ */
+export type SilcrowFormState = {
+  ok: boolean;
+  message?: string;
+  errors?: Record<string, string>;
+};
+
+export type SilcrowFormResult<State extends SilcrowFormState> = {
+  state: State;
+  action: (formData: FormData) => void;
+  pending: boolean;
+  ok: State["ok"];
+  message: State["message"];
+  errors: State["errors"];
+};
+
+/**
+ * Object-style wrapper over `useSilcrowAction` for simple native forms.
+ *
+ * Use this when the tuple from `useSilcrowAction` is noisy in JSX. For complex
+ * client-side form UX (validation, arrays, focus), use React Hook Form with
+ * `silcrowSubmitHandler` instead.
+ *
+ * @example
+ * type CreateState = {ok: boolean; message?: string; errors?: Record<string, string>};
+ * const form = useSilcrowForm<CreateState>("/cart/add/1");
+ * return (
+ *   <form action={form.action}>
+ *     <button disabled={form.pending}>Add</button>
+ *     {form.message ? <p role="status">{form.message}</p> : null}
+ *     {form.errors?.quantity ? <p role="alert">{form.errors.quantity}</p> : null}
+ *   </form>
+ * );
+ */
+export function useSilcrowForm<State extends SilcrowFormState = SilcrowFormState>(
+  url: string,
+  initialState = {ok: true} as State,
+  options?: SilcrowActionOptions,
+): SilcrowFormResult<State> {
+  const [state, action, pending] = useSilcrowAction<State>(url, initialState, options);
+  return useMemo(
+    () => ({state, action, pending, ok: state.ok, message: state.message, errors: state.errors}),
+    [state, action, pending],
+  );
 }
 "#;
 
@@ -1603,6 +1670,8 @@ mod tests {
         assert!(PILCROW_REACT_TS.contains("export function submitSilcrow"));
         assert!(PILCROW_REACT_TS.contains("export function silcrowSubmitHandler"));
         assert!(PILCROW_REACT_TS.contains("export function useSilcrowAction"));
+        assert!(PILCROW_REACT_TS.contains("export function useSilcrowForm"));
+        assert!(PILCROW_REACT_TS.contains("export function useSilcrowResource"));
         assert!(PILCROW_REACT_TS.contains("useActionState<State, FormData>"));
         assert!(!PILCROW_REACT_TS.contains("zodFormValidator"));
         assert!(!PILCROW_REACT_TS.contains("safeParse"));
