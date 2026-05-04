@@ -55,6 +55,11 @@ pub fn transpile_react_tags(
     let mut counter = 0usize;
 
     while i < template.len() {
+        if let Some(consumed) = copy_html_comment(template, i, &mut output) {
+            i += consumed;
+            continue;
+        }
+
         if template[i..].starts_with("<react") {
             let rest = &template[i + 6..];
             let next = rest.chars().next();
@@ -81,6 +86,19 @@ pub fn transpile_react_tags(
     }
 
     Ok((output, refs))
+}
+
+fn copy_html_comment(input: &str, start: usize, output: &mut String) -> Option<usize> {
+    if !input[start..].starts_with("<!--") {
+        return None;
+    }
+
+    let consumed = match input[start + 4..].find("-->") {
+        Some(end) => 4 + end + 3,
+        None => input.len() - start,
+    };
+    output.push_str(&input[start..start + consumed]);
+    Some(consumed)
 }
 
 fn parse_react_tag(
@@ -1503,6 +1521,40 @@ mod tests {
         assert!(out.contains("data-pilcrow-action-base=\"/dashboard\""));
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].strategy, "visible");
+    }
+
+    #[test]
+    fn react_tag_ignores_tags_inside_html_comments() {
+        let root = std::env::temp_dir().join("pilcrow_react_tag_comment");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src/pages/react")).unwrap();
+        let page = root.join("src/pages/index.html");
+        fs::write(
+            root.join("src/pages/react/Visible.tsx"),
+            "export default function Visible() { return null }",
+        )
+        .unwrap();
+
+        let input = r#"<!-- <react src="./react/Missing.tsx" strategy="visible" /> --><react src="./react/Visible.tsx" strategy="visible" />"#;
+        let (out, refs) = transpile_react_tags(
+            input,
+            &page,
+            &root.join("src"),
+            &ReactBuildConfig {
+                enabled: true,
+                dirs: vec!["react".into()],
+                ..Default::default()
+            },
+            &RoutingConfig {
+                ignore_directories: vec!["react".into()],
+            },
+            None,
+        )
+        .unwrap();
+
+        assert!(out.contains(r#"<!-- <react src="./react/Missing.tsx" strategy="visible" /> -->"#));
+        assert_eq!(refs.len(), 1);
+        assert!(refs[0].source_path.ends_with("Visible.tsx"));
     }
 
     #[test]

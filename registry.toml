@@ -310,7 +310,7 @@ name = "Deferred Streams"
 domain = "pilcrow"
 status = "stable"
 summary = "Deferred<T> and DeferredHtml stream late data or HTML patches after the shell response."
-spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve. Deferred<T> sends `window.__pilcrow_deferred(key, value)` scripts; DeferredHtml sends `window.__pd(slot_name, html)` scripts. Streaming HTML responses include `silcrow-full-reload: true` so silcrow boosted top-level GET navigation falls back to browser navigation instead of buffering and sanitizing streamed script chunks."
+spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve. Deferred<T>/AsyncValue<T> template interpolations become `data-pilcrow-async-value` text targets and resolved values stream as `window.__pilcrow_async_value(key, value)` scripts that set `textContent` directly. DeferredHtml/AsyncHtml template interpolations become `data-pilcrow-async-html` targets and resolved HTML streams as `window.__pilcrow_async_html(key, html)` scripts that replace target children. Streaming HTML responses include `silcrow-full-reload: true` so silcrow boosted top-level GET navigation falls back to browser navigation instead of buffering and sanitizing streamed script chunks."
 canonical_usage = "pub struct Props { pub title: String, pub count: Deferred<i32> }. pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { title: String::from(\"Hello\"), count: Deferred::spawn(async { expensive_db_call().await }) }) }. In template: {{ count }} (renders as empty string until resolved)."
 constraints = [
   "Deferred<T> type T must implement Display for the initial shell render.",
@@ -318,6 +318,7 @@ constraints = [
   "Deferred fields must be declared in Props.",
   "Deferred::ready(value) creates an already-resolved value with no streaming overhead.",
   "Deferred pages require browser-level navigation for top-level page transitions; silcrow.js honors the streamed response header automatically.",
+  "AsyncValue<T> patches are Pilcrow-owned scalar text updates and do not require Silcrow patch bindings.",
 ]
 invalid_examples = [
   "Using Deferred<T> outside of a Props struct",
@@ -330,6 +331,40 @@ source_refs = [
 ]
 test_refs = ["crates/routekit/src/templating/codegen/tests.rs"]
 validation_rules = ["Deferred fields must be declared in Props."]
+scaffold_templates = []
+
+[[features]]
+id = "live-props"
+name = "Live Props"
+domain = "pilcrow"
+status = "stable"
+summary = "LiveProp<T> fields render an initial value in SSR HTML and automatically subscribe the browser to server-pushed SSE updates."
+spec = "Props fields typed LiveProp<T> opt in to persistent SSE subscriptions. Codegen wraps {{ field }} template expressions with <span :text=\"field\"> for DOM patching, injects a hidden <div s-sse=\"/__pilcrow/live{path}\"> into the response HTML, and generates a GET /__pilcrow/live{pattern} SSE route. The client subscribes via Silcrow's s-sse directive and receives SilcrowEvent::patch events. LiveTarget::Dom patches :text bindings; LiveTarget::DomAndStore also publishes to a Silcrow stream: atom; LiveTarget::Store publishes only to the atom with no DOM binding. All live fields on a page share one EventSource connection."
+canonical_usage = "pub struct Props { pub count: LiveProp<u64>, pub label: String }. pub async fn load(_req: Req) -> AppResult<Props> { let rx = COUNTER.subscribe(); Ok(Props { count: LiveProp::watch(rx).target(LiveTarget::Dom), label: String::from(\"counter\") }) }. In template: {{ count }} (auto-wrapped as <span :text=\"count\">{{ count }}</span>)."
+constraints = [
+  "LiveProp<T>: T must implement Display, Clone, Serialize, Send, Sync, and 'static.",
+  "LiveProp::watch(rx) clones the current watch value as the initial; requires T: Clone.",
+  "LiveProp::initial(v) creates a static field with no producer — useful as placeholder when live() is defined separately.",
+  "All live fields on a page share a single SSE connection at /__pilcrow/live{path}.",
+  "The SSE route re-calls load() (or live() if defined) on every new client connection — producers must be cheap to recreate.",
+  "{{ live_field }} in templates is automatically wrapped with :text span; no manual wrapping needed.",
+]
+invalid_examples = [
+  "Using LiveProp<T> where T does not implement Serialize or Sync",
+  "Manually writing <span :text=\"field\"> — the template compiler does this automatically",
+  "Assuming LiveProp fields share state across requests — each SSE connection re-calls load()",
+]
+source_refs = [
+  "crates/runtime/src/deferred.rs",
+  "crates/routekit/src/templating/codegen/app_module.rs",
+  "crates/routekit/src/templating/codegen/instrument.rs",
+  "crates/routekit/src/templating/compiler.rs",
+]
+test_refs = []
+validation_rules = [
+  "LiveProp<T> fields must be declared in Props.",
+  "T in LiveProp<T> must implement Display, Clone, Serialize, Send, Sync.",
+]
 scaffold_templates = []
 
 [[features]]
@@ -657,6 +692,7 @@ constraints = [
   "Island HTML files live in pages/*/islands/ (co-located) or in a [[fragments]] dir (shared).",
   "Island files receive no layout wrapping — they render as raw HTML fragments.",
   "Dynamic values in extra attrs are passed through verbatim as Askama expressions in the URL.",
+  "<island> tags inside HTML comments are ignored and preserved as comments.",
 ]
 invalid_examples = [
   "<Island client:load> — wrong syntax, was planned API",
@@ -858,6 +894,7 @@ constraints = [
   "The \"pilcrow/react\" hook module is only available inside React island Vite builds.",
   "React route-data examples assume React 19 use() and Suspense.",
   "Silcrow.submit from React should target the same Pilcrow named action URLs used by enhanced HTML forms.",
+  "<react> tags inside HTML comments are ignored and preserved as comments.",
 ]
 invalid_examples = [
   "<react src=\"./react/Counter.tsx\" /> — missing strategy",
@@ -1094,7 +1131,8 @@ spec = """
 tower_http::trace::TraceLayer::new_for_http() is installed by start() on every app.
 It emits structured tracing spans for each request (method, path, status, latency).
 Configure a subscriber (e.g. tracing-subscriber with EnvFilter) in main() to capture them.
-The framework itself uses tracing::info! for startup and shutdown messages.
+The framework itself uses tracing::info! for startup and shutdown messages, and the
+default TokioAdapter also prints the listening URL to stderr after a successful bind.
 """
 canonical_usage = """
 // main.rs
@@ -1108,6 +1146,7 @@ async fn main() {
 """
 constraints = [
   "TraceLayer is always installed — it emits no output unless a tracing subscriber is configured.",
+  "The successful-bind URL is printed by TokioAdapter even without a tracing subscriber.",
   "Add tracing-subscriber to your app's Cargo.toml to see logs.",
 ]
 invalid_examples = []
@@ -2032,6 +2071,7 @@ constraints = [
   "Remote URLs in src are blocked unless the domain is listed in images.domains.",
   "Dynamic Askama expressions ({{ ... }}) inside src are passed verbatim to avoid double-encoding.",
   "Cache is disk-based; ensure cache_dir is writable at runtime.",
+  "<pilcrow:image> tags inside HTML comments are ignored and preserved as comments.",
 ]
 source_refs = [
   "crates/core/src/config/config.rs — ImageConfig",

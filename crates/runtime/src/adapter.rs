@@ -53,6 +53,7 @@ impl PilcrowAdapter for TokioAdapter {
                 }
             };
             tracing::info!("listening on http://{bind_addr}");
+            eprintln!("pilcrow: listening on http://{bind_addr}");
             if let Err(err) = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await

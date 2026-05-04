@@ -89,4 +89,6 @@ pub struct WrittenTemplatesOutput {
     pub deferred_html_fields_map: HashMap<String, Vec<String>>,
     pub isr_config_map: HashMap<String, IsrOpts>,
     pub ssg_config_map: HashMap<String, SsgOpts>,
+    pub live_fields_map: HashMap<String, Vec<String>>,
+    pub has_live_fn_map: HashMap<String, bool>,
 }

@@ -296,6 +296,13 @@ pub fn instrument_frontmatter(
         file.items.len() - 1
     };
 
+    // Detect a `live()` fn or `LiveProps` struct — must be done before the mutable borrow.
+    let has_live_fn = file.items.iter().any(|item| match item {
+        syn::Item::Fn(f) => f.sig.ident == "live",
+        syn::Item::Struct(s) => s.ident == "LiveProps",
+        _ => false,
+    });
+
     let props_item = file
         .items
         .get_mut(props_index)
@@ -308,13 +315,13 @@ pub fn instrument_frontmatter(
     // Extract the page's own named fields before any modification.
     let own_syn_fields = extract_named_fields(props_struct);
 
-    // Detect `Deferred<T>` (JSON patch) and `DeferredHtml` (HTML slot) fields.
+    // Detect `AsyncValue<T>` (JSON patch) and `AsyncHtml` (HTML slot) fields.
     let deferred_fields: Vec<String> = own_syn_fields
         .iter()
         .filter_map(|f| {
             if let Some(ident) = &f.ident {
                 if type_last_ident(&f.ty)
-                    .map(|id| id == "Deferred")
+                    .map(|id| id == "AsyncValue")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
@@ -329,7 +336,7 @@ pub fn instrument_frontmatter(
         .filter_map(|f| {
             if let Some(ident) = &f.ident {
                 if type_last_ident(&f.ty)
-                    .map(|id| id == "DeferredHtml")
+                    .map(|id| id == "AsyncHtml")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
@@ -338,6 +345,46 @@ pub fn instrument_frontmatter(
             None
         })
         .collect();
+
+    // Detect `LiveProp<T>` fields.
+    let live_fields: Vec<String> = own_syn_fields
+        .iter()
+        .filter_map(|f| {
+            if let Some(ident) = &f.ident {
+                if type_last_ident(&f.ty)
+                    .map(|id| id == "LiveProp")
+                    .unwrap_or(false)
+                {
+                    return Some(ident.to_string());
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Rewrite {{ live_field }} → <span :text="live_field">{{ live_field }}</span>
+    // for Dom/DomAndStore fields so Silcrow can patch them via SSE.
+    let live_template = if live_fields.is_empty() {
+        std::borrow::Cow::Borrowed(template_source)
+    } else {
+        std::borrow::Cow::Owned(crate::templating::compiler::inject_live_text_spans(
+            template_source,
+            &live_fields,
+        ))
+    };
+    let template_source = live_template.as_ref();
+
+    // Rewrite {{ async_value }} → <span data-pilcrow-async-value="async_value" :text="async_value">
+    // so scalar deferred patches can target a small binding root instead of document.body.
+    let async_value_template = if deferred_fields.is_empty() {
+        std::borrow::Cow::Borrowed(template_source)
+    } else {
+        std::borrow::Cow::Owned(crate::templating::compiler::inject_async_value_text_spans(
+            template_source,
+            &deferred_fields,
+        ))
+    };
+    let template_source = async_value_template.as_ref();
 
     if extra_fields.is_empty() {
         // Normal path: Props is used directly for template rendering.
@@ -404,6 +451,8 @@ pub fn instrument_frontmatter(
         page_options,
         deferred_fields,
         deferred_html_fields,
+        live_fields,
+        has_live_fn,
     })
 }
 

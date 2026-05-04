@@ -70,10 +70,10 @@ pub mod adapters {
     pub use runtime::adapters::LambdaAdapter;
 }
 
-// ── Deferred streaming ───────────────────────────────────────
+// ── Async streaming ──────────────────────────────────────────
 pub use runtime::{
-    deferred_response, deferred_response_combined, Deferred, DeferredHtml, DeferredHtmlPatch,
-    DeferredPatch,
+    async_response_combined, async_value_response, AsyncHtml, AsyncHtmlPatch, AsyncValue,
+    AsyncValuePatch, LiveProp, LiveTarget, __live_props_response,
 };
 
 // ── ISR (Incremental Static Regeneration) ────────────────────
@@ -93,7 +93,9 @@ pub use runtime::csrf_middleware as __csrf_middleware;
 #[doc(hidden)]
 pub use runtime::tokio;
 #[doc(hidden)]
-pub use runtime::{__deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred};
+pub use runtime::{__async_html_patch_stream, __async_value_patch_stream, __serialize_async_value};
+#[doc(hidden)]
+pub use runtime::{__serialize_page_props, __streaming_props_response};
 #[doc(hidden)]
 pub use tracing;
 

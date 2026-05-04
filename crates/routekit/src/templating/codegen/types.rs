@@ -111,6 +111,10 @@ pub struct GeneratedTemplatesModule {
     pub isr_config_map: HashMap<String, IsrOpts>,
     /// Map from page module_name to its SSG configuration (only for pages with `PRERENDER = true`).
     pub ssg_config_map: HashMap<String, SsgOpts>,
+    /// Map from page module_name to its `LiveProp<T>` field names.
+    pub live_fields_map: HashMap<String, Vec<String>>,
+    /// Map from page module_name to whether a `live()` fn and/or `LiveProps` struct are present.
+    pub has_live_fn_map: HashMap<String, bool>,
 }
 
 /// Which server hook functions are present in `src/hooks.rs`.
@@ -141,4 +145,8 @@ pub struct InstrumentedFrontmatter {
     pub deferred_fields: Vec<String>,
     /// Names of `DeferredHtml` (HTML slot) fields in `Props`, in declaration order.
     pub deferred_html_fields: Vec<String>,
+    /// Names of `LiveProp<T>` fields in `Props`, in declaration order.
+    pub live_fields: Vec<String>,
+    /// True when a `live()` fn or `LiveProps` struct is present in the frontmatter.
+    pub has_live_fn: bool,
 }

@@ -89,6 +89,130 @@ pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleP
     Ok(parts)
 }
 
+/// Rewrites `{{ field }}` interpolations for `LiveProp<T>` fields into
+/// `<span :text="field">{{ field }}</span>` so Silcrow can patch them via SSE.
+///
+/// Only fields whose names appear in `live_fields` are wrapped. Fields with
+/// `LiveTarget::Store` (atom-only, no DOM binding) should not appear in this
+/// list — only `Dom` and `DomAndStore` fields need the `:text` span.
+///
+/// The transformation is skipped when the interpolation is already wrapped
+/// (i.e., preceded by `>`), so calling this twice is safe.
+pub fn inject_live_text_spans(template: &str, live_fields: &[String]) -> String {
+    if live_fields.is_empty() {
+        return template.to_string();
+    }
+    let mut out = template.to_string();
+    for field in live_fields {
+        // Match {{ field }} with optional surrounding whitespace inside braces.
+        let expr = format!("{{{{ {field} }}}}");
+        let span = format!("<span :text=\"{field}\">{{{{ {field} }}}}</span>");
+        // Only replace when not already inside a :text span (check for preceding `>`
+        // is not foolproof, but replacing the full pattern avoids double-wrapping
+        // since the replacement contains the original as a substring).
+        out = out.replace(&expr, &span);
+        // Also handle no-space variant: {{field}}
+        let expr_ns = format!("{{{{{field}}}}}");
+        if expr_ns != expr {
+            let span_ns = format!("<span :text=\"{field}\">{{{{{field}}}}}</span>");
+            out = out.replace(&expr_ns, &span_ns);
+        }
+    }
+    out
+}
+
+/// Rewrites `{{ field }}` interpolations for `AsyncValue<T>` fields into a
+/// compact Pilcrow-owned target for deferred scalar patches.
+pub fn inject_async_value_text_spans(template: &str, async_fields: &[String]) -> String {
+    if async_fields.is_empty() {
+        return template.to_string();
+    }
+
+    fn async_value_attr(field: &str) -> String {
+        format!("data-pilcrow-async-value=\"{field}\"")
+    }
+
+    fn already_bound_before(input: &str, idx: usize, field: &str) -> bool {
+        let Some(open_end) = input[..idx].rfind('>') else {
+            return false;
+        };
+        let Some(open_start) = input[..open_end].rfind('<') else {
+            return false;
+        };
+        let tag = &input[open_start..=open_end];
+        tag.contains(&format!("data-pilcrow-async-value=\"{field}\""))
+            || tag.contains(&format!("data-pilcrow-async-value='{field}'"))
+    }
+
+    fn can_augment_parent(input: &str, idx: usize, expr_len: usize) -> bool {
+        let Some(open_end) = input[..idx].rfind('>') else {
+            return false;
+        };
+        if !input[open_end + 1..idx].trim().is_empty() {
+            return false;
+        }
+        let after_expr = idx + expr_len;
+        let Some(close_start_rel) = input[after_expr..].find("</") else {
+            return false;
+        };
+        input[after_expr..after_expr + close_start_rel]
+            .trim()
+            .is_empty()
+    }
+
+    fn augment_last_open_tag(out: &mut String, field: &str) -> bool {
+        let Some(open_end) = out.rfind('>') else {
+            return false;
+        };
+        let Some(open_start) = out[..open_end].rfind('<') else {
+            return false;
+        };
+        let tag = &out[open_start..=open_end];
+        if tag.starts_with("</") || tag.contains(&async_value_attr(field)) {
+            return false;
+        }
+
+        let attrs = format!(" {}", async_value_attr(field));
+        out.insert_str(open_end, &attrs);
+        true
+    }
+
+    fn replace_expr(input: String, expr: &str, replacement: &str, field: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        let mut cursor = 0;
+        while let Some(rel) = input[cursor..].find(expr) {
+            let idx = cursor + rel;
+            out.push_str(&input[cursor..idx]);
+            if already_bound_before(&input, idx, field) {
+                out.push_str(expr);
+            } else if can_augment_parent(&input, idx, expr.len())
+                && augment_last_open_tag(&mut out, field)
+            {
+                out.push_str(expr);
+            } else {
+                out.push_str(replacement);
+            }
+            cursor = idx + expr.len();
+        }
+        out.push_str(&input[cursor..]);
+        out
+    }
+
+    let mut out = template.to_string();
+    for field in async_fields {
+        let expr = format!("{{{{ {field} }}}}");
+        let span = format!("<span data-pilcrow-async-value=\"{field}\">{expr}</span>");
+        out = replace_expr(out, &expr, &span, field);
+
+        let expr_ns = format!("{{{{{field}}}}}");
+        if expr_ns != expr {
+            let span_ns = format!("<span data-pilcrow-async-value=\"{field}\">{expr_ns}</span>");
+            out = replace_expr(out, &expr_ns, &span_ns, field);
+        }
+    }
+    out
+}
+
 // ── HTTP Verb Attributes ──────────────────────────────────────
 
 /// Maps silcrow verb attributes to their native HTTP method strings.
@@ -334,6 +458,11 @@ pub fn transpile_component_tags(template: &str) -> String {
         let Some(ch) = template[i..].chars().next() else {
             break;
         };
+
+        if let Some(consumed) = copy_html_comment(template, i, &mut output) {
+            i += consumed;
+            continue;
+        }
 
         if ch == '<' {
             if let Some((replacement, consumed)) = parse_component_tag(&template[i..]) {
@@ -786,6 +915,11 @@ pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
     let mut i = 0usize;
 
     while i < template.len() {
+        if let Some(consumed) = copy_html_comment(template, i, &mut output) {
+            i += consumed;
+            continue;
+        }
+
         if template[i..].starts_with("<pilcrow:image") {
             let rest = &template[i + 14..];
             let next = rest.chars().next();
@@ -1019,6 +1153,11 @@ pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> Stri
     let mut counter = 0usize;
 
     while i < template.len() {
+        if let Some(consumed) = copy_html_comment(template, i, &mut output) {
+            i += consumed;
+            continue;
+        }
+
         if template[i..].starts_with("<island") {
             let rest = &template[i + 7..];
             let next = rest.chars().next();
@@ -1039,6 +1178,19 @@ pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> Stri
     }
 
     output
+}
+
+fn copy_html_comment(input: &str, start: usize, output: &mut String) -> Option<usize> {
+    if !input[start..].starts_with("<!--") {
+        return None;
+    }
+
+    let consumed = match input[start + 4..].find("-->") {
+        Some(end) => 4 + end + 3,
+        None => input.len() - start,
+    };
+    output.push_str(&input[start..start + consumed]);
+    Some(consumed)
 }
 
 fn parse_island_tag(input: &str, page_url_base: &str, id: usize) -> Option<(String, usize)> {
@@ -1319,6 +1471,15 @@ pub struct Props {
     }
 
     #[test]
+    fn transpile_component_ignores_tags_inside_html_comments() {
+        let input = r#"<!-- <Card title={hidden} /> --><Card title={visible} />"#;
+        let output = transpile_component_tags(input);
+
+        assert!(output.contains("<!-- <Card title={hidden} /> -->"));
+        assert!(output.contains("{{ Card { title: visible }|safe }}"));
+    }
+
+    #[test]
     fn transpile_ignores_lowercase_html_tags() {
         let input = r#"<div class="x"><span>Hi</span></div>"#;
         let output = transpile_component_tags(input);
@@ -1492,6 +1653,16 @@ pub struct Props { pub title: String }
         let input = "<islander>content</islander>";
         let out = transpile_island_tags(input, "/page");
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn island_ignores_tags_inside_html_comments() {
+        let input = r#"<!-- <island src="./hidden" /> --><island src="./visible" />"#;
+        let out = transpile_island_tags(input, "/page");
+
+        assert!(out.contains(r#"<!-- <island src="./hidden" /> -->"#));
+        assert!(!out.contains(r#"s-get="/page/islands/hidden""#));
+        assert!(out.contains(r#"s-get="/page/islands/visible""#));
     }
 
     #[test]

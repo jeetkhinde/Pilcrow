@@ -51,9 +51,10 @@ pub use axum;
 pub use response::response::html;
 
 pub use deferred::{
-    __deferred_html_patch_stream, __deferred_patch_stream, __serialize_deferred,
-    __serialize_page_props, __streaming_props_response, deferred_response,
-    deferred_response_combined, Deferred, DeferredHtml, DeferredHtmlPatch, DeferredPatch,
+    __async_html_patch_stream, __async_value_patch_stream, __serialize_async_value,
+    __serialize_page_props, __streaming_props_response, async_response_combined,
+    async_value_response, AsyncHtml, AsyncHtmlPatch, AsyncValue, AsyncValuePatch,
+    LiveProp, LiveTarget, __live_props_response,
 };
 // ── ISR ──────────────────────────────────────────────────────
 pub use isr::{__isr_cache_key, CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle};

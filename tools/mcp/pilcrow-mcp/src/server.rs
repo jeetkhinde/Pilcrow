@@ -557,7 +557,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Parse a Pilcrow code-behind .rs file with syn: extract Props fields, load() signature, named action names, Deferred fields, and page option constants."
+        description = "Parse a Pilcrow code-behind .rs file with syn: extract Props fields, load() signature, named action names, AsyncValue/AsyncHtml fields, and page option constants."
     )]
     async fn inspect_code_behind(
         &self,
@@ -655,7 +655,7 @@ impl PilcrowServer {
     }
 
     #[tool(
-        description = "Diagnose a specific Pilcrow route: checks HTML template, code-behind signatures, Deferred fields, action definitions, and validation findings."
+        description = "Diagnose a specific Pilcrow route: checks HTML template, code-behind signatures, AsyncValue/AsyncHtml fields, action definitions, and validation findings."
     )]
     async fn diagnose_route(
         &self,
@@ -1197,7 +1197,7 @@ fn suggest_from_context(
             rule_id: "pilcrow-deferred-needs-skeleton",
             severity: "warning",
             message: format!(
-                "{} route(s) use Deferred<T> but have no _loading.html skeleton.",
+                "{} route(s) use AsyncValue<T> or AsyncHtml but have no _loading.html skeleton.",
                 deferred_routes.len()
             ),
             suggested_fix: "Add _loading.html templates near deferred routes for better UX."
@@ -1276,7 +1276,7 @@ fn build_code_skeleton(desc: &str, matched: &[(&str, &str)]) -> Value {
         })
     } else if has("deferred-streams") {
         json!({
-            "rs": "// pages/dashboard.rs\nuse pilcrow_web::Deferred;\n\npub struct Props {\n    pub title: String,\n    pub count: Deferred<i64>,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props {\n        title: \"Dashboard\".into(),\n        count: Deferred::spawn(async { expensive_db_count().await }),\n    })\n}",
+            "rs": "// pages/dashboard.rs\nuse pilcrow_web::AsyncValue;\n\npub struct Props {\n    pub title: String,\n    pub count: AsyncValue<i64>,\n}\n\npub async fn load(_req: Req) -> AppResult<Props> {\n    Ok(Props {\n        title: \"Dashboard\".into(),\n        count: AsyncValue::spawn(async { expensive_db_count().await }),\n    })\n}",
             "html": "<!-- pages/dashboard.html -->\n<h1>{{ title }}</h1>\n<span :text=\"count\">…</span>",
         })
     } else if has("api-routes") {
@@ -1335,7 +1335,7 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
     {
         vec![
             Pattern {
-                name: "Deferred<T>".to_string(),
+                name: "AsyncValue<T>".to_string(),
                 description: "Stream a single typed value after the shell renders. Use for data that is slow to fetch but simple to display.".to_string(),
                 tradeoffs: vec![
                     "Pro: shell renders immediately".to_string(),
@@ -1346,12 +1346,12 @@ fn compare_patterns_for(goal: &str, _options: Option<&Value>) -> PatternComparis
                 status: "stable".to_string(),
             },
             Pattern {
-                name: "DeferredHtml".to_string(),
+                name: "AsyncHtml".to_string(),
                 description: "Stream a complete HTML fragment into a named slot. Use for complex widgets or lists that render as HTML.".to_string(),
                 tradeoffs: vec![
                     "Pro: can stream arbitrary HTML markup".to_string(),
                     "Pro: loading HTML shown in slot until resolved".to_string(),
-                    "Con: more verbose setup than Deferred<T>".to_string(),
+                    "Con: more verbose setup than AsyncValue<T>".to_string(),
                 ],
                 scaffold_kind: None,
                 status: "stable".to_string(),
@@ -1477,7 +1477,7 @@ fn analyse_build_error(error_log: &str) -> Value {
     }
     if error_log.contains("invalid Pilcrow route configuration") {
         categories.push("Invalid route configuration");
-        suggestions.push("Read the route/module and suggested fix in the build error. Common causes include STREAMING combined with REVALIDATE, STREAMING combined with PRERENDER, STREAMING with Deferred fields, or dynamic PRERENDER without entries().");
+        suggestions.push("Read the route/module and suggested fix in the build error. Common causes include STREAMING combined with REVALIDATE, STREAMING combined with PRERENDER, STREAMING with AsyncValue/AsyncHtml fields, or dynamic PRERENDER without entries().");
     }
 
     if categories.is_empty() {

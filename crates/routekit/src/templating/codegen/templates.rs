@@ -38,6 +38,8 @@ pub fn render_generated_templates_module(
     let mut deferred_html_fields_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut isr_config_map: HashMap<String, IsrOpts> = HashMap::new();
     let mut ssg_config_map: HashMap<String, SsgOpts> = HashMap::new();
+    let mut live_fields_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut has_live_fn_map: HashMap<String, bool> = HashMap::new();
     // fragment_url_prefix → [(leaf_name, module_name)] — built to emit `pub mod fragments`.
     let mut fragment_groups: std::collections::BTreeMap<String, Vec<(String, String)>> =
         std::collections::BTreeMap::new();
@@ -136,6 +138,14 @@ pub fn render_generated_templates_module(
                 entry.module_name.clone(),
                 instrumented.deferred_html_fields.clone(),
             );
+        }
+
+        if !instrumented.live_fields.is_empty() {
+            live_fields_map.insert(entry.module_name.clone(), instrumented.live_fields.clone());
+        }
+
+        if instrumented.has_live_fn {
+            has_live_fn_map.insert(entry.module_name.clone(), true);
         }
 
         if instrumented.page_options.isr.is_active() {
@@ -254,6 +264,8 @@ pub fn render_generated_templates_module(
         deferred_html_fields_map,
         isr_config_map,
         ssg_config_map,
+        live_fields_map,
+        has_live_fn_map,
     })
 }
 
@@ -337,5 +349,7 @@ pub fn write_generated_templates_module(
         deferred_html_fields_map: generated.deferred_html_fields_map,
         isr_config_map: generated.isr_config_map,
         ssg_config_map: generated.ssg_config_map,
+        live_fields_map: generated.live_fields_map,
+        has_live_fn_map: generated.has_live_fn_map,
     })
 }

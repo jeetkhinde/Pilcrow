@@ -191,7 +191,7 @@ fn scaffold_action_page(
     ))
 }
 
-// --- deferred page: with Deferred<T> field ---
+// --- deferred page: with AsyncValue<T> field ---
 fn scaffold_deferred_page(
     app_root: &Path,
     request: ScaffoldRequest<'_>,
@@ -214,14 +214,14 @@ fn scaffold_deferred_page(
                 path: display_path(&rs_path),
                 action: ScaffoldAction::Create,
                 content: format!(
-                    "use pilcrow_web::Deferred;\n\npub struct Props {{\n    pub title: &'static str,\n    pub count: Deferred<i32>,\n}}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{\n        title: \"{title}\",\n        count: Deferred::spawn(async {{\n            // Replace with your expensive async computation\n            42\n        }}),\n    }})\n}}\n"
+                    "use pilcrow_web::AsyncValue;\n\npub struct Props {{\n    pub title: &'static str,\n    pub count: AsyncValue<i32>,\n}}\n\npub async fn load(_req: Req) -> AppResult<Props> {{\n    Ok(Props {{\n        title: \"{title}\",\n        count: AsyncValue::spawn(async {{\n            // Replace with your expensive async computation\n            42\n        }}),\n    }})\n}}\n"
                 ),
             },
         ],
         vec![
-            "Deferred page: the shell renders immediately; 'count' is streamed after it resolves.".to_string(),
+            "AsyncValue page: the shell renders immediately; 'count' is streamed after it resolves.".to_string(),
             "Add a _loading.html template in this route's directory for a loading skeleton.".to_string(),
-            "Deferred<T> requires T: Display for the initial empty render.".to_string(),
+            "AsyncValue<T> requires T: Display for the initial empty render.".to_string(),
         ],
     ))
 }

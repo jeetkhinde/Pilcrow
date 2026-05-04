@@ -141,7 +141,7 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                     path,
                     Some(lnum),
                     Some("registry.toml: feature SSR Streaming"),
-                    Some("Use Deferred<T> for streaming individual fields on an ISR page."),
+                    Some("Use AsyncValue<T> for streaming individual fields on an ISR page."),
                 ));
             }
             if code.contains("PRERENDER") {
@@ -155,6 +155,21 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                     Some("Pre-rendered pages are fully static and cannot use streaming."),
                 ));
             }
+        }
+    }
+
+    // LiveProp<T> field type check hint.
+    if code.contains("LiveProp<") {
+        // Warn if the type parameter looks like it might not be Sync (e.g. Rc<T> or RefCell<T>).
+        if code.contains("Rc<") || code.contains("RefCell<") || code.contains("Cell<") {
+            findings.push(finding(
+                Severity::Error,
+                "pilcrow-live-prop-not-sync",
+                "LiveProp<T> requires T: Sync. Types like Rc<T>, RefCell<T>, and Cell<T> are not Sync and cannot be used as LiveProp type parameters.".to_string(),
+                path,
+                Some("registry.toml: feature live-props"),
+                Some("Use Arc<Mutex<T>> or a plain T that is Sync instead."),
+            ));
         }
     }
 

@@ -441,6 +441,8 @@ pub fn compile_to_out_dir_with_config(
         hook_flags,
         !react_urls.is_empty(),
         !solid_urls.is_empty(),
+        &templates_output.live_fields_map,
+        &templates_output.has_live_fn_map,
         src_root,
         out_dir,
     )?;
@@ -1689,6 +1691,11 @@ fn expand_known_components(
             break;
         };
 
+        if let Some(consumed) = copy_html_comment(template, i, &mut out) {
+            i += consumed;
+            continue;
+        }
+
         if ch == '<' {
             if let Some(invocation) = parse_component_invocation(&template[i..]) {
                 let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
@@ -1782,6 +1789,19 @@ fn expand_known_components(
     Ok(out)
 }
 
+fn copy_html_comment(input: &str, start: usize, output: &mut String) -> Option<usize> {
+    if !input[start..].starts_with("<!--") {
+        return None;
+    }
+
+    let consumed = match input[start + 4..].find("-->") {
+        Some(end) => 4 + end + 3,
+        None => input.len() - start,
+    };
+    output.push_str(&input[start..start + consumed]);
+    Some(consumed)
+}
+
 fn render_askama_let_bindings(attrs: &[(String, String)]) -> String {
     let mut out = String::new();
     for (name, expr) in attrs {
@@ -1852,10 +1872,16 @@ fn collect_slot_assignments(inner: &str) -> SlotAssignments {
             continue;
         }
 
-        // Text chunk until next potential tag
-        let next_tag = inner[idx..]
+        // Text chunk until next potential tag. If the current byte is `<` but
+        // not a parseable HTML node, keep it as text (e.g. HTML comments).
+        let search_from = if inner[idx..].starts_with('<') {
+            idx + 1
+        } else {
+            idx
+        };
+        let next_tag = inner[search_from..]
             .find('<')
-            .map(|off| idx + off)
+            .map(|off| search_from + off)
             .unwrap_or(inner.len());
         if next_tag > idx {
             assignments.default.push(SlotFragment {
@@ -1863,7 +1889,7 @@ fn collect_slot_assignments(inner: &str) -> SlotAssignments {
                 let_bindings: Vec::new(),
             });
         }
-        idx = next_tag.max(idx + 1);
+        idx = next_tag;
     }
 
     assignments
@@ -2791,6 +2817,46 @@ pub struct Props {}
     }
 
     #[test]
+    fn compile_pipeline_preserves_html_comments_through_layout_slots() {
+        let root = mk_temp_root("compile_comments_through_slots");
+        let src = root.join("src");
+        let out = root.join("out");
+
+        write_file(
+            &src.join("pages/_layout.html"),
+            r#"---
+pub struct Props {}
+---
+<html><body><slot /></body></html>"#,
+        );
+        write_file(
+            &src.join("pages/index.html"),
+            r#"---
+pub struct Props {}
+---
+<p>Before</p>
+<!--
+<island src="./hidden" />
+<Card title={hidden} />
+-->
+<p>After</p>"#,
+        );
+
+        compile_to_out_dir(&src, &out).expect("pipeline should compile");
+        let page_template = out.join("pilcrow_templates/pages/index.html");
+        let page_rendered = fs::read_to_string(page_template).expect("read transpiled page");
+
+        assert!(page_rendered.contains("<!--\n<island src=\"./hidden\" />"));
+        assert!(page_rendered.contains("<Card title={hidden} />\n-->"));
+        assert!(page_rendered.contains("<p>Before</p>"));
+        assert!(page_rendered.contains("<p>After</p>"));
+        assert!(!page_rendered.contains("data-pilcrow-island"));
+        assert!(!page_rendered.contains("<body>!--\n<island"));
+
+        cleanup(&root);
+    }
+
+    #[test]
     fn compile_pipeline_expands_slot_props_via_let_bindings() {
         let root = mk_temp_root("compile_slot_props");
         let src = root.join("src");
@@ -3656,7 +3722,9 @@ pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props {}) }"#,
             "fragment action POST route emitted"
         );
         assert!(
-            app.contains("\"refresh\" => match __pilcrow_gen::frag_widgets_user_card::refresh(req).await"),
+            app.contains(
+                "\"refresh\" => match __pilcrow_gen::frag_widgets_user_card::refresh(req).await"
+            ),
             "fragment action dispatches to code-behind"
         );
 
