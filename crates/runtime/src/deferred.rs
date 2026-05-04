@@ -14,6 +14,7 @@ use tokio_stream::wrappers::ReceiverStream;
 fn html_stream_response(body: Body) -> Response {
     match axum::http::Response::builder()
         .header("content-type", "text/html; charset=utf-8")
+        .header("silcrow-full-reload", "true")
         .body(body)
     {
         Ok(response) => response,

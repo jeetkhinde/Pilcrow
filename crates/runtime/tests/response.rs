@@ -2,6 +2,7 @@
 use axum::{http::StatusCode, response::IntoResponse};
 use http_body_util::BodyExt;
 use runtime::{
+    deferred_response,
     response::response::{form_errors, json, navigate, redirect, ResponseExt},
     ToastLevel,
 };
@@ -128,6 +129,12 @@ fn response_ext_with_header_adds_header() {
 fn response_ext_no_cache_sets_silcrow_cache_header() {
     let resp = navigate("/").no_cache().into_response();
     assert_eq!(header_str(&resp, "silcrow-cache"), Some("no-cache"));
+}
+
+#[tokio::test]
+async fn deferred_response_requests_full_reload_for_boosted_navigation() {
+    let resp = deferred_response("shell".to_owned(), futures_util::stream::empty());
+    assert_eq!(header_str(&resp, "silcrow-full-reload"), Some("true"));
 }
 
 #[test]

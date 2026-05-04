@@ -310,13 +310,14 @@ name = "Deferred Streams"
 domain = "pilcrow"
 status = "stable"
 summary = "Deferred<T> and DeferredHtml stream late data or HTML patches after the shell response."
-spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve. Deferred<T> sends `window.__pilcrow_deferred(key, value)` scripts; DeferredHtml sends `window.__pd(slot_name, html)` scripts."
+spec = "Props may include Deferred<T> or DeferredHtml fields. Generated code emits a shell first and streams patches as futures resolve. Deferred<T> sends `window.__pilcrow_deferred(key, value)` scripts; DeferredHtml sends `window.__pd(slot_name, html)` scripts. Streaming HTML responses include `silcrow-full-reload: true` so silcrow boosted top-level GET navigation falls back to browser navigation instead of buffering and sanitizing streamed script chunks."
 canonical_usage = "pub struct Props { pub title: String, pub count: Deferred<i32> }. pub async fn load(_req: Req) -> AppResult<Props> { Ok(Props { title: String::from(\"Hello\"), count: Deferred::spawn(async { expensive_db_call().await }) }) }. In template: {{ count }} (renders as empty string until resolved)."
 constraints = [
   "Deferred<T> type T must implement Display for the initial shell render.",
   "DeferredHtml requires a slot name and optional loading HTML.",
   "Deferred fields must be declared in Props.",
   "Deferred::ready(value) creates an already-resolved value with no streaming overhead.",
+  "Deferred pages require browser-level navigation for top-level page transitions; silcrow.js honors the streamed response header automatically.",
 ]
 invalid_examples = [
   "Using Deferred<T> outside of a Props struct",
@@ -325,6 +326,7 @@ invalid_examples = [
 source_refs = [
   "crates/runtime/src/deferred.rs",
   "crates/routekit/src/templating/codegen/templates.rs",
+  "../silcrow/src/silcrow.js",
 ]
 test_refs = ["crates/routekit/src/templating/codegen/tests.rs"]
 validation_rules = ["Deferred fields must be declared in Props."]
@@ -1712,6 +1714,9 @@ Execution flow:
   5. When page load() resolves, Props is serialized to JSON and streamed as:
        <script>window.__ps({...props_json...})</script>
      which calls `Silcrow.patch(props, document.body)` to update all reactive bindings.
+  6. Streaming HTML responses include `silcrow-full-reload: true` so silcrow boosted
+     top-level GET navigation falls back to browser navigation instead of buffering
+     the whole stream as fetch text.
 
 The `window.__ps` shim:
   <script>window.__ps=function(v){Silcrow.patch(v,document.body)}</script>
