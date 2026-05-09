@@ -1,4 +1,6 @@
-use super::{BakedArtifactMode, BakedPage, BakedSlot, DependencyKey, StaleState};
+use super::{
+    replace_slot_content, BakedArtifactMode, BakedPage, BakedSlot, DependencyKey, StaleState,
+};
 use std::{
     collections::BTreeMap,
     fs,
@@ -88,6 +90,25 @@ impl BakedPageStore {
             )
         });
         page.stale_state = StaleState::stale(reason);
+        self.write_page(&page)
+    }
+
+    pub fn patch_slot(
+        &self,
+        concrete_path: &str,
+        slot: &BakedSlot,
+        replacement: &str,
+    ) -> io::Result<()> {
+        let Some(mut page) = self.read_page(concrete_path)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("baked page metadata not found for `{concrete_path}`"),
+            ));
+        };
+        let html = fs::read_to_string(&page.body_path)?;
+        let patched = replace_slot_content(&html, &slot.name, &slot.kind, replacement)?;
+        self.write_atomic(Path::new(&page.body_path), patched.as_bytes())?;
+        page.stale_state = StaleState::fresh();
         self.write_page(&page)
     }
 

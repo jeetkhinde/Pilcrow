@@ -5,10 +5,15 @@
 //! changing Pilcrow's current SSR/load request path.
 
 mod model;
+mod patch;
 mod store;
 
 pub use model::{
     BakeEligibility, BakedArtifactMode, BakedFragment, BakedLayout, BakedPage,
     BakedRouteDeclaration, BakedSlot, BakedSlotKind, DependencyKey, StaleState,
+};
+pub use patch::{
+    replace_slot_content, text_slot_content, trusted_html_slot_content, BakedPatchOutcome,
+    BakedPatchRegistry, BakedPatchedSlot, SlotValue, TrustedHtml,
 };
 pub use store::{BakedArtifactHit, BakedPageStore, ReverseIndex};
