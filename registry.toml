@@ -90,12 +90,13 @@ id = "experimental-baked-pages"
 name = "Experimental Baked Pages"
 domain = "pilcrow"
 status = "experimental"
-summary = "Experimental baked-page declarations, durable artifact storage, and dependency-scoped slot patching."
+summary = "Experimental baked-page declarations, durable artifact storage, build-time prebake, and dependency-scoped slot patching."
 spec = """
 Baked pages are Pilcrow's experimental durable serving artifact model. Current
 runtime support exposes declaration types plus filesystem-backed artifact and
-metadata storage plus marker-bounded slot patching. It does not change route
-handling, prebake, codegen, or SSR/load rendering.
+metadata storage, marker-bounded slot patching, and a minimal library prebake
+API for BuildTime declarations. It does not change route handling, codegen, or
+SSR/load rendering.
 
 Route declarations choose a bake timing policy:
 - BuildTime
@@ -109,24 +110,31 @@ Route declarations also choose an artifact strategy:
 The experimental BakedPageStore can write FullPage artifacts, write
 FragmentComposed page bodies, persist metadata, rebuild the dependency reverse
 index from metadata, mark pages stale, read a fresh stored artifact, and patch
-slot content atomically. BakedPatchRegistry finds affected pages through the
-reverse index, recomputes declared slots, and marks pages stale when recompute or
-marker validation fails. SSR/load remains the source-of-truth renderer. Future
-patches will connect these types to composition and routekit codegen.
+slot content atomically. BakedPageStore::prebake_declared runs a caller-provided
+renderer for BuildTime declarations and writes the same durable artifacts as the
+store's lower-level artifact API. BakedPatchRegistry finds affected pages through
+the reverse index, recomputes declared slots, and marks pages stale when
+recompute or marker validation fails. SSR/load remains the source-of-truth
+renderer. Future patches will connect these types to composition and routekit
+codegen.
 """
 canonical_usage = """
 // Cargo.toml
 pilcrow-web = { path = "...", features = ["experimental-baked-pages"] }
 
 use pilcrow_web::experimental::baked_pages::{
-    BakedPageStore, BakedPatchRegistry, BakedRouteDeclaration, DependencyKey, SlotValue,
+    BakedPageStore, BakedPatchRegistry, BakedRenderedPage, BakedRouteDeclaration,
+    DependencyKey, SlotValue,
 };
 
-let declaration = BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
-    .fragment_composed("app")
+let declaration = BakedRouteDeclaration::build_time("/tickets/:id", "/tickets/123")
+    .full_page()
     .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
 let store = BakedPageStore::new(".pilcrow-baked");
-let mut patches = BakedPatchRegistry::new(store);
+let report = store.prebake_declared(&declaration, |_decl| {
+    Ok(BakedRenderedPage::new("<html>...</html>", "render-v1"))
+})?;
+let mut patches = BakedPatchRegistry::new(store.clone());
 patches.register_slot_recompute("ticket_status", |_key, _page| {
     Ok(SlotValue::text("Closed"))
 });
@@ -135,12 +143,14 @@ constraints = [
   "This is an experimental library API; it is not wired into generated routes yet.",
   "The API is available only with the experimental-baked-pages feature flag.",
   "Do not replace existing SSR/load behavior with baked-page serving until routekit integration lands.",
+  "Prebake is library-only and accepts BuildTime declarations; no CLI or generated build hook exists yet.",
   "BakedPageStore reads and writes local filesystem artifacts only; no production adapters exist yet.",
   "Slot patching requires explicit dependency ownership through DependencyKey values.",
   "Trusted HTML slot patches require an explicit TrustedHtml wrapper; text slot patches are escaped.",
 ]
 invalid_examples = [
   "Expecting BakedRouteDeclaration to automatically register a page route.",
+  "Calling prebake_declared on a NeverBake declaration.",
   "Using FragmentComposed without later providing a compatible layout artifact containing a page_body slot.",
   "Treating TrustedHtml slots as escaped text slots.",
 ]
@@ -148,6 +158,7 @@ source_refs = [
   "crates/runtime/src/baked_pages/model.rs",
   "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/patch.rs",
+  "crates/runtime/src/baked_pages/prebake.rs",
   "crates/runtime/src/baked_pages/mod.rs",
   "crates/web/src/lib.rs",
 ]
@@ -155,6 +166,7 @@ test_refs = [
   "crates/runtime/src/baked_pages/model.rs",
   "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/patch.rs",
+  "crates/runtime/src/baked_pages/prebake.rs",
 ]
 validation_rules = [
   "No routekit syntax validation exists yet because this API is not parsed from page codegen.",
