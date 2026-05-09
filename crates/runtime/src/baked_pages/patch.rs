@@ -211,6 +211,15 @@ pub fn replace_slot_content(
     replacement: &str,
 ) -> io::Result<String> {
     validate_replacement(replacement)?;
+    replace_slot_content_raw(html, slot, kind, replacement)
+}
+
+pub(crate) fn replace_slot_content_raw(
+    html: &str,
+    slot: &str,
+    kind: &BakedSlotKind,
+    replacement: &str,
+) -> io::Result<String> {
     let boundary = find_slot_boundary(html, slot, kind)?;
     let mut patched = String::with_capacity(html.len() + replacement.len());
     patched.push_str(&html[..boundary.content_start]);

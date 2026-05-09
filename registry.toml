@@ -90,13 +90,15 @@ id = "experimental-baked-pages"
 name = "Experimental Baked Pages"
 domain = "pilcrow"
 status = "experimental"
-summary = "Experimental baked-page declarations, durable artifact storage, build-time prebake, and dependency-scoped slot patching."
+summary = "Experimental baked-page declarations, durable artifact storage, build-time prebake, lazy serving helpers, and dependency-scoped slot patching."
 spec = """
 Baked pages are Pilcrow's experimental durable serving artifact model. Current
 runtime support exposes declaration types plus filesystem-backed artifact and
 metadata storage, marker-bounded slot patching, and a minimal library prebake
-API for BuildTime declarations. It does not change route handling, codegen, or
-SSR/load rendering.
+API for BuildTime declarations. It also exposes an explicit opt-in lazy serving
+helper for route handlers that want baked serving without global router/codegen
+changes. It does not change route handling, codegen, or SSR/load rendering
+unless a route calls the helper itself.
 
 Route declarations choose a bake timing policy:
 - BuildTime
@@ -112,11 +114,13 @@ FragmentComposed page bodies, persist metadata, rebuild the dependency reverse
 index from metadata, mark pages stale, read a fresh stored artifact, and patch
 slot content atomically. BakedPageStore::prebake_declared runs a caller-provided
 renderer for BuildTime declarations and writes the same durable artifacts as the
-store's lower-level artifact API. BakedPatchRegistry finds affected pages through
-the reverse index, recomputes declared slots, and marks pages stale when
-recompute or marker validation fails. SSR/load remains the source-of-truth
-renderer. Future patches will connect these types to composition and routekit
-codegen.
+store's lower-level artifact API. BakedPageStore::get_or_render_declared checks
+serve_if_fresh for LazyOnFirstHit declarations, runs the caller-provided renderer
+on miss, writes the baked artifact, and returns the response HTML. FragmentComposed
+responses are composed through the declared layout's page_body slot. BakedPatchRegistry
+finds affected pages through the reverse index, recomputes declared slots, and marks
+pages stale when recompute or marker validation fails. SSR/load remains the
+source-of-truth renderer. Future patches may connect these types to routekit codegen.
 """
 canonical_usage = """
 // Cargo.toml
@@ -127,11 +131,11 @@ use pilcrow_web::experimental::baked_pages::{
     DependencyKey, SlotValue,
 };
 
-let declaration = BakedRouteDeclaration::build_time("/tickets/:id", "/tickets/123")
+let declaration = BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
     .full_page()
     .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
 let store = BakedPageStore::new(".pilcrow-baked");
-let report = store.prebake_declared(&declaration, |_decl| {
+let outcome = store.get_or_render_declared(&declaration, |_decl| {
     Ok(BakedRenderedPage::new("<html>...</html>", "render-v1"))
 })?;
 let mut patches = BakedPatchRegistry::new(store.clone());
@@ -142,7 +146,8 @@ patches.register_slot_recompute("ticket_status", |_key, _page| {
 constraints = [
   "This is an experimental library API; it is not wired into generated routes yet.",
   "The API is available only with the experimental-baked-pages feature flag.",
-  "Do not replace existing SSR/load behavior with baked-page serving until routekit integration lands.",
+  "Do not replace existing SSR/load behavior broadly; routes must explicitly call the baked serving helper.",
+  "BuildTime behavior remains library/prebake-only for now; get_or_render_declared does not render BuildTime misses.",
   "Prebake is library-only and accepts BuildTime declarations; no CLI or generated build hook exists yet.",
   "BakedPageStore reads and writes local filesystem artifacts only; no production adapters exist yet.",
   "Slot patching requires explicit dependency ownership through DependencyKey values.",
@@ -159,6 +164,7 @@ source_refs = [
   "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/patch.rs",
   "crates/runtime/src/baked_pages/prebake.rs",
+  "crates/runtime/src/baked_pages/serving.rs",
   "crates/runtime/src/baked_pages/mod.rs",
   "crates/web/src/lib.rs",
 ]
@@ -167,6 +173,7 @@ test_refs = [
   "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/patch.rs",
   "crates/runtime/src/baked_pages/prebake.rs",
+  "crates/runtime/src/baked_pages/serving.rs",
 ]
 validation_rules = [
   "No routekit syntax validation exists yet because this API is not parsed from page codegen.",

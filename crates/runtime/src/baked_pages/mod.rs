@@ -7,6 +7,7 @@
 mod model;
 mod patch;
 mod prebake;
+mod serving;
 mod store;
 
 pub use model::{
@@ -18,4 +19,5 @@ pub use patch::{
     BakedPatchRegistry, BakedPatchedSlot, SlotValue, TrustedHtml,
 };
 pub use prebake::{BakedPrebakeReport, BakedRenderedPage};
+pub use serving::{BakedServeOutcome, BakedServeState};
 pub use store::{BakedArtifactHit, BakedPageStore, ReverseIndex};
