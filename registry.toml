@@ -86,6 +86,63 @@ validation_rules = ["ignore_directories paths should be valid glob patterns."]
 scaffold_templates = []
 
 [[features]]
+id = "experimental-baked-pages"
+name = "Experimental Baked Pages"
+domain = "pilcrow"
+status = "experimental"
+summary = "Model-only baked-page declarations for durable HTML artifacts, gated behind the experimental-baked-pages feature."
+spec = """
+Baked pages are Pilcrow's experimental durable serving artifact model. The first
+framework integration exposes declaration and metadata types only; it does not
+change route handling, prebake, filesystem writes, or SSR/load rendering.
+
+Route declarations choose a bake timing policy:
+- BuildTime
+- LazyOnFirstHit
+- NeverBake
+
+Route declarations also choose an artifact strategy:
+- FullPage
+- FragmentComposed with a layout key
+
+SSR/load remains the source-of-truth renderer. Future patches will connect these
+types to storage, composition, patching, and routekit codegen.
+"""
+canonical_usage = """
+// Cargo.toml
+pilcrow-web = { path = "...", features = ["experimental-baked-pages"] }
+
+use pilcrow_web::experimental::baked_pages::{BakedRouteDeclaration, DependencyKey};
+
+let declaration = BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
+    .fragment_composed("app")
+    .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
+"""
+constraints = [
+  "This is a model-only experimental API; it does not serve, write, prebake, or patch artifacts yet.",
+  "The API is available only with the experimental-baked-pages feature flag.",
+  "Do not replace existing SSR/load behavior with baked-page serving until the runtime store and routekit integration land.",
+  "Slot patching requires explicit dependency ownership through DependencyKey values.",
+]
+invalid_examples = [
+  "Expecting BakedRouteDeclaration to automatically register a page route.",
+  "Using FragmentComposed without later providing a compatible layout artifact containing a page_body slot.",
+  "Treating TrustedHtml slots as escaped text slots.",
+]
+source_refs = [
+  "crates/runtime/src/baked_pages/model.rs",
+  "crates/runtime/src/baked_pages/mod.rs",
+  "crates/web/src/lib.rs",
+]
+test_refs = [
+  "crates/runtime/src/baked_pages/model.rs",
+]
+validation_rules = [
+  "No routekit syntax validation exists yet because this patch introduces only Rust model declarations.",
+]
+scaffold_templates = []
+
+[[features]]
 id = "layouts"
 name = "Layouts"
 domain = "pilcrow"

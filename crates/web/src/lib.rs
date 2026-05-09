@@ -44,6 +44,12 @@ pub use runtime::island_ssr::IslandSsrWorker;
 pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 
+/// Experimental APIs that may change before stabilization.
+#[cfg(feature = "experimental-baked-pages")]
+pub mod experimental {
+    pub use runtime::baked_pages;
+}
+
 /// Platform deployment adapters.
 ///
 /// Each adapter implements [`PilcrowAdapter`] and is passed to
