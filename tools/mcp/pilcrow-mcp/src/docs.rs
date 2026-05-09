@@ -451,6 +451,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "runtime-baked-page-store",
+            title: "Experimental baked-page artifact store",
+            path: "crates/runtime/src/baked_pages/store.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "runtime-start",
             title: "Server startup (start / start_with_prerender)",
             path: "crates/runtime/src/start.rs",

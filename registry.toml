@@ -90,11 +90,12 @@ id = "experimental-baked-pages"
 name = "Experimental Baked Pages"
 domain = "pilcrow"
 status = "experimental"
-summary = "Model-only baked-page declarations for durable HTML artifacts, gated behind the experimental-baked-pages feature."
+summary = "Experimental baked-page declarations and durable artifact storage, gated behind the experimental-baked-pages feature."
 spec = """
-Baked pages are Pilcrow's experimental durable serving artifact model. The first
-framework integration exposes declaration and metadata types only; it does not
-change route handling, prebake, filesystem writes, or SSR/load rendering.
+Baked pages are Pilcrow's experimental durable serving artifact model. Current
+runtime support exposes declaration types plus filesystem-backed artifact and
+metadata storage. It does not change route handling, prebake, codegen, or
+SSR/load rendering.
 
 Route declarations choose a bake timing policy:
 - BuildTime
@@ -105,23 +106,30 @@ Route declarations also choose an artifact strategy:
 - FullPage
 - FragmentComposed with a layout key
 
-SSR/load remains the source-of-truth renderer. Future patches will connect these
-types to storage, composition, patching, and routekit codegen.
+The experimental BakedPageStore can write FullPage artifacts, write
+FragmentComposed page bodies, persist metadata, rebuild the dependency reverse
+index from metadata, mark pages stale, and read a fresh stored artifact. SSR/load
+remains the source-of-truth renderer. Future patches will connect these types to
+composition, patching, and routekit codegen.
 """
 canonical_usage = """
 // Cargo.toml
 pilcrow-web = { path = "...", features = ["experimental-baked-pages"] }
 
-use pilcrow_web::experimental::baked_pages::{BakedRouteDeclaration, DependencyKey};
+use pilcrow_web::experimental::baked_pages::{
+    BakedPageStore, BakedRouteDeclaration, DependencyKey,
+};
 
 let declaration = BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
     .fragment_composed("app")
     .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
+let store = BakedPageStore::new(".pilcrow-baked");
 """
 constraints = [
-  "This is a model-only experimental API; it does not serve, write, prebake, or patch artifacts yet.",
+  "This is an experimental library API; it is not wired into generated routes yet.",
   "The API is available only with the experimental-baked-pages feature flag.",
-  "Do not replace existing SSR/load behavior with baked-page serving until the runtime store and routekit integration land.",
+  "Do not replace existing SSR/load behavior with baked-page serving until routekit integration lands.",
+  "BakedPageStore reads and writes local filesystem artifacts only; no production adapters exist yet.",
   "Slot patching requires explicit dependency ownership through DependencyKey values.",
 ]
 invalid_examples = [
@@ -131,14 +139,16 @@ invalid_examples = [
 ]
 source_refs = [
   "crates/runtime/src/baked_pages/model.rs",
+  "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/mod.rs",
   "crates/web/src/lib.rs",
 ]
 test_refs = [
   "crates/runtime/src/baked_pages/model.rs",
+  "crates/runtime/src/baked_pages/store.rs",
 ]
 validation_rules = [
-  "No routekit syntax validation exists yet because this patch introduces only Rust model declarations.",
+  "No routekit syntax validation exists yet because this API is not parsed from page codegen.",
 ]
 scaffold_templates = []
 
