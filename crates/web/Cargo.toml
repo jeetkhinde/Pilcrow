@@ -14,6 +14,11 @@ name = "baked_prebake"
 path = "examples/baked_prebake.rs"
 required-features = ["experimental-baked-pages"]
 
+[[example]]
+name = "baked_ticket"
+path = "examples/baked_ticket.rs"
+required-features = ["experimental-baked-pages"]
+
 [dependencies]
 pilcrow-core = { path = "../core" }
 runtime = { package = "pilcrow-runtime", path = "../runtime" }

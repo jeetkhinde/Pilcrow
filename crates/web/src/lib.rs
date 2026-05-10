@@ -122,7 +122,8 @@ pub mod experimental {
 #[cfg(all(test, feature = "experimental-baked-pages"))]
 mod baked_page_tests {
     use super::experimental::baked_pages::{
-        BakedPageStore, BakedRenderedPage, BakedRoute, BakedRouteDeclaration, DependencyKey,
+        BakedPageStore, BakedPatchRegistry, BakedRenderedPage, BakedRoute, BakedRouteDeclaration,
+        DependencyKey, SlotValue,
     };
     use axum::{
         body::Body,
@@ -347,6 +348,130 @@ mod baked_page_tests {
         assert_eq!(response.headers()["x-pilcrow-ssr-load"], "skipped");
         assert_eq!(response_text(response).await, "<main>prebaked</main>");
         assert_eq!(render_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn ticket_example_flow_patches_dependency_without_rendering_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let route = BakedRoute::new(
+            store.clone(),
+            BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
+                .full_page()
+                .text_slot(
+                    "ticket_status",
+                    vec![DependencyKey::new("TicketStatus:ticket_id=123")],
+                ),
+        );
+        let status = Arc::new(std::sync::Mutex::new(String::from("Open")));
+        let render_count = Arc::new(AtomicUsize::new(0));
+        let mut patches = BakedPatchRegistry::new(store);
+        patches.register_slot_recompute("ticket_status", {
+            let status = status.clone();
+            move |_key, _path| Ok(SlotValue::text(status.lock().unwrap().clone()))
+        });
+        let patches = Arc::new(patches);
+        let app = Router::new()
+            .route(
+                "/tickets/123",
+                get({
+                    let route = route.clone();
+                    let status = status.clone();
+                    let render_count = render_count.clone();
+                    move || {
+                        let route = route.clone();
+                        let status = status.clone();
+                        let render_count = render_count.clone();
+                        async move {
+                            route
+                                .serve(|_| {
+                                    render_count.fetch_add(1, Ordering::SeqCst);
+                                    let status = status.lock().unwrap().clone();
+                                    Ok(BakedRenderedPage::new(
+                                        format!(
+                                            "<main><!--pilcrow-slot:start ticket_status kind=text-->{status}<!--pilcrow-slot:end ticket_status--></main>"
+                                        ),
+                                        "render-v1",
+                                    ))
+                                })
+                                .unwrap()
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/tickets/123/close",
+                axum::routing::post({
+                    let status = status.clone();
+                    let patches = patches.clone();
+                    move || {
+                        let status = status.clone();
+                        let patches = patches.clone();
+                        async move {
+                            *status.lock().unwrap() = String::from("Closed");
+                            patches
+                                .patch_dependency(DependencyKey::new("TicketStatus:ticket_id=123"))
+                                .unwrap();
+                            StatusCode::OK
+                        }
+                    }
+                }),
+            );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
+        assert!(response_text(first).await.contains("Open"));
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+
+        let second = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
+        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
+        assert!(response_text(second).await.contains("Open"));
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+
+        let mutation = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tickets/123/close")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mutation.status(), StatusCode::OK);
+
+        let patched = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patched.headers()["x-pilcrow-baked"], "hit");
+        assert!(response_text(patched).await.contains("Closed"));
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
     }
 
     async fn response_text(response: axum::response::Response) -> String {

@@ -127,6 +127,15 @@ route and one `BuildTime + FragmentComposed` route, then serves both as
 cargo run -p pilcrow-web --features experimental-baked-pages --example baked_prebake
 ```
 
+There is also an experimental ticket example that mirrors the sandbox story: a
+lazy full-page ticket route, a lazy fragment-composed summary route, an explicit
+`DependencyKey`, and a mutation endpoint that patches the baked slot so the next
+GET serves updated HTML without rendering again:
+
+```bash
+cargo run -p pilcrow-web --features experimental-baked-pages --example baked_ticket
+```
+
 ## Patching
 
 `BakedPatchRegistry` registers recompute functions by slot name. When called with

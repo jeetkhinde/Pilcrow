@@ -166,6 +166,7 @@ invalid_examples = [
 source_refs = [
   "docs/experimental-baked-pages.md",
   "crates/web/examples/baked_prebake.rs",
+  "crates/web/examples/baked_ticket.rs",
   "crates/runtime/src/baked_pages/model.rs",
   "crates/runtime/src/baked_pages/store.rs",
   "crates/runtime/src/baked_pages/patch.rs",
