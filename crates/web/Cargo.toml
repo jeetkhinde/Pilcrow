@@ -16,3 +16,9 @@ pilcrow-client = { path = "../client" }
 pilcrow-macros = { path = "../macros" }
 axum = "0.7"
 tracing = "0.1"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

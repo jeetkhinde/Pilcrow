@@ -127,15 +127,16 @@ canonical_usage = """
 pilcrow-web = { path = "...", features = ["experimental-baked-pages"] }
 
 use pilcrow_web::experimental::baked_pages::{
-    BakedPageStore, BakedPatchRegistry, BakedRenderedPage, BakedRouteDeclaration,
-    DependencyKey, SlotValue,
+    BakedPageStore, BakedPatchRegistry, BakedRenderedPage, BakedRoute,
+    BakedRouteDeclaration, DependencyKey, SlotValue,
 };
 
 let declaration = BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
     .full_page()
     .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
 let store = BakedPageStore::new(".pilcrow-baked");
-let outcome = store.get_or_render_declared(&declaration, |_decl| {
+let route = BakedRoute::new(store.clone(), declaration);
+let response = route.serve(|_decl| {
     Ok(BakedRenderedPage::new("<html>...</html>", "render-v1"))
 })?;
 let mut patches = BakedPatchRegistry::new(store.clone());

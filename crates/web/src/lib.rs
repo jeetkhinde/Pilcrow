@@ -47,7 +47,284 @@ pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 /// Experimental APIs that may change before stabilization.
 #[cfg(feature = "experimental-baked-pages")]
 pub mod experimental {
-    pub use runtime::baked_pages;
+    /// Developer-facing helpers for opt-in baked page serving.
+    pub mod baked_pages {
+        pub use runtime::baked_pages::*;
+
+        use axum::{
+            http::header::{HeaderName, HeaderValue},
+            response::{Html, IntoResponse, Response},
+        };
+        use std::io;
+
+        const BAKED_HEADER: HeaderName = HeaderName::from_static("x-pilcrow-baked");
+        const SSR_LOAD_HEADER: HeaderName = HeaderName::from_static("x-pilcrow-ssr-load");
+
+        /// Tiny route-local wrapper for opting a handler into baked serving.
+        ///
+        /// The route still owns its source-of-truth render/load function. This helper
+        /// only checks the baked store first, writes lazy artifacts on misses, and
+        /// returns a normal Axum response.
+        #[derive(Debug, Clone)]
+        pub struct BakedRoute {
+            store: BakedPageStore,
+            declaration: BakedRouteDeclaration,
+        }
+
+        impl BakedRoute {
+            pub fn new(store: BakedPageStore, declaration: BakedRouteDeclaration) -> Self {
+                Self { store, declaration }
+            }
+
+            pub fn store(&self) -> &BakedPageStore {
+                &self.store
+            }
+
+            pub fn declaration(&self) -> &BakedRouteDeclaration {
+                &self.declaration
+            }
+
+            pub fn serve<F>(&self, render: F) -> io::Result<Response>
+            where
+                F: FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage>,
+            {
+                serve_baked_or_render(&self.store, &self.declaration, render)
+            }
+        }
+
+        pub fn serve_baked_or_render<F>(
+            store: &BakedPageStore,
+            declaration: &BakedRouteDeclaration,
+            render: F,
+        ) -> io::Result<Response>
+        where
+            F: FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage>,
+        {
+            let outcome = store.get_or_render_declared(declaration, render)?;
+            Ok(baked_html_response(outcome))
+        }
+
+        pub fn baked_html_response(outcome: BakedServeOutcome) -> Response {
+            let baked_state = outcome.state.as_str();
+            let render_state = outcome.state.render_state();
+            let mut response = Html(outcome.html).into_response();
+            response
+                .headers_mut()
+                .insert(BAKED_HEADER, HeaderValue::from_static(baked_state));
+            response
+                .headers_mut()
+                .insert(SSR_LOAD_HEADER, HeaderValue::from_static(render_state));
+            response
+        }
+    }
+}
+
+#[cfg(all(test, feature = "experimental-baked-pages"))]
+mod baked_page_tests {
+    use super::experimental::baked_pages::{
+        BakedPageStore, BakedRenderedPage, BakedRoute, BakedRouteDeclaration, DependencyKey,
+    };
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        routing::get,
+        Router,
+    };
+    use http_body_util::BodyExt;
+    use std::{
+        fs, io,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn lazy_route_opt_in_writes_then_hits_without_rendering_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let route = BakedRoute::new(
+            BakedPageStore::new(temp.path()),
+            BakedRouteDeclaration::lazy_on_first_hit("/lazy", "/lazy")
+                .full_page()
+                .text_slot("status", vec![DependencyKey::new("lazy")]),
+        );
+        let render_count = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route(
+            "/lazy",
+            get({
+                let route = route.clone();
+                let render_count = render_count.clone();
+                move || {
+                    let route = route.clone();
+                    let render_count = render_count.clone();
+                    async move {
+                        route
+                            .serve(|_| {
+                                render_count.fetch_add(1, Ordering::SeqCst);
+                                Ok(BakedRenderedPage::new(
+                                    "<main>fresh lazy</main>",
+                                    "render-v1",
+                                ))
+                            })
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+
+        let first = app
+            .clone()
+            .oneshot(Request::builder().uri("/lazy").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
+        assert_eq!(first.headers()["x-pilcrow-ssr-load"], "ran");
+        assert_eq!(response_text(first).await, "<main>fresh lazy</main>");
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+
+        let second = app
+            .oneshot(Request::builder().uri("/lazy").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
+        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
+        assert_eq!(response_text(second).await, "<main>fresh lazy</main>");
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fragment_composed_route_opt_in_composes_and_hits_without_rendering_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let layout_path = store.layout_path("app");
+        fs::create_dir_all(layout_path.parent().unwrap()).unwrap();
+        fs::write(
+            layout_path,
+            "<html><body><!--pilcrow-slot:start page_body kind=html--><!--pilcrow-slot:end page_body--></body></html>",
+        )
+        .unwrap();
+        let route = BakedRoute::new(
+            store,
+            BakedRouteDeclaration::lazy_on_first_hit("/composed", "/composed")
+                .fragment_composed("app")
+                .text_slot("status", vec![DependencyKey::new("composed")]),
+        );
+        let render_count = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route(
+            "/composed",
+            get({
+                let route = route.clone();
+                let render_count = render_count.clone();
+                move || {
+                    let route = route.clone();
+                    let render_count = render_count.clone();
+                    async move {
+                        route
+                            .serve(|_| {
+                                render_count.fetch_add(1, Ordering::SeqCst);
+                                Ok(BakedRenderedPage::new(
+                                    "<main>fresh body</main>",
+                                    "render-v1",
+                                ))
+                            })
+                            .unwrap()
+                    }
+                }
+            }),
+        );
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/composed")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
+        assert_eq!(
+            response_text(first).await,
+            "<html><body><main>fresh body</main></body></html>"
+        );
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/composed")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
+        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
+        assert_eq!(
+            response_text(second).await,
+            "<html><body><main>fresh body</main></body></html>"
+        );
+        assert_eq!(render_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn never_bake_route_opt_in_renders_without_writing_artifact() {
+        let temp = tempfile::tempdir().unwrap();
+        let route = BakedRoute::new(
+            BakedPageStore::new(temp.path()),
+            BakedRouteDeclaration::never_bake("/live", "/live"),
+        );
+        let render_count = AtomicUsize::new(0);
+
+        let first = route
+            .serve(|_| {
+                render_count.fetch_add(1, Ordering::SeqCst);
+                Ok(BakedRenderedPage::new("<main>live</main>", "render-v1"))
+            })
+            .unwrap();
+        assert_eq!(first.headers()["x-pilcrow-baked"], "never-bake-rendered");
+        assert_eq!(first.headers()["x-pilcrow-ssr-load"], "ran");
+
+        let second = route
+            .serve(|_| {
+                render_count.fetch_add(1, Ordering::SeqCst);
+                Ok(BakedRenderedPage::new("<main>live</main>", "render-v1"))
+            })
+            .unwrap();
+        assert_eq!(second.headers()["x-pilcrow-baked"], "never-bake-rendered");
+        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "ran");
+        assert_eq!(render_count.load(Ordering::SeqCst), 2);
+        assert!(route.store().serve_if_fresh("/live").unwrap().is_none());
+    }
+
+    #[test]
+    fn build_time_opt_in_requires_existing_prebake() {
+        let temp = tempfile::tempdir().unwrap();
+        let route = BakedRoute::new(
+            BakedPageStore::new(temp.path()),
+            BakedRouteDeclaration::build_time("/built", "/built").full_page(),
+        );
+        let render_count = AtomicUsize::new(0);
+
+        let error = route
+            .serve(|_| {
+                render_count.fetch_add(1, Ordering::SeqCst);
+                Ok(BakedRenderedPage::new("<main>built</main>", "render-v1"))
+            })
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(render_count.load(Ordering::SeqCst), 0);
+    }
+
+    async fn response_text(response: axum::response::Response) -> String {
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
 }
 
 /// Platform deployment adapters.
