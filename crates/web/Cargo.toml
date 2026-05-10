@@ -9,6 +9,11 @@ license = "MIT"
 lambda = ["runtime/lambda"]
 experimental-baked-pages = ["runtime/experimental-baked-pages"]
 
+[[example]]
+name = "baked_prebake"
+path = "examples/baked_prebake.rs"
+required-features = ["experimental-baked-pages"]
+
 [dependencies]
 pilcrow-core = { path = "../core" }
 runtime = { package = "pilcrow-runtime", path = "../runtime" }

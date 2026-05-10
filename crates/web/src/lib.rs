@@ -321,6 +321,34 @@ mod baked_page_tests {
         assert_eq!(render_count.load(Ordering::SeqCst), 0);
     }
 
+    #[tokio::test]
+    async fn prebaked_build_time_route_serves_hit_and_skips_render() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let declaration = BakedRouteDeclaration::build_time("/built", "/built")
+            .full_page()
+            .text_slot("status", vec![DependencyKey::new("built")]);
+        store
+            .prebake_declared(&declaration, |_| {
+                Ok(BakedRenderedPage::new("<main>prebaked</main>", "render-v1"))
+            })
+            .unwrap();
+        let route = BakedRoute::new(store, declaration);
+        let render_count = AtomicUsize::new(0);
+
+        let response = route
+            .serve(|_| {
+                render_count.fetch_add(1, Ordering::SeqCst);
+                Ok(BakedRenderedPage::new("<main>miss</main>", "render-v2"))
+            })
+            .unwrap();
+
+        assert_eq!(response.headers()["x-pilcrow-baked"], "hit");
+        assert_eq!(response.headers()["x-pilcrow-ssr-load"], "skipped");
+        assert_eq!(response_text(response).await, "<main>prebaked</main>");
+        assert_eq!(render_count.load(Ordering::SeqCst), 0);
+    }
+
     async fn response_text(response: axum::response::Response) -> String {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.to_vec()).unwrap()

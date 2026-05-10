@@ -119,6 +119,14 @@ function. It writes the same metadata, artifact, and dependency mapping that laz
 baking writes on first request. `LazyOnFirstHit` is not prebaked, and `NeverBake`
 is rejected.
 
+There is a tiny experimental example that prebakes one `BuildTime + FullPage`
+route and one `BuildTime + FragmentComposed` route, then serves both as
+`hit/skipped` without running the request renderer:
+
+```bash
+cargo run -p pilcrow-web --features experimental-baked-pages --example baked_prebake
+```
+
 ## Patching
 
 `BakedPatchRegistry` registers recompute functions by slot name. When called with
