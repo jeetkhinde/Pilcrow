@@ -409,6 +409,12 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::Docs,
         },
         DocumentSpec {
+            id: "experimental-baked-pages-guide",
+            title: "Experimental baked pages guide",
+            path: "docs/experimental-baked-pages.md",
+            category: KnowledgeCategory::Docs,
+        },
+        DocumentSpec {
             id: "web-facade",
             title: "pilcrow-web facade",
             path: "crates/web/src/lib.rs",
