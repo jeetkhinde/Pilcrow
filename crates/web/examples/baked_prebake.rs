@@ -1,11 +1,13 @@
-//! Tiny experimental prebake example.
+//! Demonstrates manually writing shell + JSON artifacts before the server starts
+//! and serving them via BakedRoute — simulating "build-time" prebaking.
 //!
 //! Run with:
 //! cargo run -p pilcrow-web --features experimental-baked-pages --example baked_prebake
 
 use pilcrow_web::experimental::baked_pages::{
-    BakedPageStore, BakedRenderedPage, BakedRoute, BakedRouteDeclaration, DependencyKey,
+    BakedPage, BakedPageStore, BakedRoute, BakedSlot, DependencyConfig,
 };
+use serde_json::json;
 use std::{fs, io};
 
 fn main() -> io::Result<()> {
@@ -15,55 +17,39 @@ fn main() -> io::Result<()> {
     ));
     let _ = fs::remove_dir_all(&root);
     let store = BakedPageStore::new(&root);
+    let route = BakedRoute::new(store.clone());
 
-    let full_page = BakedRouteDeclaration::build_time("/tickets/:id", "/tickets/123")
-        .full_page()
-        .text_slot("ticket_status", vec![DependencyKey::new("ticket:123")]);
+    // Write shell + JSON before the server starts (simulating build-time baking).
+    let shell = r#"<html><body><span data-pilcrow-slot="status">Loading</span></body></html>"#;
+    store.write_shell("/tickets/:id", shell)?;
+    store.write_json("/tickets/123", &json!({ "status": "Open" }))?;
 
-    store.prebake_declared(&full_page, |_declaration| {
-        Ok(BakedRenderedPage::new(
-            "<html><body><!--pilcrow-slot:start ticket_status kind=text-->Open<!--pilcrow-slot:end ticket_status--></body></html>",
-            "render-v1",
-        ))
+    // Mark the page as already baked so `serve()` hits the artifact.
+    let mut page = BakedPage::new(
+        "/tickets/:id",
+        "/tickets/123",
+        store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+        store.json_path("/tickets/123").to_string_lossy().to_string(),
+        store.metadata_path("/tickets/123").to_string_lossy().to_string(),
+        vec![BakedSlot::text("status")],
+        vec![DependencyConfig::immediate("ticket:123", "status")],
+        None,
+        "render-v1",
+    );
+    page.is_baked = true;
+    store.write_page(&page)?;
+
+    // Read back so we have the persisted state.
+    let page = store.read_page("/tickets/123")?.expect("page must exist");
+
+    let response = route.serve(page, || {
+        Err(io::Error::other("should not render — artifact is prebaked"))
     })?;
 
-    let route = BakedRoute::new(store.clone(), full_page);
-    let response = route.serve(|_declaration| {
-        Err(io::Error::other(
-            "BuildTime route should read the prebaked artifact",
-        ))
-    })?;
     assert_eq!(response.headers()["x-pilcrow-baked"], "hit");
     assert_eq!(response.headers()["x-pilcrow-ssr-load"], "skipped");
 
-    let layout_path = store.layout_path("app");
-    fs::create_dir_all(layout_path.parent().unwrap())?;
-    fs::write(
-        &layout_path,
-        "<html><body><!--pilcrow-slot:start page_body kind=html--><!--pilcrow-slot:end page_body--></body></html>",
-    )?;
-
-    let composed = BakedRouteDeclaration::build_time("/docs/:slug", "/docs/intro")
-        .fragment_composed("app")
-        .text_slot("doc_status", vec![DependencyKey::new("doc:intro")]);
-
-    store.prebake_declared(&composed, |_declaration| {
-        Ok(BakedRenderedPage::new(
-            "<main><!--pilcrow-slot:start doc_status kind=text-->Ready<!--pilcrow-slot:end doc_status--></main>",
-            "render-v1",
-        ))
-    })?;
-
-    let route = BakedRoute::new(store.clone(), composed);
-    let response = route.serve(|_declaration| {
-        Err(io::Error::other(
-            "BuildTime composed route should read the prebaked body",
-        ))
-    })?;
-    assert_eq!(response.headers()["x-pilcrow-baked"], "hit");
-    assert_eq!(response.headers()["x-pilcrow-ssr-load"], "skipped");
-
-    println!("prebaked BuildTime pages served as hit/skipped from {root:?}");
+    println!("prebaked page served as hit/skipped from {root:?}");
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }

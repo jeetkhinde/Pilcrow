@@ -1,6 +1,4 @@
-use super::{
-    replace_slot_content, BakedArtifactMode, BakedPage, BakedSlot, DependencyKey, StaleState,
-};
+use super::model::{BakedPage, DependencyKey, StaleState};
 use std::{
     collections::BTreeMap,
     fs,
@@ -10,13 +8,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// `dep_key → { concrete_path → [field_names] }`
+///
+/// When a dep key fires, look up which concrete paths are affected and which JSON
+/// keys within their data artifacts need to be updated.
 pub type ReverseIndex = BTreeMap<String, BTreeMap<String, Vec<String>>>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BakedArtifactHit {
-    pub page: BakedPage,
-    pub html: String,
-}
 
 #[derive(Debug, Clone)]
 pub struct BakedPageStore {
@@ -32,117 +28,175 @@ impl BakedPageStore {
         &self.root
     }
 
-    pub fn write_artifact(&self, page: &BakedPage, html: &str) -> io::Result<BakedPage> {
-        let mut page = self.normalize_page_for_write(page.clone());
-        page.stale_state = StaleState::fresh();
-        page.dependency_keys = collect_dependency_keys(&page.slots);
+    // ── Path helpers ──────────────────────────────────────────────────────────
 
-        self.write_atomic(Path::new(&page.body_path), html.as_bytes())?;
-        self.write_page(&page)?;
-        self.upsert_reverse_index_page(&page)?;
-
-        Ok(page)
+    /// Shell path: one per route pattern, shared across all concrete paths.
+    ///
+    /// `/tickets/:id` → `shells/tickets__id.html`
+    pub fn shell_path(&self, route_pattern: &str) -> PathBuf {
+        self.root.join("shells").join(pattern_name(route_pattern))
     }
 
-    pub fn serve_if_fresh(&self, concrete_path: &str) -> io::Result<Option<BakedArtifactHit>> {
-        let Some(page) = self.read_page(concrete_path)? else {
-            return Ok(None);
-        };
-        if page.stale_state.stale {
-            return Ok(None);
-        }
-
-        match fs::read_to_string(&page.body_path) {
-            Ok(html) => {
-                self.touch(concrete_path)?;
-                let page = self.read_page(concrete_path)?.unwrap_or(page);
-                Ok(Some(BakedArtifactHit { page, html }))
+    /// JSON data artifact path: one per concrete path.
+    ///
+    /// `/tickets/123` → `data/tickets/123.json`
+    pub fn json_path(&self, concrete_path: &str) -> PathBuf {
+        let trimmed = concrete_path.trim_start_matches('/');
+        if trimmed.is_empty() {
+            self.root.join("data").join("index.json")
+        } else {
+            let mut path = self.root.join("data");
+            for segment in trimmed.split('/') {
+                path = path.join(segment);
             }
+            path.with_extension("json")
+        }
+    }
+
+    /// Metadata path: one per concrete path.
+    ///
+    /// `/tickets/123` → `metadata/tickets/123.json`
+    pub fn metadata_path(&self, concrete_path: &str) -> PathBuf {
+        let trimmed = concrete_path.trim_start_matches('/');
+        if trimmed.is_empty() {
+            self.root.join("metadata").join("index.json")
+        } else {
+            let mut path = self.root.join("metadata");
+            for segment in trimmed.split('/') {
+                path = path.join(segment);
+            }
+            path.with_extension("json")
+        }
+    }
+
+    pub fn reverse_index_path(&self) -> PathBuf {
+        self.root.join("reverse-index.json")
+    }
+
+    // ── Shell operations ──────────────────────────────────────────────────────
+
+    /// Write the static shell HTML for a route pattern. Idempotent — safe to call on every
+    /// render; overwrites only if the file does not exist yet or has changed.
+    pub fn write_shell(&self, route_pattern: &str, html: &str) -> io::Result<()> {
+        let path = self.shell_path(route_pattern);
+        // Skip write if content is identical (avoids unnecessary fsync).
+        if let Ok(existing) = fs::read_to_string(&path) {
+            if existing == html {
+                return Ok(());
+            }
+        }
+        self.write_atomic(&path, html.as_bytes())
+    }
+
+    pub fn read_shell(&self, route_pattern: &str) -> io::Result<Option<String>> {
+        match fs::read_to_string(self.shell_path(route_pattern)) {
+            Ok(html) => Ok(Some(html)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
         }
     }
 
+    // ── JSON data artifact operations ─────────────────────────────────────────
+
+    pub fn write_json(&self, concrete_path: &str, json: &serde_json::Value) -> io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(json).map_err(io::Error::other)?;
+        self.write_atomic(&self.json_path(concrete_path), &bytes)
+    }
+
+    pub fn read_json(&self, concrete_path: &str) -> io::Result<Option<serde_json::Value>> {
+        match fs::read_to_string(self.json_path(concrete_path)) {
+            Ok(raw) => serde_json::from_str(&raw)
+                .map(Some)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Patch a single key in the stored JSON artifact. Reads, updates, and atomically rewrites.
+    ///
+    /// Supports dot-notation for nested keys: `"details.price"` updates `json["details"]["price"]`.
+    pub fn patch_json_key(
+        &self,
+        concrete_path: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) -> io::Result<()> {
+        let mut json = self
+            .read_json(concrete_path)?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("no JSON artifact for `{concrete_path}`"),
+                )
+            })?;
+        set_json_key(&mut json, key, value);
+        self.write_json(concrete_path, &json)
+    }
+
+    // ── Metadata operations ───────────────────────────────────────────────────
+
     pub fn read_page(&self, concrete_path: &str) -> io::Result<Option<BakedPage>> {
-        let raw = match fs::read_to_string(self.metadata_path(concrete_path)) {
-            Ok(raw) => raw,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(err),
-        };
-        serde_json::from_str(&raw)
-            .map(|page| Some(self.normalize_page_for_read(page)))
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+        let path = self.metadata_path(concrete_path);
+        match fs::read_to_string(path) {
+            Ok(raw) => serde_json::from_str(&raw)
+                .map(Some)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub fn write_page(&self, page: &BakedPage) -> io::Result<()> {
+        let json = serde_json::to_vec_pretty(page).map_err(io::Error::other)?;
+        self.write_atomic(&self.metadata_path(&page.concrete_path), &json)
+    }
+
+    /// Increment `hit_count` and update `last_accessed_at`. Returns the new hit count.
+    pub fn increment_hit_count(&self, concrete_path: &str) -> io::Result<u64> {
+        if let Some(mut page) = self.read_page(concrete_path)? {
+            page.hit_count += 1;
+            page.last_accessed_at = unix_timestamp();
+            self.write_page(&page)?;
+            Ok(page.hit_count)
+        } else {
+            Ok(0)
+        }
     }
 
     pub fn mark_stale(&self, concrete_path: &str, reason: impl Into<String>) -> io::Result<()> {
-        let mut page = self.read_page(concrete_path)?.unwrap_or_else(|| {
-            let now = unix_timestamp();
-            BakedPage::full_page(
-                "",
-                concrete_path,
-                self.html_path(concrete_path).to_string_lossy().to_string(),
-                self.metadata_path(concrete_path)
-                    .to_string_lossy()
-                    .to_string(),
-                Vec::new(),
-                now,
-                "",
-            )
-        });
-        page.stale_state = StaleState::stale(reason);
-        self.write_page(&page)
+        if let Some(mut page) = self.read_page(concrete_path)? {
+            page.stale_state = StaleState::stale(reason);
+            self.write_page(&page)?;
+        }
+        Ok(())
     }
 
-    pub fn patch_slot(
-        &self,
-        concrete_path: &str,
-        slot: &BakedSlot,
-        replacement: &str,
-    ) -> io::Result<()> {
-        let Some(mut page) = self.read_page(concrete_path)? else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("baked page metadata not found for `{concrete_path}`"),
-            ));
-        };
-        let html = fs::read_to_string(&page.body_path)?;
-        let patched = replace_slot_content(&html, &slot.name, &slot.kind, replacement)?;
-        self.write_atomic(Path::new(&page.body_path), patched.as_bytes())?;
-        page.stale_state = StaleState::fresh();
-        self.write_page(&page)
-    }
+    // ── Reverse index ─────────────────────────────────────────────────────────
 
     pub fn ensure_reverse_index(&self) -> io::Result<ReverseIndex> {
         match self.reverse_index() {
             Ok(Some(index)) => Ok(index),
-            Ok(None) => {
+            Ok(None) | Err(_) => {
                 let index = self.rebuild_reverse_index_from_metadata()?;
                 self.write_reverse_index(&index)?;
                 Ok(index)
             }
-            Err(err) if err.kind() == io::ErrorKind::InvalidData => {
-                let index = self.rebuild_reverse_index_from_metadata()?;
-                self.write_reverse_index(&index)?;
-                Ok(index)
-            }
-            Err(err) => Err(err),
         }
     }
 
     pub fn rebuild_reverse_index_from_metadata(&self) -> io::Result<ReverseIndex> {
         let mut index = ReverseIndex::new();
         for path in self.metadata_files()? {
-            let raw = fs::read_to_string(path)?;
-            let page: BakedPage = serde_json::from_str(&raw)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-            let page = self.normalize_page_for_read(page);
-            for slot in &page.slots {
-                for dep in &slot.dependency_keys {
-                    add_index_slot(&mut index, dep, &page.concrete_path, &slot.name);
-                }
+            let raw = fs::read_to_string(&path)?;
+            let page: BakedPage = match serde_json::from_str(&raw) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            for config in &page.dependency_configs {
+                add_index_entry(&mut index, &config.key, &page.concrete_path, &config.field_name);
             }
         }
-
         Ok(index)
     }
 
@@ -150,7 +204,7 @@ impl BakedPageStore {
         match fs::read_to_string(self.reverse_index_path()) {
             Ok(raw) => serde_json::from_str(&raw)
                 .map(Some)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err)),
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
         }
@@ -161,137 +215,28 @@ impl BakedPageStore {
         self.write_atomic(&self.reverse_index_path(), &json)
     }
 
-    pub fn html_path(&self, concrete_path: &str) -> PathBuf {
-        self.root.join("pages").join(storage_name(concrete_path))
-    }
-
-    pub fn body_path(&self, concrete_path: &str) -> PathBuf {
-        self.route_dir(concrete_path).join("body.html")
-    }
-
-    pub fn metadata_path(&self, concrete_path: &str) -> PathBuf {
-        self.route_dir(concrete_path).join("metadata.json")
-    }
-
-    pub fn layout_path(&self, key: &str) -> PathBuf {
-        self.root
-            .join("layouts")
-            .join(format!("{}.html", safe_key(key)))
-    }
-
-    pub fn fragment_path(&self, key: &str) -> PathBuf {
-        self.root
-            .join("fragments")
-            .join(format!("{}.html", safe_key(key)))
-    }
-
-    pub fn reverse_index_path(&self) -> PathBuf {
-        self.root.join("reverse-index.json")
-    }
-
-    fn write_page(&self, page: &BakedPage) -> io::Result<()> {
-        let json = serde_json::to_vec_pretty(page).map_err(io::Error::other)?;
-        self.write_atomic(&self.metadata_path(&page.concrete_path), &json)
-    }
-
-    fn touch(&self, concrete_path: &str) -> io::Result<()> {
-        if let Some(mut page) = self.read_page(concrete_path)? {
-            page.last_accessed_at = unix_timestamp();
-            self.write_page(&page)?;
-        }
-        Ok(())
-    }
-
-    fn upsert_reverse_index_page(&self, page: &BakedPage) -> io::Result<()> {
+    /// Update the reverse index to include entries for a newly baked page.
+    pub fn upsert_reverse_index_page(&self, page: &BakedPage) -> io::Result<()> {
         let mut index = match self.reverse_index() {
-            Ok(Some(index)) => index,
-            Ok(None) => ReverseIndex::new(),
-            Err(err) if err.kind() == io::ErrorKind::InvalidData => ReverseIndex::new(),
-            Err(err) => return Err(err),
+            Ok(Some(i)) => i,
+            Ok(None) | Err(_) => ReverseIndex::new(),
         };
-
         for pages in index.values_mut() {
             pages.remove(&page.concrete_path);
         }
         index.retain(|_, pages| !pages.is_empty());
-
-        for slot in &page.slots {
-            for dep in &slot.dependency_keys {
-                add_index_slot(&mut index, dep, &page.concrete_path, &slot.name);
-            }
+        for config in &page.dependency_configs {
+            add_index_entry(&mut index, &config.key, &page.concrete_path, &config.field_name);
         }
-
         self.write_reverse_index(&index)
     }
 
-    fn metadata_files(&self) -> io::Result<Vec<PathBuf>> {
-        let mut files = Vec::new();
-        self.collect_metadata_files(&self.root.join("pages"), &mut files)?;
-        files.sort();
-        files.dedup();
-        Ok(files)
-    }
-
-    fn collect_metadata_files(&self, dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-        if !dir.exists() {
-            return Ok(());
-        }
-
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                self.collect_metadata_files(&path, files)?;
-            } else if path.file_name().and_then(|name| name.to_str()) == Some("metadata.json") {
-                files.push(path);
-            }
-        }
-        Ok(())
-    }
-
-    fn normalize_page_for_write(&self, mut page: BakedPage) -> BakedPage {
-        page.body_path = match page.artifact_mode {
-            BakedArtifactMode::FullPage => self.html_path(&page.concrete_path),
-            BakedArtifactMode::FragmentComposed => self.body_path(&page.concrete_path),
-        }
-        .to_string_lossy()
-        .to_string();
-        page.html_path = page.body_path.clone();
-        page.metadata_path = self
-            .metadata_path(&page.concrete_path)
-            .to_string_lossy()
-            .to_string();
-        page
-    }
-
-    fn normalize_page_for_read(&self, mut page: BakedPage) -> BakedPage {
-        if page.body_path.is_empty() {
-            page.body_path = if page.html_path.is_empty() {
-                match page.artifact_mode {
-                    BakedArtifactMode::FullPage => self.html_path(&page.concrete_path),
-                    BakedArtifactMode::FragmentComposed => self.body_path(&page.concrete_path),
-                }
-                .to_string_lossy()
-                .to_string()
-            } else {
-                page.html_path.clone()
-            };
-        }
-        if page.html_path.is_empty() {
-            page.html_path = page.body_path.clone();
-        }
-        page.metadata_path = self
-            .metadata_path(&page.concrete_path)
-            .to_string_lossy()
-            .to_string();
-        page
-    }
+    // ── Atomic writes ─────────────────────────────────────────────────────────
 
     fn write_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-
         let tmp = temp_path_for(path);
         {
             let mut file = OpenOptions::new().create_new(true).write(true).open(&tmp)?;
@@ -307,270 +252,277 @@ impl BakedPageStore {
         Ok(())
     }
 
-    fn route_dir(&self, concrete_path: &str) -> PathBuf {
-        let trimmed = concrete_path.trim_start_matches('/');
-        if trimmed.is_empty() {
-            self.root.join("pages").join("index")
-        } else {
-            trimmed
-                .split('/')
-                .filter(|segment| !segment.is_empty())
-                .fold(self.root.join("pages"), |path, segment| {
-                    path.join(safe_key(segment))
-                })
-        }
+    // ── Internal helpers ──────────────────────────────────────────────────────
+
+    fn metadata_files(&self) -> io::Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        collect_json_files(&self.root.join("metadata"), &mut files)?;
+        files.sort();
+        Ok(files)
     }
 }
 
-fn add_index_slot(index: &mut ReverseIndex, dep: &DependencyKey, concrete_path: &str, slot: &str) {
-    let slots = index
+// ── Free functions ────────────────────────────────────────────────────────────
+
+fn add_index_entry(
+    index: &mut ReverseIndex,
+    dep: &DependencyKey,
+    concrete_path: &str,
+    field_name: &str,
+) {
+    let fields = index
         .entry(dep.as_str().to_string())
         .or_default()
         .entry(concrete_path.to_string())
         .or_default();
-    if !slots.iter().any(|existing| existing == slot) {
-        slots.push(slot.to_string());
-        slots.sort();
+    if !fields.iter().any(|f| f == field_name) {
+        fields.push(field_name.to_string());
+        fields.sort();
     }
 }
 
-fn collect_dependency_keys(slots: &[BakedSlot]) -> Vec<DependencyKey> {
-    let mut dependency_keys = Vec::new();
-    for slot in slots {
-        for key in &slot.dependency_keys {
-            if !dependency_keys.iter().any(|existing| existing == key) {
-                dependency_keys.push(key.clone());
-            }
-        }
-    }
-    dependency_keys
-}
-
-fn storage_name(concrete_path: &str) -> String {
-    let trimmed = concrete_path.trim_matches('/');
+/// Normalize a route pattern to a shell filename.
+///
+/// `/tickets/:id` → `tickets__id.html`
+/// `/` → `index.html`
+fn pattern_name(route_pattern: &str) -> String {
+    let trimmed = route_pattern.trim_matches('/');
     if trimmed.is_empty() {
-        "index.html".to_string()
-    } else {
-        format!("{}.html", trimmed.replace('/', "__"))
+        return "index.html".to_string();
     }
-}
-
-fn safe_key(key: &str) -> String {
-    key.chars()
+    let normalized = trimmed
+        .chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '[' | ']') {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
                 ch
+            } else if ch == '/' {
+                '_'
             } else {
                 '_'
             }
         })
-        .collect()
+        .collect::<String>();
+    // Collapse runs of underscores from separators.
+    let mut result = String::new();
+    let mut prev_underscore = false;
+    for ch in normalized.chars() {
+        if ch == '_' {
+            if !prev_underscore {
+                result.push('_');
+                result.push('_');
+            }
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+            result.push(ch);
+        }
+    }
+    format!("{result}.html")
+}
+
+/// Update a JSON value at the given dot-notation key path.
+fn set_json_key(json: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    let segments: Vec<&str> = key.split('.').collect();
+    let mut current = json;
+    for (i, segment) in segments.iter().enumerate() {
+        if i == segments.len() - 1 {
+            if let Some(obj) = current.as_object_mut() {
+                obj.insert(segment.to_string(), value);
+                return;
+            }
+        } else {
+            let Some(next) = current
+                .as_object_mut()
+                .and_then(|obj| obj.get_mut(*segment))
+            else {
+                return;
+            };
+            current = next;
+        }
+    }
+}
+
+fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_json_files(&path, files)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn temp_path_for(path: &Path) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
+        .map(|d| d.as_nanos())
         .unwrap_or_default();
     let pid = std::process::id();
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("artifact");
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("artifact");
     path.with_file_name(format!(".{filename}.{pid}.{nonce}.tmp"))
 }
 
 fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|d| d.as_secs())
         .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baked_pages::BakedSlotKind;
+    use crate::baked_pages::model::{BakedSlot, DependencyConfig};
+    use serde_json::json;
 
-    fn page(
-        store: &BakedPageStore,
-        concrete_path: &str,
-        artifact_mode: BakedArtifactMode,
-    ) -> BakedPage {
-        let slots = vec![BakedSlot::text(
-            "status",
-            vec![DependencyKey::new(format!("page:{concrete_path}:status"))],
-        )];
-        match artifact_mode {
-            BakedArtifactMode::FullPage => BakedPage::full_page(
-                "/example",
-                concrete_path,
-                store.html_path(concrete_path).to_string_lossy().to_string(),
-                store
-                    .metadata_path(concrete_path)
-                    .to_string_lossy()
-                    .to_string(),
-                slots,
-                1,
-                "test-renderer",
-            ),
-            BakedArtifactMode::FragmentComposed => BakedPage::fragment_composed(
-                "/example",
-                concrete_path,
-                "app",
-                store.body_path(concrete_path).to_string_lossy().to_string(),
-                store
-                    .metadata_path(concrete_path)
-                    .to_string_lossy()
-                    .to_string(),
-                slots,
-                1,
-                "test-renderer",
-            ),
-        }
+    fn make_page(store: &BakedPageStore, concrete_path: &str) -> BakedPage {
+        BakedPage::new(
+            "/tickets/:id",
+            concrete_path,
+            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+            store.json_path(concrete_path).to_string_lossy().to_string(),
+            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            vec![BakedSlot::text("status")],
+            vec![DependencyConfig::immediate("TicketStatus:123", "status")],
+            Some(10),
+            "v1",
+        )
     }
 
     #[test]
-    fn writes_full_page_artifact_and_metadata() {
+    fn write_and_read_json_artifact() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        let written = store
-            .write_artifact(
-                &page(&store, "/docs/intro", BakedArtifactMode::FullPage),
-                "<html>intro</html>",
-            )
-            .unwrap();
+        let data = json!({ "status": "Open", "title": "Bug" });
 
-        assert_eq!(
-            fs::read_to_string(store.html_path("/docs/intro")).unwrap(),
-            "<html>intro</html>"
-        );
-        assert_eq!(written.body_path, written.html_path);
+        store.write_json("/tickets/123", &data).unwrap();
 
-        let metadata = store.read_page("/docs/intro").unwrap().unwrap();
-        assert_eq!(metadata.artifact_mode, BakedArtifactMode::FullPage);
-        assert_eq!(
-            metadata.dependency_keys[0].as_str(),
-            "page:/docs/intro:status"
-        );
+        let read = store.read_json("/tickets/123").unwrap().unwrap();
+        assert_eq!(read["status"], "Open");
     }
 
     #[test]
-    fn writes_fragment_composed_body_artifact_and_metadata() {
+    fn patch_json_key_updates_single_field() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        let written = store
-            .write_artifact(
-                &page(&store, "/docs/intro", BakedArtifactMode::FragmentComposed),
-                "<main>body</main>",
-            )
-            .unwrap();
+        store.write_json("/tickets/123", &json!({ "status": "Open" })).unwrap();
 
-        assert_eq!(
-            fs::read_to_string(store.body_path("/docs/intro")).unwrap(),
-            "<main>body</main>"
-        );
-        assert_eq!(written.layout_key.as_deref(), Some("app"));
-        assert_eq!(written.body_path, written.html_path);
-
-        let metadata = store.read_page("/docs/intro").unwrap().unwrap();
-        assert_eq!(metadata.artifact_mode, BakedArtifactMode::FragmentComposed);
-        assert_eq!(metadata.layout_key.as_deref(), Some("app"));
-    }
-
-    #[test]
-    fn body_paths_are_route_shaped() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-
-        assert_eq!(
-            store.body_path("/tickets/123/summary"),
-            temp.path()
-                .join("pages")
-                .join("tickets")
-                .join("123")
-                .join("summary")
-                .join("body.html")
-        );
-        assert_eq!(
-            store.metadata_path("/tickets/123/summary"),
-            temp.path()
-                .join("pages")
-                .join("tickets")
-                .join("123")
-                .join("summary")
-                .join("metadata.json")
-        );
-    }
-
-    #[test]
-    fn reverse_index_rebuilds_from_metadata() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
         store
-            .write_artifact(
-                &page(&store, "/docs/intro", BakedArtifactMode::FullPage),
-                "<html>intro</html>",
-            )
+            .patch_json_key("/tickets/123", "status", json!("Closed"))
             .unwrap();
-        fs::remove_file(store.reverse_index_path()).unwrap();
 
-        let index = store.ensure_reverse_index().unwrap();
-
-        assert_eq!(
-            index["page:/docs/intro:status"]["/docs/intro"],
-            vec!["status".to_string()]
-        );
-        assert!(store.reverse_index_path().exists());
+        let result = store.read_json("/tickets/123").unwrap().unwrap();
+        assert_eq!(result["status"], "Closed");
     }
 
     #[test]
-    fn mark_stale_refuses_fresh_serving() {
+    fn write_and_read_shell() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
+
         store
-            .write_artifact(
-                &page(&store, "/docs/intro", BakedArtifactMode::FullPage),
-                "<html>intro</html>",
-            )
+            .write_shell("/tickets/:id", "<span data-pilcrow-slot=\"status\">Loading</span>")
             .unwrap();
 
-        assert!(store.serve_if_fresh("/docs/intro").unwrap().is_some());
+        let shell = store.read_shell("/tickets/:id").unwrap().unwrap();
+        assert!(shell.contains("data-pilcrow-slot=\"status\""));
+    }
 
-        store.mark_stale("/docs/intro", "source changed").unwrap();
+    #[test]
+    fn write_shell_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let html = "<span data-pilcrow-slot=\"status\">Loading</span>";
 
-        assert!(store.serve_if_fresh("/docs/intro").unwrap().is_none());
-        let metadata = store.read_page("/docs/intro").unwrap().unwrap();
+        store.write_shell("/tickets/:id", html).unwrap();
+        store.write_shell("/tickets/:id", html).unwrap(); // should not error
+        assert_eq!(store.read_shell("/tickets/:id").unwrap().unwrap(), html);
+    }
+
+    #[test]
+    fn write_and_read_page_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let page = make_page(&store, "/tickets/123");
+
+        store.write_page(&page).unwrap();
+
+        let read = store.read_page("/tickets/123").unwrap().unwrap();
+        assert_eq!(read.concrete_path, "/tickets/123");
+        assert!(!read.is_baked);
+    }
+
+    #[test]
+    fn increment_hit_count() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let page = make_page(&store, "/tickets/123");
+        store.write_page(&page).unwrap();
+
+        let count1 = store.increment_hit_count("/tickets/123").unwrap();
+        let count2 = store.increment_hit_count("/tickets/123").unwrap();
+
+        assert_eq!(count1, 1);
+        assert_eq!(count2, 2);
+        assert_eq!(store.read_page("/tickets/123").unwrap().unwrap().hit_count, 2);
+    }
+
+    #[test]
+    fn reverse_index_rebuilt_from_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let page = make_page(&store, "/tickets/123");
+        store.write_page(&page).unwrap();
+
+        let index = store.rebuild_reverse_index_from_metadata().unwrap();
+
+        assert!(index.contains_key("TicketStatus:123"));
+        assert!(index["TicketStatus:123"].contains_key("/tickets/123"));
+        assert_eq!(index["TicketStatus:123"]["/tickets/123"], vec!["status"]);
+    }
+
+    #[test]
+    fn mark_stale_updates_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let page = make_page(&store, "/tickets/123");
+        store.write_page(&page).unwrap();
+
+        store.mark_stale("/tickets/123", "dep changed").unwrap();
+
+        let read = store.read_page("/tickets/123").unwrap().unwrap();
+        assert!(read.stale_state.stale);
+        assert_eq!(read.stale_state.reason.as_deref(), Some("dep changed"));
+    }
+
+    #[test]
+    fn json_path_rooted_at_data_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+
         assert_eq!(
-            metadata.stale_state.reason.as_deref(),
-            Some("source changed")
+            store.json_path("/tickets/123"),
+            temp.path().join("data").join("tickets").join("123.json")
+        );
+        assert_eq!(
+            store.json_path("/"),
+            temp.path().join("data").join("index.json")
         );
     }
 
     #[test]
-    fn atomic_temp_file_is_not_served_output() {
+    fn metadata_path_rooted_at_metadata_dir() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        store
-            .write_artifact(
-                &page(&store, "/docs/intro", BakedArtifactMode::FullPage),
-                "<html>stable</html>",
-            )
-            .unwrap();
 
-        let temp_artifact = store
-            .html_path("/docs/intro")
-            .with_file_name(".intro.html.partial.tmp");
-        fs::write(temp_artifact, "<html>partial</html>").unwrap();
-
-        let hit = store.serve_if_fresh("/docs/intro").unwrap().unwrap();
-
-        assert_eq!(hit.html, "<html>stable</html>");
-    }
-
-    #[test]
-    fn slot_kind_marker_values_match_storage_markers() {
-        assert_eq!(BakedSlotKind::Text.marker_kind(), "text");
-        assert_eq!(BakedSlotKind::TrustedHtml.marker_kind(), "html");
+        assert_eq!(
+            store.metadata_path("/tickets/123"),
+            temp.path().join("metadata").join("tickets").join("123.json")
+        );
     }
 }

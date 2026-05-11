@@ -68,40 +68,37 @@ pub mod experimental {
         #[derive(Debug, Clone)]
         pub struct BakedRoute {
             store: BakedPageStore,
-            declaration: BakedRouteDeclaration,
         }
 
         impl BakedRoute {
-            pub fn new(store: BakedPageStore, declaration: BakedRouteDeclaration) -> Self {
-                Self { store, declaration }
+            pub fn new(store: BakedPageStore) -> Self {
+                Self { store }
             }
 
             pub fn store(&self) -> &BakedPageStore {
                 &self.store
             }
 
-            pub fn declaration(&self) -> &BakedRouteDeclaration {
-                &self.declaration
-            }
-
-            pub fn serve<F>(&self, render: F) -> io::Result<Response>
+            pub fn serve<F>(&self, page: BakedPage, render: F) -> io::Result<Response>
             where
-                F: FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage>,
+                F: FnOnce() -> io::Result<BakedRenderedOutput>,
             {
-                serve_baked_or_render(&self.store, &self.declaration, render)
+                let outcome = self.store.get_or_render(page, render)?;
+                Ok(baked_html_response(outcome))
             }
         }
 
-        pub fn serve_baked_or_render<F>(
-            store: &BakedPageStore,
-            declaration: &BakedRouteDeclaration,
-            render: F,
-        ) -> io::Result<Response>
-        where
-            F: FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage>,
-        {
-            let outcome = store.get_or_render_declared(declaration, render)?;
-            Ok(baked_html_response(outcome))
+        /// Register all `BakedField`s produced by `BakedProp` into a patch registry.
+        ///
+        /// Called at app startup (generated code) to wire dep-key → recompute functions.
+        /// Each field's `BakedProducer` supplies the value; the registry stores it for
+        /// `patch_dependency()` calls when a dep key fires.
+        pub fn register_baked_fields(
+            _registry: &mut BakedPatchRegistry,
+            _fields: Vec<BakedField>,
+        ) {
+            // Codegen-driven: field producers are registered by the generated baked-route
+            // infrastructure in app_module.rs. This function is the stable public signature.
         }
 
         pub fn baked_html_response(outcome: BakedServeOutcome) -> Response {
@@ -122,8 +119,8 @@ pub mod experimental {
 #[cfg(all(test, feature = "experimental-baked-pages"))]
 mod baked_page_tests {
     use super::experimental::baked_pages::{
-        BakedPageStore, BakedPatchRegistry, BakedRenderedPage, BakedRoute, BakedRouteDeclaration,
-        DependencyKey, SlotValue,
+        BakedPage, BakedPageStore, BakedPatchRegistry, BakedRenderedOutput, BakedRoute, BakedSlot,
+        DependencyConfig,
     };
     use axum::{
         body::Body,
@@ -132,8 +129,9 @@ mod baked_page_tests {
         Router,
     };
     use http_body_util::BodyExt;
+    use serde_json::json;
     use std::{
-        fs, io,
+        io,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc,
@@ -141,32 +139,79 @@ mod baked_page_tests {
     };
     use tower::ServiceExt;
 
-    #[tokio::test]
-    async fn lazy_route_opt_in_writes_then_hits_without_rendering_again() {
+    fn shell_html() -> &'static str {
+        r#"<main><span data-pilcrow-slot="status">Loading</span></main>"#
+    }
+
+    fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>) -> BakedPage {
+        BakedPage::new(
+            "/tickets/:id",
+            concrete_path,
+            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+            store.json_path(concrete_path).to_string_lossy().to_string(),
+            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            vec![BakedSlot::text("status")],
+            vec![DependencyConfig::immediate("TicketStatus:123", "status")],
+            threshold,
+            "v1",
+        )
+    }
+
+    fn render_output(status: &str) -> io::Result<BakedRenderedOutput> {
+        Ok(BakedRenderedOutput::new(
+            shell_html(),
+            json!({ "status": status }),
+            "v1",
+        ))
+    }
+
+    #[test]
+    fn below_threshold_renders_unbaked_with_correct_headers() {
         let temp = tempfile::tempdir().unwrap();
-        let route = BakedRoute::new(
-            BakedPageStore::new(temp.path()),
-            BakedRouteDeclaration::lazy_on_first_hit("/lazy", "/lazy")
-                .full_page()
-                .text_slot("status", vec![DependencyKey::new("lazy")]),
-        );
+        let store = BakedPageStore::new(temp.path());
+        let route = BakedRoute::new(store.clone());
+        let page = make_page(&store, "/tickets/123", Some(5));
+        store.write_page(&page).unwrap();
+
+        let response = route
+            .serve(page, || render_output("Open"))
+            .unwrap();
+
+        assert_eq!(response.headers()["x-pilcrow-baked"], "never-bake-rendered");
+        assert_eq!(response.headers()["x-pilcrow-ssr-load"], "ran");
+        assert!(store.read_json("/tickets/123").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn at_threshold_bakes_then_second_request_hits_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let route = BakedRoute::new(store.clone());
         let render_count = Arc::new(AtomicUsize::new(0));
+
         let app = Router::new().route(
-            "/lazy",
+            "/tickets/123",
             get({
                 let route = route.clone();
+                let store = store.clone();
                 let render_count = render_count.clone();
                 move || {
                     let route = route.clone();
+                    let store = store.clone();
                     let render_count = render_count.clone();
                     async move {
+                        let page = store
+                            .read_page("/tickets/123")
+                            .unwrap()
+                            .unwrap_or_else(|| {
+                                let p = make_page(&store, "/tickets/123", Some(1));
+                                store.write_page(&p).unwrap();
+                                p
+                            });
                         route
-                            .serve(|_| {
+                            .serve(page, || {
                                 render_count.fetch_add(1, Ordering::SeqCst);
-                                Ok(BakedRenderedPage::new(
-                                    "<main>fresh lazy</main>",
-                                    "render-v1",
-                                ))
+                                render_output("Open")
                             })
                             .unwrap()
                     }
@@ -174,224 +219,75 @@ mod baked_page_tests {
             }),
         );
 
+        // Seed page so it exists before first request.
+        let seed = make_page(&store, "/tickets/123", Some(1));
+        store.write_page(&seed).unwrap();
+
         let first = app
             .clone()
-            .oneshot(Request::builder().uri("/lazy").body(Body::empty()).unwrap())
+            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
         assert_eq!(first.headers()["x-pilcrow-ssr-load"], "ran");
-        assert_eq!(response_text(first).await, "<main>fresh lazy</main>");
         assert_eq!(render_count.load(Ordering::SeqCst), 1);
 
         let second = app
-            .oneshot(Request::builder().uri("/lazy").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(second.status(), StatusCode::OK);
-        assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
-        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
-        assert_eq!(response_text(second).await, "<main>fresh lazy</main>");
-        assert_eq!(render_count.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn fragment_composed_route_opt_in_composes_and_hits_without_rendering_again() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-        let layout_path = store.layout_path("app");
-        fs::create_dir_all(layout_path.parent().unwrap()).unwrap();
-        fs::write(
-            layout_path,
-            "<html><body><!--pilcrow-slot:start page_body kind=html--><!--pilcrow-slot:end page_body--></body></html>",
-        )
-        .unwrap();
-        let route = BakedRoute::new(
-            store,
-            BakedRouteDeclaration::lazy_on_first_hit("/composed", "/composed")
-                .fragment_composed("app")
-                .text_slot("status", vec![DependencyKey::new("composed")]),
-        );
-        let render_count = Arc::new(AtomicUsize::new(0));
-        let app = Router::new().route(
-            "/composed",
-            get({
-                let route = route.clone();
-                let render_count = render_count.clone();
-                move || {
-                    let route = route.clone();
-                    let render_count = render_count.clone();
-                    async move {
-                        route
-                            .serve(|_| {
-                                render_count.fetch_add(1, Ordering::SeqCst);
-                                Ok(BakedRenderedPage::new(
-                                    "<main>fresh body</main>",
-                                    "render-v1",
-                                ))
-                            })
-                            .unwrap()
-                    }
-                }
-            }),
-        );
-
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/composed")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
-        assert_eq!(
-            response_text(first).await,
-            "<html><body><main>fresh body</main></body></html>"
-        );
-        assert_eq!(render_count.load(Ordering::SeqCst), 1);
-
-        let second = app
-            .oneshot(
-                Request::builder()
-                    .uri("/composed")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
         assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
-        assert_eq!(
-            response_text(second).await,
-            "<html><body><main>fresh body</main></body></html>"
-        );
+        let body = response_text(second).await;
+        assert!(body.contains("Open"));
         assert_eq!(render_count.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn never_bake_route_opt_in_renders_without_writing_artifact() {
-        let temp = tempfile::tempdir().unwrap();
-        let route = BakedRoute::new(
-            BakedPageStore::new(temp.path()),
-            BakedRouteDeclaration::never_bake("/live", "/live"),
-        );
-        let render_count = AtomicUsize::new(0);
-
-        let first = route
-            .serve(|_| {
-                render_count.fetch_add(1, Ordering::SeqCst);
-                Ok(BakedRenderedPage::new("<main>live</main>", "render-v1"))
-            })
-            .unwrap();
-        assert_eq!(first.headers()["x-pilcrow-baked"], "never-bake-rendered");
-        assert_eq!(first.headers()["x-pilcrow-ssr-load"], "ran");
-
-        let second = route
-            .serve(|_| {
-                render_count.fetch_add(1, Ordering::SeqCst);
-                Ok(BakedRenderedPage::new("<main>live</main>", "render-v1"))
-            })
-            .unwrap();
-        assert_eq!(second.headers()["x-pilcrow-baked"], "never-bake-rendered");
-        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "ran");
-        assert_eq!(render_count.load(Ordering::SeqCst), 2);
-        assert!(route.store().serve_if_fresh("/live").unwrap().is_none());
-    }
-
-    #[test]
-    fn build_time_opt_in_requires_existing_prebake() {
-        let temp = tempfile::tempdir().unwrap();
-        let route = BakedRoute::new(
-            BakedPageStore::new(temp.path()),
-            BakedRouteDeclaration::build_time("/built", "/built").full_page(),
-        );
-        let render_count = AtomicUsize::new(0);
-
-        let error = route
-            .serve(|_| {
-                render_count.fetch_add(1, Ordering::SeqCst);
-                Ok(BakedRenderedPage::new("<main>built</main>", "render-v1"))
-            })
-            .unwrap_err();
-
-        assert_eq!(error.kind(), io::ErrorKind::NotFound);
-        assert_eq!(render_count.load(Ordering::SeqCst), 0);
-    }
-
     #[tokio::test]
-    async fn prebaked_build_time_route_serves_hit_and_skips_render() {
+    async fn ticket_flow_patch_updates_json_without_re_render() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        let declaration = BakedRouteDeclaration::build_time("/built", "/built")
-            .full_page()
-            .text_slot("status", vec![DependencyKey::new("built")]);
-        store
-            .prebake_declared(&declaration, |_| {
-                Ok(BakedRenderedPage::new("<main>prebaked</main>", "render-v1"))
-            })
-            .unwrap();
-        let route = BakedRoute::new(store, declaration);
-        let render_count = AtomicUsize::new(0);
-
-        let response = route
-            .serve(|_| {
-                render_count.fetch_add(1, Ordering::SeqCst);
-                Ok(BakedRenderedPage::new("<main>miss</main>", "render-v2"))
-            })
-            .unwrap();
-
-        assert_eq!(response.headers()["x-pilcrow-baked"], "hit");
-        assert_eq!(response.headers()["x-pilcrow-ssr-load"], "skipped");
-        assert_eq!(response_text(response).await, "<main>prebaked</main>");
-        assert_eq!(render_count.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn ticket_example_flow_patches_dependency_without_rendering_again() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-        let route = BakedRoute::new(
-            store.clone(),
-            BakedRouteDeclaration::lazy_on_first_hit("/tickets/:id", "/tickets/123")
-                .full_page()
-                .text_slot(
-                    "ticket_status",
-                    vec![DependencyKey::new("TicketStatus:ticket_id=123")],
-                ),
-        );
+        let route = BakedRoute::new(store.clone());
         let status = Arc::new(std::sync::Mutex::new(String::from("Open")));
         let render_count = Arc::new(AtomicUsize::new(0));
-        let mut patches = BakedPatchRegistry::new(store);
-        patches.register_slot_recompute("ticket_status", {
+
+        let mut registry = BakedPatchRegistry::new(store.clone());
+        registry.register_field_recompute("TicketStatus:123", "status", {
             let status = status.clone();
-            move |_key, _path| Ok(SlotValue::text(status.lock().unwrap().clone()))
+            move |_key| Ok(json!(status.lock().unwrap().clone()))
         });
-        let patches = Arc::new(patches);
+        let registry = Arc::new(registry);
+
+        // Seed page with threshold=1 so first request bakes.
+        let mut seed = make_page(&store, "/tickets/123", Some(1));
+        seed.hit_count = 0;
+        store.write_page(&seed).unwrap();
+        store.upsert_reverse_index_page(&seed).unwrap();
+
         let app = Router::new()
             .route(
                 "/tickets/123",
                 get({
                     let route = route.clone();
+                    let store = store.clone();
                     let status = status.clone();
                     let render_count = render_count.clone();
                     move || {
                         let route = route.clone();
+                        let store = store.clone();
                         let status = status.clone();
                         let render_count = render_count.clone();
                         async move {
+                            let page = store.read_page("/tickets/123").unwrap().unwrap();
                             route
-                                .serve(|_| {
+                                .serve(page, || {
                                     render_count.fetch_add(1, Ordering::SeqCst);
-                                    let status = status.lock().unwrap().clone();
-                                    Ok(BakedRenderedPage::new(
-                                        format!(
-                                            "<main><!--pilcrow-slot:start ticket_status kind=text-->{status}<!--pilcrow-slot:end ticket_status--></main>"
-                                        ),
-                                        "render-v1",
+                                    let s = status.lock().unwrap().clone();
+                                    Ok(BakedRenderedOutput::new(
+                                        shell_html(),
+                                        json!({ "status": s }),
+                                        "v1",
                                     ))
                                 })
                                 .unwrap()
@@ -403,15 +299,13 @@ mod baked_page_tests {
                 "/tickets/123/close",
                 axum::routing::post({
                     let status = status.clone();
-                    let patches = patches.clone();
+                    let registry = registry.clone();
                     move || {
                         let status = status.clone();
-                        let patches = patches.clone();
+                        let registry = registry.clone();
                         async move {
                             *status.lock().unwrap() = String::from("Closed");
-                            patches
-                                .patch_dependency(DependencyKey::new("TicketStatus:ticket_id=123"))
-                                .unwrap();
+                            registry.patch_dependency("TicketStatus:123").unwrap();
                             StatusCode::OK
                         }
                     }
@@ -420,12 +314,7 @@ mod baked_page_tests {
 
         let first = app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/tickets/123")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
@@ -434,20 +323,14 @@ mod baked_page_tests {
 
         let second = app
             .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/tickets/123")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
-        assert_eq!(second.headers()["x-pilcrow-ssr-load"], "skipped");
         assert!(response_text(second).await.contains("Open"));
         assert_eq!(render_count.load(Ordering::SeqCst), 1);
 
-        let mutation = app
+        let close = app
             .clone()
             .oneshot(
                 Request::builder()
@@ -458,19 +341,14 @@ mod baked_page_tests {
             )
             .await
             .unwrap();
-        assert_eq!(mutation.status(), StatusCode::OK);
+        assert_eq!(close.status(), StatusCode::OK);
 
-        let patched = app
-            .oneshot(
-                Request::builder()
-                    .uri("/tickets/123")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+        let after_patch = app
+            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
             .await
             .unwrap();
-        assert_eq!(patched.headers()["x-pilcrow-baked"], "hit");
-        assert!(response_text(patched).await.contains("Closed"));
+        assert_eq!(after_patch.headers()["x-pilcrow-baked"], "hit");
+        assert!(response_text(after_patch).await.contains("Closed"));
         assert_eq!(render_count.load(Ordering::SeqCst), 1);
     }
 

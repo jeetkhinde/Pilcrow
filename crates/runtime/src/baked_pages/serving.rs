@@ -1,16 +1,16 @@
-use super::{
-    BakeEligibility, BakedArtifactMode, BakedPage, BakedPageStore, BakedRenderedPage,
-    BakedRouteDeclaration, BakedSlotKind,
-};
+use super::{inject::inject_slots, BakedPage, BakedPageStore};
 use std::{
-    fs, io,
+    io,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BakedServeState {
+    /// Served from JSON artifact + shell — no `load()` call.
     Hit,
+    /// Cache miss or stale; rendered by `load()`, artifact written (or promoted).
     MissRendered,
+    /// `NeverBake` or below threshold; rendered live, no artifact written.
     RenderedUnbaked,
 }
 
@@ -38,326 +38,245 @@ pub struct BakedServeOutcome {
     pub page: Option<BakedPage>,
 }
 
+/// What a `render` closure must return.
+pub struct BakedRenderedOutput {
+    /// The static shell HTML — written once per route pattern (idempotent).
+    pub shell_html: String,
+    /// The full load response as JSON — the primary artifact, written per concrete path.
+    pub json: serde_json::Value,
+    pub render_load_version: String,
+}
+
+impl BakedRenderedOutput {
+    pub fn new(
+        shell_html: impl Into<String>,
+        json: serde_json::Value,
+        render_load_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            shell_html: shell_html.into(),
+            json,
+            render_load_version: render_load_version.into(),
+        }
+    }
+}
+
 impl BakedPageStore {
-    pub fn get_or_render_declared<F>(
+    /// Main request entry point for baked pages.
+    ///
+    /// 1. Increments `hit_count` on every request.
+    /// 2. If the JSON artifact is fresh, reads shell + JSON → injects slots → returns `Hit`.
+    /// 3. Otherwise calls `render`, writes shell (idempotent) and conditionally writes JSON
+    ///    (when `hit_count >= auto_prebake_threshold` or the page is `BuildTime`).
+    pub fn get_or_render<F>(
         &self,
-        declaration: &BakedRouteDeclaration,
+        mut page: BakedPage,
         render: F,
     ) -> io::Result<BakedServeOutcome>
     where
-        F: FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage>,
+        F: FnOnce() -> io::Result<BakedRenderedOutput>,
     {
-        match declaration.eligibility {
-            BakeEligibility::LazyOnFirstHit => {
-                if let Some(hit) = self.serve_declared_if_fresh(declaration)? {
-                    return Ok(hit);
-                }
+        // Always increment hit count.
+        page.hit_count = page.hit_count.saturating_add(1);
+        page.last_accessed_at = unix_timestamp();
+        self.write_page(&page)?;
 
-                let rendered = render(declaration)?;
-                let page = page_from_declaration(
-                    self,
-                    declaration,
-                    unix_timestamp(),
-                    rendered.render_load_version,
-                );
-                let page = self.write_artifact(&page, &rendered.html)?;
-                let html = self.render_page_response(&page, &rendered.html)?;
+        // Serve from cache if fresh.
+        if page.is_baked && !page.stale_state.stale {
+            if let Some(outcome) = self.try_serve_from_cache(&page)? {
+                return Ok(outcome);
+            }
+        }
 
-                Ok(BakedServeOutcome {
-                    html,
-                    state: BakedServeState::MissRendered,
-                    page: Some(page),
-                })
-            }
-            BakeEligibility::BuildTime => {
-                if let Some(hit) = self.serve_declared_if_fresh(declaration)? {
-                    return Ok(hit);
-                }
-                Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "build_time declaration has no fresh prebaked artifact",
-                ))
-            }
-            BakeEligibility::NeverBake => {
-                let rendered = render(declaration)?;
-                Ok(BakedServeOutcome {
-                    html: rendered.html,
-                    state: BakedServeState::RenderedUnbaked,
-                    page: None,
-                })
-            }
+        // Render.
+        let output = render()?;
+
+        // Write shell (per pattern, idempotent).
+        self.write_shell(&page.route_pattern, &output.shell_html)?;
+
+        // Decide whether to bake the JSON artifact.
+        let should_bake = should_bake(&page);
+
+        let html = inject_slots(&output.shell_html, &output.json, &page.slots);
+
+        if should_bake {
+            self.write_json(&page.concrete_path, &output.json)?;
+            page.is_baked = true;
+            page.baked_at = Some(unix_timestamp());
+            page.render_load_version = output.render_load_version;
+            page.stale_state = super::model::StaleState::fresh();
+            self.write_page(&page)?;
+            self.upsert_reverse_index_page(&page)?;
+
+            Ok(BakedServeOutcome {
+                html,
+                state: BakedServeState::MissRendered,
+                page: Some(page),
+            })
+        } else {
+            Ok(BakedServeOutcome {
+                html,
+                state: BakedServeState::RenderedUnbaked,
+                page: None,
+            })
         }
     }
 
-    pub fn serve_declared_if_fresh(
-        &self,
-        declaration: &BakedRouteDeclaration,
-    ) -> io::Result<Option<BakedServeOutcome>> {
-        let Some(hit) = self.serve_if_fresh(&declaration.concrete_path)? else {
+    fn try_serve_from_cache(&self, page: &BakedPage) -> io::Result<Option<BakedServeOutcome>> {
+        let Some(shell) = self.read_shell(&page.route_pattern)? else {
             return Ok(None);
         };
-        let html = self.render_page_response(&hit.page, &hit.html)?;
+        let Some(json) = self.read_json(&page.concrete_path)? else {
+            return Ok(None);
+        };
+        let html = inject_slots(&shell, &json, &page.slots);
         Ok(Some(BakedServeOutcome {
             html,
             state: BakedServeState::Hit,
-            page: Some(hit.page),
+            page: Some(page.clone()),
         }))
     }
-
-    pub fn render_page_response(&self, page: &BakedPage, stored_html: &str) -> io::Result<String> {
-        match page.artifact_mode {
-            BakedArtifactMode::FullPage => Ok(stored_html.to_string()),
-            BakedArtifactMode::FragmentComposed => {
-                let layout_key = page.layout_key.as_deref().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "fragment-composed page is missing layout key",
-                    )
-                })?;
-                let layout = fs::read_to_string(self.layout_path(layout_key))?;
-                replace_slot_region(
-                    &layout,
-                    "page_body",
-                    &BakedSlotKind::TrustedHtml,
-                    stored_html,
-                )
-            }
-        }
-    }
 }
 
-fn replace_slot_region(
-    html: &str,
-    slot: &str,
-    kind: &BakedSlotKind,
-    replacement: &str,
-) -> io::Result<String> {
-    let start = format!(
-        "<!--pilcrow-slot:start {slot} kind={}-->",
-        kind.marker_kind()
-    );
-    let end = format!("<!--pilcrow-slot:end {slot}-->");
-    let start_pos = single_marker_pos(html, &start)?;
-    let end_pos = single_marker_pos(html, &end)?;
-    if start_pos >= end_pos {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "slot start marker appears after end marker",
-        ));
+fn should_bake(page: &BakedPage) -> bool {
+    // Already baked and stale → re-bake.
+    if page.is_baked {
+        return true;
     }
-
-    let mut composed = String::with_capacity(html.len() + replacement.len());
-    composed.push_str(&html[..start_pos]);
-    composed.push_str(replacement);
-    composed.push_str(&html[end_pos + end.len()..]);
-    Ok(composed)
-}
-
-fn single_marker_pos(html: &str, marker: &str) -> io::Result<usize> {
-    let mut matches = html.match_indices(marker);
-    let Some((pos, _)) = matches.next() else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("missing marker {marker}"),
-        ));
-    };
-    if matches.next().is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("duplicate marker {marker}"),
-        ));
-    }
-    Ok(pos)
-}
-
-fn page_from_declaration(
-    store: &BakedPageStore,
-    declaration: &BakedRouteDeclaration,
-    baked_at: u64,
-    render_load_version: String,
-) -> BakedPage {
-    match declaration.artifact_mode {
-        BakedArtifactMode::FullPage => BakedPage::full_page(
-            declaration.route_pattern.clone(),
-            declaration.concrete_path.clone(),
-            store
-                .html_path(&declaration.concrete_path)
-                .to_string_lossy()
-                .to_string(),
-            store
-                .metadata_path(&declaration.concrete_path)
-                .to_string_lossy()
-                .to_string(),
-            declaration.slots.clone(),
-            baked_at,
-            render_load_version,
-        ),
-        BakedArtifactMode::FragmentComposed => BakedPage::fragment_composed(
-            declaration.route_pattern.clone(),
-            declaration.concrete_path.clone(),
-            declaration.layout_key.clone().unwrap_or_default(),
-            store
-                .body_path(&declaration.concrete_path)
-                .to_string_lossy()
-                .to_string(),
-            store
-                .metadata_path(&declaration.concrete_path)
-                .to_string_lossy()
-                .to_string(),
-            declaration.slots.clone(),
-            baked_at,
-            render_load_version,
-        ),
+    // Not yet baked: check threshold.
+    match page.auto_prebake_threshold {
+        Some(threshold) => page.hit_count >= threshold as u64,
+        None => false,
     }
 }
 
 fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
+        .map(|d| d.as_secs())
         .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baked_pages::DependencyKey;
-    use std::{cell::Cell, fs, rc::Rc};
+    use crate::baked_pages::model::{BakedPage, BakedSlot, DependencyConfig};
+    use serde_json::json;
 
-    fn render_counter() -> Rc<Cell<usize>> {
-        Rc::new(Cell::new(0))
+    fn shell_html() -> &'static str {
+        r#"<p>Status: <span data-pilcrow-slot="status">Loading</span></p>"#
     }
 
-    fn render_page(
-        counter: Rc<Cell<usize>>,
-        html: &'static str,
-    ) -> impl FnOnce(&BakedRouteDeclaration) -> io::Result<BakedRenderedPage> {
-        move |_declaration| {
-            counter.set(counter.get() + 1);
-            Ok(BakedRenderedPage::new(html, "render-v1"))
-        }
-    }
-
-    fn page_body_slot(content: &str) -> String {
-        format!(
-            "<!--pilcrow-slot:start page_body kind=html-->{content}<!--pilcrow-slot:end page_body-->"
+    fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>) -> BakedPage {
+        BakedPage::new(
+            "/tickets/:id",
+            concrete_path,
+            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+            store.json_path(concrete_path).to_string_lossy().to_string(),
+            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            vec![BakedSlot::text("status")],
+            vec![DependencyConfig::immediate("TicketStatus:123", "status")],
+            threshold,
+            "v1",
         )
     }
 
-    #[test]
-    fn lazy_full_page_miss_writes_then_second_request_hits_and_skips_render() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-        let declaration = BakedRouteDeclaration::lazy_on_first_hit("/example", "/docs/intro")
-            .full_page()
-            .text_slot("status", vec![DependencyKey::new("docs:intro")]);
-        let counter = render_counter();
-
-        let first = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<html>fresh</html>"),
-            )
-            .unwrap();
-
-        assert_eq!(first.state, BakedServeState::MissRendered);
-        assert_eq!(first.html, "<html>fresh</html>");
-        assert_eq!(counter.get(), 1);
-        assert_eq!(
-            fs::read_to_string(store.html_path("/docs/intro")).unwrap(),
-            "<html>fresh</html>"
-        );
-        assert!(store.read_page("/docs/intro").unwrap().is_some());
-
-        let second = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<html>rerendered</html>"),
-            )
-            .unwrap();
-
-        assert_eq!(second.state, BakedServeState::Hit);
-        assert_eq!(second.html, "<html>fresh</html>");
-        assert_eq!(counter.get(), 1);
+    fn render_output(status: &str) -> io::Result<BakedRenderedOutput> {
+        Ok(BakedRenderedOutput::new(
+            shell_html(),
+            json!({ "status": status }),
+            "v1",
+        ))
     }
 
     #[test]
-    fn lazy_fragment_composed_writes_body_composes_response_and_skips_second_render() {
+    fn first_request_below_threshold_is_rendered_unbaked() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        fs::create_dir_all(store.layout_path("app").parent().unwrap()).unwrap();
-        fs::write(
-            store.layout_path("app"),
-            format!("<html><body>{}</body></html>", page_body_slot("fallback")),
-        )
-        .unwrap();
-        let declaration = BakedRouteDeclaration::lazy_on_first_hit("/example", "/docs/intro")
-            .fragment_composed("app")
-            .text_slot("status", vec![DependencyKey::new("docs:intro")]);
-        let counter = render_counter();
-
-        let first = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<main>body</main>"),
-            )
-            .unwrap();
-
-        assert_eq!(first.state, BakedServeState::MissRendered);
-        assert_eq!(first.html, "<html><body><main>body</main></body></html>");
-        assert_eq!(counter.get(), 1);
-        assert_eq!(
-            fs::read_to_string(store.body_path("/docs/intro")).unwrap(),
-            "<main>body</main>"
-        );
-
-        let second = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<main>rerendered</main>"),
-            )
-            .unwrap();
-
-        assert_eq!(second.state, BakedServeState::Hit);
-        assert_eq!(second.html, "<html><body><main>body</main></body></html>");
-        assert_eq!(counter.get(), 1);
-    }
-
-    #[test]
-    fn build_time_serving_path_only_reads_existing_prebaked_artifact() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-        let declaration = BakedRouteDeclaration::build_time("/example", "/docs/intro").full_page();
-        let counter = render_counter();
-
-        let err = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<html>rendered</html>"),
-            )
-            .unwrap_err();
-
-        assert_eq!(err.kind(), io::ErrorKind::NotFound);
-        assert_eq!(counter.get(), 0);
-    }
-
-    #[test]
-    fn never_bake_renders_without_writing_artifact() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = BakedPageStore::new(temp.path());
-        let declaration = BakedRouteDeclaration::never_bake("/example", "/docs/intro");
-        let counter = render_counter();
+        let page = make_page(&store, "/tickets/123", Some(5));
+        store.write_page(&page).unwrap();
 
         let outcome = store
-            .get_or_render_declared(
-                &declaration,
-                render_page(counter.clone(), "<html>live</html>"),
-            )
+            .get_or_render(page, || render_output("Open"))
             .unwrap();
 
         assert_eq!(outcome.state, BakedServeState::RenderedUnbaked);
-        assert_eq!(outcome.html, "<html>live</html>");
-        assert_eq!(counter.get(), 1);
-        assert!(store.read_page("/docs/intro").unwrap().is_none());
+        assert!(outcome.page.is_none());
+        assert!(store.read_json("/tickets/123").unwrap().is_none());
+    }
+
+    #[test]
+    fn request_at_threshold_bakes_json_and_returns_miss_rendered() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let mut page = make_page(&store, "/tickets/123", Some(1));
+        page.hit_count = 0; // threshold is 1, first hit increments to 1 → bake
+        store.write_page(&page).unwrap();
+
+        let outcome = store
+            .get_or_render(page, || render_output("Open"))
+            .unwrap();
+
+        assert_eq!(outcome.state, BakedServeState::MissRendered);
+        assert!(outcome.page.as_ref().unwrap().is_baked);
+        let json = store.read_json("/tickets/123").unwrap().unwrap();
+        assert_eq!(json["status"], "Open");
+    }
+
+    #[test]
+    fn second_request_after_bake_hits_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let mut page = make_page(&store, "/tickets/123", Some(1));
+        page.hit_count = 0;
+        store.write_page(&page).unwrap();
+
+        // First request bakes.
+        let first = store
+            .get_or_render(page.clone(), || render_output("Open"))
+            .unwrap();
+        assert_eq!(first.state, BakedServeState::MissRendered);
+
+        // Second request should hit cache.
+        let baked_page = store.read_page("/tickets/123").unwrap().unwrap();
+        let second = store
+            .get_or_render(baked_page, || {
+                panic!("render should not be called on cache hit")
+            })
+            .unwrap();
+
+        assert_eq!(second.state, BakedServeState::Hit);
+        assert!(second.html.contains("Open"));
+    }
+
+    #[test]
+    fn injected_html_reflects_json_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let mut page = make_page(&store, "/tickets/123", Some(1));
+        page.hit_count = 0;
+        store.write_page(&page).unwrap();
+
+        let outcome = store
+            .get_or_render(page, || render_output("Resolved"))
+            .unwrap();
+
+        assert!(outcome.html.contains("Resolved"));
+        assert!(!outcome.html.contains("Loading"));
+    }
+
+    #[test]
+    fn no_threshold_never_bakes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BakedPageStore::new(temp.path());
+        let page = make_page(&store, "/tickets/123", None);
+        store.write_page(&page).unwrap();
+
+        let outcome = store
+            .get_or_render(page, || render_output("Open"))
+            .unwrap();
+
+        assert_eq!(outcome.state, BakedServeState::RenderedUnbaked);
+        assert!(store.read_json("/tickets/123").unwrap().is_none());
     }
 }
