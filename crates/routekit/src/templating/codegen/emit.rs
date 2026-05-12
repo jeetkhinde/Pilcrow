@@ -98,10 +98,12 @@ pub fn emit_app_error_branch_body(error_mod: Option<&str>, indent_levels: usize)
 
 /// Append the loading skeleton `<template>` to the rendered page HTML.
 ///
-/// If `loading_mod` is `Some`, emits a `let html = format!(...)` that wraps the existing
-/// `html` binding with `<template id="__pilcrow_loading" hidden>…</template>`.
+/// If `loading_mod` is `Some`, emits code that appends
+/// `<template id="__pilcrow_loading" hidden>…</template>` to `html_var`.
+/// `html_var` is the name of the local binding that holds the rendered HTML
+/// (typically `"html"` for simple routes and `"__shell_html"` for async-field routes).
 /// If `None`, emits nothing.
-pub fn emit_loading_append(loading_mod: Option<&str>) -> String {
+pub fn emit_loading_append(loading_mod: Option<&str>, html_var: &str) -> String {
     if let Some(lmod) = loading_mod {
         let render_fn = format!("render_{lmod}");
         let mut s = String::new();
@@ -109,7 +111,10 @@ pub fn emit_loading_append(loading_mod: Option<&str>) -> String {
             s,
             "            let __loading_html = __pilcrow_gen::{lmod}::{render_fn}(__pilcrow_gen::{lmod}::Props {{}}).unwrap_or_default();"
         );
-        s.push_str("            let html = format!(\"{html}<template id=\\\"__pilcrow_loading\\\" hidden>{__loading_html}</template>\");\n");
+        let _ = writeln!(
+            s,
+            "            let {html_var} = format!(\"{{{html_var}}}<template id=\\\"__pilcrow_loading\\\" hidden>{{__loading_html}}</template>\");"
+        );
         s
     } else {
         String::new()

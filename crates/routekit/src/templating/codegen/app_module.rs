@@ -97,8 +97,8 @@ pub fn render_generated_api_mods(
 
     // Expose src/params/ as `crate::params` when the directory exists.
     let params_dir = src_root.join("params");
-    if params_dir.exists() {
-        if let Ok(read_dir) = fs::read_dir(&params_dir) {
+    if params_dir.exists()
+        && let Ok(read_dir) = fs::read_dir(&params_dir) {
             let params_dir_str = params_dir.to_string_lossy().replace('\\', "/");
             let mut param_mods: Vec<String> = read_dir
                 .flatten()
@@ -123,7 +123,6 @@ pub fn render_generated_api_mods(
                 out.push_str("}\n");
             }
         }
-    }
 
     if api_entries.is_empty() {
         return out;
@@ -507,53 +506,58 @@ pub fn render_generated_app_module(
                 needs_req,
                 3,
             ));
-            out.push_str(&emit_loading_append(loading_mod));
+            out.push_str(&emit_loading_append(loading_mod, "html"));
             out.push_str("            ::pilcrow_web::axum::response::Html(html).into_response()\n");
-        } else if ssg_opts.map_or(false, |o| o.prerender)
-            && !isr_opts.map_or(false, |o| o.is_active())
+        } else if ssg_opts.is_some_and(|o| o.prerender)
+            && !isr_opts.is_some_and(|o| o.is_active())
             && page_load.is_some()
             && deferred_fields.is_empty()
             && deferred_html_fields.is_empty()
         {
             // ── Case 1.5: SSG-only prerendered page (no REVALIDATE) ─────────────
-            out.push_str(&emit_ssg_handler(
-                mod_name,
-                render_fn,
-                error_mod,
-                loading_mod,
-                page_load.expect("checked above"),
-                &active_chain,
-                chain_info,
-            ));
-        } else if isr_opts.map_or(false, |o| o.is_active())
+            if let Some(sig) = page_load {
+                out.push_str(&emit_ssg_handler(
+                    mod_name,
+                    render_fn,
+                    error_mod,
+                    loading_mod,
+                    sig,
+                    &active_chain,
+                    chain_info,
+                ));
+            }
+        } else if isr_opts.is_some_and(|o| o.is_active())
             && page_load.is_some()
             && deferred_fields.is_empty()
             && deferred_html_fields.is_empty()
         {
             // ── Case 2: ISR-enabled dynamic page ────────────────────────────────
-            let isr = isr_opts.expect("checked above");
-            out.push_str(&emit_isr_handler(
-                isr,
-                mod_name,
-                render_fn,
-                error_mod,
-                loading_mod,
-                page_load.expect("checked above"),
-                &active_chain,
-                chain_info,
-            ));
+            if let (Some(isr), Some(sig)) = (isr_opts, page_load) {
+                out.push_str(&emit_isr_handler(
+                    isr,
+                    mod_name,
+                    render_fn,
+                    error_mod,
+                    loading_mod,
+                    sig,
+                    &active_chain,
+                    chain_info,
+                ));
+            }
         } else if is_streaming && page_load.is_some() {
             // ── Case 2.5: SSR Streaming — layout loads run, page load() is background-spawned.
             // Shell renders immediately; resolved Props are streamed as a Silcrow.patch() call.
-            out.push_str(&emit_streaming_handler(
-                mod_name,
-                render_fn,
-                error_mod,
-                loading_mod,
-                page_load.expect("checked above"),
-                &active_chain,
-                chain_info,
-            ));
+            if let Some(sig) = page_load {
+                out.push_str(&emit_streaming_handler(
+                    mod_name,
+                    render_fn,
+                    error_mod,
+                    loading_mod,
+                    sig,
+                    &active_chain,
+                    chain_info,
+                ));
+            }
         } else {
             out.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
             // Clone the response handle before req consumption so load() calls
@@ -790,7 +794,7 @@ pub fn render_generated_app_module(
                         "            let __shell_html = __shell_html.replace({marker}, &__slot_span_{field});"
                     );
                 }
-                out.push_str(&emit_loading_append(loading_mod));
+                out.push_str(&emit_loading_append(loading_mod, "__shell_html"));
                 // Step 6: build patch streams.
                 out.push_str("            let __json_patches = ::pilcrow_web::__async_value_patch_stream(vec![\n");
                 for field in deferred_fields {
@@ -907,7 +911,7 @@ pub fn render_generated_app_module(
                     out.push_str("                }\n");
                     out.push_str("            };\n");
                 }
-                out.push_str(&emit_loading_append(loading_mod));
+                out.push_str(&emit_loading_append(loading_mod, "html"));
                 if needs_req {
                     out.push_str("            let mut __response = ::pilcrow_web::axum::response::Html(html).into_response();\n");
                     out.push_str("            __resp_handle.apply_to(&mut __response);\n");
@@ -923,8 +927,8 @@ pub fn render_generated_app_module(
         out.push_str("            }.instrument(__req_span)\n        }))\n");
 
         // ── Action POST route (same URL, dispatched by `?/<name>`) ──────────────
-        if let Some(actions) = page_actions {
-            if !actions.is_empty() {
+        if let Some(actions) = page_actions
+            && !actions.is_empty() {
                 out.push_str(&emit_action_route(
                     actions,
                     &entry.pattern,
@@ -932,7 +936,6 @@ pub fn render_generated_app_module(
                     error_mod,
                 ));
             }
-        }
 
         // ── Live props SSE route ──────────────────────────────────────────────────
         if !live_fields.is_empty() {
@@ -1403,7 +1406,7 @@ fn emit_isr_handler(
         true,
         3,
     ));
-    out.push_str(&emit_loading_append(loading_mod));
+    out.push_str(&emit_loading_append(loading_mod, "html"));
 
     // ISR cache store (skip if load() called bypass_cache()).
     out.push_str("            let __post_bypass = __resp_handle.__is_bypass_cache();\n");
@@ -1538,25 +1541,14 @@ fn emit_isr_revalidation_body(
 }
 
 /// Generate and write the app module and API mods files.
+#[allow(clippy::too_many_arguments)]
 pub fn write_generated_app_module(
     page_entries: &[GeneratedPageRoute],
     api_entries: &[GeneratedApiRoute],
-    load_map: &HashMap<String, Option<LoadSignature>>,
-    layout_fields_map: &HashMap<String, LayoutFieldsInfo>,
-    error_module_for_page: &HashMap<String, String>,
-    not_found_module: Option<&str>,
-    loading_module_for_page: &HashMap<String, String>,
-    action_map: &HashMap<String, Vec<ActionFn>>,
-    page_options_map: &HashMap<String, PageOptions>,
-    deferred_fields_map: &HashMap<String, Vec<String>>,
-    deferred_html_fields_map: &HashMap<String, Vec<String>>,
-    isr_config_map: &HashMap<String, IsrOpts>,
-    ssg_config_map: &HashMap<String, SsgOpts>,
+    maps: &AppCodegenMaps<'_>,
     hooks: HookFlags,
     has_react_assets: bool,
     has_solid_assets: bool,
-    live_fields_map: &HashMap<String, Vec<String>>,
-    has_live_fn_map: &HashMap<String, bool>,
     src_root: &Path,
     out_dir: impl AsRef<Path>,
 ) -> io::Result<()> {
@@ -1566,22 +1558,10 @@ pub fn write_generated_app_module(
     let app_source = render_generated_app_module(
         page_entries,
         api_entries,
-        load_map,
-        layout_fields_map,
-        error_module_for_page,
-        not_found_module,
-        loading_module_for_page,
-        action_map,
-        page_options_map,
-        deferred_fields_map,
-        deferred_html_fields_map,
-        isr_config_map,
-        ssg_config_map,
+        maps,
         hooks,
         has_react_assets,
         has_solid_assets,
-        live_fields_map,
-        has_live_fn_map,
     )?;
     fs::write(out_dir.join("generated_app.rs"), app_source)?;
 
@@ -1720,7 +1700,7 @@ fn emit_ssg_handler(
         true,
         3,
     ));
-    out.push_str(&emit_loading_append(loading_mod));
+    out.push_str(&emit_loading_append(loading_mod, "html"));
 
     // Cache the rendered HTML with u64::MAX TTL (never expires naturally).
     out.push_str("            if let Some(ref __cache) = __isr_arc {\n");
@@ -1823,10 +1803,12 @@ fn emit_prerender_all(
                 &entry.pattern,
                 &param_names,
                 page_sig,
-                &active_chain,
-                chain_info,
-                &ttl_expr,
-                &tags_expr,
+                &SsgRenderCtx {
+                    active_chain: &active_chain,
+                    chain_info,
+                    ttl_expr: &ttl_expr,
+                    tags_expr: &tags_expr,
+                },
             ));
         } else {
             out.push_str(&emit_ssg_prerender_static_block(
@@ -1834,10 +1816,12 @@ fn emit_prerender_all(
                 &entry.render_symbol,
                 &entry.pattern,
                 page_sig,
-                &active_chain,
-                chain_info,
-                &ttl_expr,
-                &tags_expr,
+                &SsgRenderCtx {
+                    active_chain: &active_chain,
+                    chain_info,
+                    ttl_expr: &ttl_expr,
+                    tags_expr: &tags_expr,
+                },
             ));
         }
     }
@@ -1856,10 +1840,7 @@ fn emit_ssg_prerender_static_block(
     render_fn: &str,
     path: &str,
     page_sig: LoadSignature,
-    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
-    chain_info: Option<&LayoutFieldsInfo>,
-    ttl_expr: &str,
-    tags_expr: &str,
+    ctx: &SsgRenderCtx<'_>,
 ) -> String {
     let mut out = String::new();
     let path_lit = rust_string(path);
@@ -1880,10 +1861,7 @@ fn emit_ssg_prerender_static_block(
         "__req",
         "__ssg_key",
         page_sig,
-        active_chain,
-        chain_info,
-        ttl_expr,
-        tags_expr,
+        ctx,
     ));
     out.push_str("    }\n");
     out
@@ -1896,10 +1874,7 @@ fn emit_ssg_prerender_dynamic_block(
     pattern: &str,
     param_names: &[&str],
     page_sig: LoadSignature,
-    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
-    chain_info: Option<&LayoutFieldsInfo>,
-    ttl_expr: &str,
-    tags_expr: &str,
+    ctx: &SsgRenderCtx<'_>,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "    // SSG (entries): {pattern}");
@@ -1963,10 +1938,7 @@ fn emit_ssg_prerender_dynamic_block(
         "__req",
         "&__ssg_key",
         page_sig,
-        active_chain,
-        chain_info,
-        ttl_expr,
-        tags_expr,
+        ctx,
     ));
 
     out.push_str("        }\n");
@@ -2134,11 +2106,9 @@ fn emit_ssg_load_render_store(
     req_var: &str,
     key_expr: &str,
     page_sig: LoadSignature,
-    active_chain: &[(usize, String, Vec<String>, LoadSignature)],
-    chain_info: Option<&LayoutFieldsInfo>,
-    ttl_expr: &str,
-    tags_expr: &str,
+    ctx: &SsgRenderCtx<'_>,
 ) -> String {
+    let SsgRenderCtx { active_chain, chain_info, ttl_expr, tags_expr } = ctx;
     // Determine the indentation based on the call context.
     // Static blocks are at 8-space indent; dynamic blocks are at 12-space (inside for loop).
     // We detect this by checking whether key_expr starts with '&' (dynamic path variable).
@@ -2157,7 +2127,7 @@ fn emit_ssg_load_render_store(
     );
 
     // Layout loads — always clone the req since this is a startup task.
-    for (idx, layout_mod, _, lsig) in active_chain {
+    for (idx, layout_mod, _, lsig) in active_chain.iter() {
         let req_arg = if lsig.wants_req {
             format!("{req_var}.clone()")
         } else {
@@ -2210,7 +2180,7 @@ fn emit_ssg_load_render_store(
             out,
             "{indent}    let props = __pilcrow_gen::{mod_name}::__MergedProps {{"
         );
-        for (idx, _, field_names, _) in active_chain {
+        for (idx, _, field_names, _) in active_chain.iter() {
             let var = format!("layout_data_{idx}");
             for field in field_names {
                 let _ = writeln!(out, "{indent}        {field}: {var}.{field},");
