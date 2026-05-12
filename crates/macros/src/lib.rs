@@ -8,8 +8,8 @@ mod handler;
 mod live_props_derive;
 
 #[proc_macro_attribute]
-pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    handler::expand(item)
+pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
+    handler::expand(attr, item)
 }
 
 #[proc_macro_derive(PilcrowProps, attributes(promote_after, patch_debounce))]
