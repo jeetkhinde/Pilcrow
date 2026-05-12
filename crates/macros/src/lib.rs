@@ -5,10 +5,16 @@ use syn::{
     parse_macro_input, Expr, LitStr, Token,
 };
 mod handler;
+mod live_props_derive;
 
 #[proc_macro_attribute]
 pub fn handler(_attr: TokenStream, item: TokenStream) -> TokenStream {
     handler::expand(item)
+}
+
+#[proc_macro_derive(PilcrowProps, attributes(promote_after, patch_debounce))]
+pub fn derive_pilcrow_props(input: TokenStream) -> TokenStream {
+    live_props_derive::expand(input)
 }
 
 struct SseEntry {
