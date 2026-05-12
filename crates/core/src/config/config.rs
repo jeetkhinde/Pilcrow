@@ -20,6 +20,32 @@ pub struct PilcrowConfig {
     pub images: ImageConfig,
     #[serde(default)]
     pub client: ClientRuntimeConfig,
+    #[serde(default)]
+    pub live: LiveConfig,
+}
+
+/// Configuration for the `[live]` section in `Pilcrow.toml`.
+/// Controls live-props caching behaviour.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LiveConfig {
+    /// Number of hits before a live route is promoted to baked HTML.
+    pub promote_after_hits: u32,
+    /// Seconds to debounce SSE patch events before sending to clients.
+    pub patch_debounce_seconds: u32,
+    /// Seconds after last hit before a pilcrow_cache row is eligible for purge.
+    /// Defaults to 30 days.
+    pub purge_after_seconds: u32,
+}
+
+impl Default for LiveConfig {
+    fn default() -> Self {
+        Self {
+            promote_after_hits: 100,
+            patch_debounce_seconds: 30,
+            purge_after_seconds: 2_592_000,
+        }
+    }
 }
 
 /// Runtime client-side feature configuration (mirrors the build-time `[client]` table).
