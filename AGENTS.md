@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents working in the Pilcrow repository.
 
 ## MCP is the source of truth (AI-first policy)
 
@@ -18,6 +18,8 @@ When shipping or changing a feature, update **all** of:
 
 Goal: agents should not rely on memory or ad-hoc docs; they should be able to answer from MCP evidence first.
 
+After any MCP update, run `cargo check --manifest-path tools/mcp/pilcrow-mcp/Cargo.toml`.
+
 ## What is Pilcrow
 
 Pilcrow is a Rust full-stack web framework inspired by SvelteKit/Astro. It uses:
@@ -27,7 +29,7 @@ Pilcrow is a Rust full-stack web framework inspired by SvelteKit/Astro. It uses:
 - **silcrow.js** — Always read `crates/runtime/assets/silcrow.js` via MCP tool `silcrow-docs` before writing anything about it.
 - A **build.rs** pipeline (`routekit`) that compiles `.html` + `.rs` files into a wired axum `Router` — no manual route registration
 
-The Pilcrow repo workspace root `Cargo.toml` has only the framework crates as members. `tools/cli` is a separate workspace and must be built separately. In the `pilcrow-silcrow` integration workspace, `sandbox/` is an external production-style app beside the `pilcrow` symlink, not a directory inside the Pilcrow repo.
+The repo workspace root `Cargo.toml` has only the framework crates as members. `tools/cli` is excluded from the workspace and must be built separately. In the `pilcrow-silcrow` integration workspace, `sandbox/` is an external production-style app beside the `pilcrow` symlink, not a directory inside the Pilcrow repo.
 
 ## Build Commands
 
@@ -54,12 +56,27 @@ Config is in `Pilcrow.toml` (walks up from cwd). Defaults: web on `127.0.0.1:300
 | Crate | Role |
 |---|---|
 | `crates/core` | `AppError`, `AppResult`, `PilcrowConfig`, `Meta` — shared primitives with no framework deps |
-| `crates/routekit` | Build-time pipeline: discovers `.html`/`.rs` sources, transpiles templates, emits generated Rust (`generated_app.rs`, `generated_routes.rs`, etc.) |
-| `crates/runtime` | Runtime extractors (`Req`, `Res`), response builders, SSE, WebSocket, asset serving, middleware (`Next`) |
+| `crates/routekit` | Build-time pipeline: discovers `.html`/`.rs` sources, transpiles templates, emits generated Rust |
+| `crates/runtime` | Runtime: `Req`, `Res`, SSE, WebSocket, ISR, adapters, island SSR, `AsyncValue`, `AsyncHtml`, `LiveProp` |
 | `crates/macros` | `#[handler]` proc-macro, `sse!` macro |
-| `crates/client` | `PilcrowClient` — typed HTTP client wrapping `reqwest`, used in `load()` to call backend APIs |
+| `crates/client` | `PilcrowClient` — typed HTTP client wrapping `reqwest` |
 | `crates/web` | Thin facade; re-exports everything a `web` app needs under `pilcrow_web::*` |
-| `tools/cli` | `pilcrow new <dir>` scaffold + `check-arch` command |
+| `tools/cli` | `pilcrow new`, `pilcrow dev`, `pilcrow export`, `pilcrow routes` |
+
+## Known Bugs (do not introduce regressions while fixing)
+
+| # | Location | Severity | Description |
+|---|----------|----------|-------------|
+| 1 | `routekit/codegen/tests.rs:544,625` | Critical | Test compilation failure — `render_generated_app_module` missing `live_fields_map` and `has_live_fn_map` args |
+| 2 | `macros/handler.rs:89-92` | High | `body_uses_client()` matches ANY `client` identifier (local vars, struct fields), injecting bogus `PilcrowClient` param and shadowing user variables |
+| 3 | `runtime/deferred.rs:174-210` | Critical | Orphaned tokio tasks on client disconnect — memory leak for long-lived streams |
+| 4 | `runtime/island_ssr.rs:183-185` | Critical | Mutex poison on SSR worker panic propagates to all subsequent requests |
+| 5 | `runtime/start.rs:240`, `dev.rs:233`, `sw.rs:158` | High | Unbounded body consumption (`usize::MAX`) — OOM risk on large responses |
+| 6 | `runtime/isr.rs:172-183` | High | Race condition in `begin_revalidation` — thundering herd (check-then-act not atomic) |
+| 7 | `cli/scaffold.rs:75-89` | Medium | `--with-auth --with-postgres` emits duplicate `[env.private]` TOML tables — parse error |
+| 8 | `cli/scaffold.rs:113` | Medium | Scaffolded `main.rs` calls `pilcrow_web::start()` instead of `pilcrow_start()` — skips SSG prerendering |
+| 9 | `routekit/route/parser.rs:246` | Medium | Optional catch-all priority false positive — checks `any(!is_empty)` instead of catch-all membership |
+| 10 | `routekit/lib.rs:136` | Low | `is_loading = filename == "loading"` always false (convention is `_loading`) — dead code |
 
 ## How the Build Pipeline Works
 
@@ -70,10 +87,10 @@ Config is in `Pilcrow.toml` (walks up from cwd). Defaults: web on `127.0.0.1:300
 3. **Reads** `Pilcrow.toml` for fragment directory configuration (`[[fragments]]`)
 4. **Transpiles** Askama-dialect HTML → Askama templates in `$OUT_DIR/pilcrow_templates/`
 5. **Generates** `$OUT_DIR/generated_app.rs` — a `build_router()` fn wiring all routes
-6. **Generates** `$OUT_DIR/generated_routes.rs` and `$OUT_DIR/generated_api_mods.rs`
+6. **Generates** `$OUT_DIR/generated_routes.rs`, `$OUT_DIR/generated_api_mods.rs`, `$OUT_DIR/generated_typed_routes.rs`, `$OUT_DIR/generated_env.rs`, `$OUT_DIR/generated_i18n.rs`
 7. **Detects** `hooks.rs` — if present, wires global request/error/startup hooks
 
-The `pilcrow_app!()` macro in `main.rs` includes these generated files.
+The `pilcrow_app!()` macro in `main.rs` includes these generated files and also generates `pilcrow_router()`, `pilcrow_start()`, and `pilcrow_export()` functions.
 
 ## File Conventions
 
@@ -83,8 +100,6 @@ src/
 pages/
   index.html            # Route: GET /
   index.rs              # Code-behind: Props struct, load(), named action fns
-  products.html         # Route: GET /products
-  products.rs
   _layout.html          # Auto-wraps all sibling/child pages — not a route
   _error.html           # Shown when load() returns Err — not a route
   _not_found.html       # axum fallback — not a route
@@ -100,7 +115,6 @@ ui/
   Button.html           # Reusable components, imported with frontmatter imports
 widgets/                # Example fragment dir (configured in Pilcrow.toml)
   user-card.html        # Route: GET /widgets/user-card (no layout wrapping)
-  user-card.rs          # Optional code-behind: same as pages (load, actions, etc.)
 api/
   health.rs             # API route: handlers live here, separate from page routes
 params/
@@ -108,41 +122,7 @@ params/
 hooks.rs                # Optional: global request/error/startup hooks
 ```
 
-Route parameters use `:param` in axum style. Folder names in brackets (`[id]`) become URL params.
-
-### Param Matchers
-
-`[id=integer]` maps to `params/integer.rs`. The file must export:
-
-```rust
-pub fn match_param(value: &str) -> bool { ... }
-```
-
-The generated handler calls this at request time and returns 404 if it returns `false`. Built-in constraints (`[id:int]`, `[id:uuid]`, etc.) still work alongside external matchers.
-
-### Route Groups
-
-`(group)/` directories are stripped from URLs and module names. They scope `_layout.html`, `_error.html`, and `_loading.html` to their children without affecting routes.
-
-### Fragment Directories
-
-Fragment directories contain URL-accessible HTML partials — like pages but without any layout wrapping. Configure them in `Pilcrow.toml`:
-
-```toml
-[[fragments]]
-dir = "widgets"          # relative to project root; URL prefix = "widgets" → /widgets/**
-
-[[fragments]]
-dir = "ui-blocks"
-url = "blocks"           # explicit URL prefix override → /blocks/**
-```
-
-- Each `.html` file in the directory becomes a GET route: `widgets/user-card.html` → `GET /widgets/user-card`
-- Code-behind `.rs` files work exactly like pages (`load()`, named actions, `_error.html`)
-- No layout is applied — the response is the raw fragment HTML
-- Fragments can import `ui/` components with `import … from "ui/…";`
-- Module names are `frag_{url_prefix}_{snake_path}` (e.g. `frag_widgets_user_card`)
-- `cargo:rerun-if-changed` is emitted for each fragment dir and for `Pilcrow.toml`
+Route parameters use `[param]` in directory names. `[id=integer]` maps to `params/integer.rs`.
 
 ### Per-page Options
 
@@ -154,18 +134,8 @@ pub const LAYOUT: &str = "none";           // opt out of all layout wrapping
 pub const PRERENDER: bool = true;          // SSG: pre-render at server startup
 ```
 
-**`TRAILING_SLASH`:**
-- `"always"` — redirects `/path` → `/path/` (GET only)
-- `"ignore"` — redirects `/path/` → `/path` (normalise to no-slash)
-- `"never"` (default) — no extra routes
-
-**`LAYOUT`:**
-- `"none"` — strip all auto-layout wrapping; the page renders directly with no `_layout.html` ancestors applied and no layout `load()` calls
-
-**`PRERENDER`:**
-- `true` — page is rendered once at server startup and served from the ISR cache with TTL=∞ on all subsequent requests. No-op for pages without `load()` (already static). Incompatible with `REVALIDATE` (build error).
-- Dynamic routes with `PRERENDER = true` must also declare `pub async fn entries() -> Vec<HashMap<String, String>>` (build error otherwise).
-- Use `pilcrow_start(pilcrow_router()).await` instead of `pilcrow_web::start(pilcrow_router()).await` to trigger startup prerendering.
+- **`PRERENDER = true`**: page is rendered once at startup and served from the ISR cache (TTL=∞). Incompatible with `REVALIDATE` (build error). Dynamic routes must also declare `pub async fn entries() -> Vec<HashMap<String, String>>`.
+- Use `pilcrow_start(pilcrow_router()).await` (generated by `pilcrow_app!()`) to trigger startup prerendering. `pilcrow_web::start()` does NOT prerender.
 
 All constants are stripped from the emitted module and never reach the template.
 
@@ -176,379 +146,71 @@ Each page has two files: `products.html` (template) and `products.rs` (logic).
 `products.rs` exports:
 - `pub struct Props { ... }` — passed to the template
 - `pub async fn load(req: Req) -> AppResult<Props>` — GET handler (**required** if `.rs` file exists)
-- `pub async fn <name>(req: Req) -> ActionResult` — one fn per named action. The URL fragment `?/<name>` dispatches to `fn <name>` (POST only). Any number of action fns may be defined; none are required.
+- `pub async fn <name>(req: Req) -> ActionResult` — named actions. The URL fragment `?/<name>` dispatches to `fn <name>` (POST only).
 
-**`load()` signature is enforced by the build pipeline.** Any `load()` in `pages/` (pages and layouts) must be `async`, return `AppResult<Props>`, and take `req: Req`. The build fails with a clear error otherwise. If you don't need the request, use `_req: Req`. If a page needs no dynamic data, omit the `.rs` file entirely — the page is served as a static template.
+**`load()` signature is enforced by the build pipeline.** Must be `async`, return `AppResult<Props>`, take `req: Req`. If a page needs no dynamic data, omit the `.rs` file — the page is served as a static template.
 
-The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`, and `use pilcrow_web::redirect;` at the top of code-behind files automatically (unless already imported).
+The framework injects `use pilcrow_web::Req;`, `use pilcrow_web::ActionResult;`, and `use pilcrow_web::redirect;` at the top of code-behind files automatically.
 
 ## Key Types
 
-**`Req`** (`FromRequest`, body-consuming) — unified request context for both `load()` and action fns:
-- `.params: HashMap<String, String>` — URL path params (`/posts/:id`)
-- `.query: FormMap` — query string as a multi-value map (`?tag=a&tag=b` → `.get_all("tag") == ["a","b"]`). The `?/<name>` action marker is stripped.
-- `.form: FormMap` — URL-encoded form body (empty on GET)
-- `.cookies: CookieJar`
-- `.headers: HeaderMap`
-- `.path: String` — e.g. `/products`
-- `.is_enhanced: bool` — `true` when request came from silcrow.js (has `silcrow-target` header)
-- `.locals: Locals` — per-request typed store shared across all loads in the request
-- `.res: Res` — response modifier: set headers, cookies, toasts from inside any handler
-
-**`Req` methods:**
-- `req.action() -> &str` — the name of the current action (from the `?/<name>` URL fragment). Returns `""` for plain POSTs with no action. Rarely needed in app code — the router already dispatches to the named fn.
+**`Req`** — unified request context: `.params`, `.query: FormMap`, `.form: FormMap`, `.cookies`, `.headers`, `.path`, `.is_enhanced`, `.locals: Locals`, `.res: Res`.
 - `req.fail(FormErrors) -> ActionResult` — JSON if enhanced, flash cookie + redirect if plain POST
-- `req.take_form_flash() -> Option<FormErrors>` — reads and clears the `silcrow_form_flash` cookie
+- `req.take_form_flash() -> Option<FormErrors>` — reads and clears `silcrow_form_flash` cookie
 
-**`Locals`** — `Arc<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>`:
-- `.set<T>(value)` — store a value; `.get<T>() -> Option<T>` — retrieve a clone
-- `.require<T>() -> Result<T, AppError>` — get or `Err(AppError::Unauthorized)`
-- `.has<T>() -> bool`
+**`Locals`** — per-request typed store: `.set<T>(value)`, `.get<T>() -> Option<T>`, `.require<T>() -> Result<T, AppError>`, `.has<T>() -> bool`.
 
-**`Res`** — response modifier accessed as `req.res`:
-- `.with_status(StatusCode)`, `.with_header(key, value)`, `.with_cookie(Cookie)`
-- `.no_cache()`, `.with_toast(msg, ToastLevel::*)`
-- `.trigger_event(name)`, `.retarget(selector)`, `.push_history(url)`
-- `.patch_target(selector, &data)`, `.invalidate_target(selector)`
-- `.client_navigate(path)`, `.sse(path)`, `.ws(path)`
-- `.trigger_event`, `.patch_target`, and `.invalidate_target` accumulate across calls (entries are carried in a single JSON-array header, applied in call order). The others overwrite.
+**`Res`** — response modifier via `req.res`: `.with_status()`, `.with_header()`, `.with_cookie()`, `.no_cache()`, `.with_toast()`, `.trigger_event()`, `.retarget()`, `.push_history()`, `.patch_target()`, `.invalidate_target()`, `.client_navigate()`, `.sse()`, `.ws()`.
+- `trigger_event`, `patch_target`, `invalidate_target` accumulate; others overwrite.
 
-**`FormMap`** — multi-value map used for both `req.form` and `req.query`. `.get(key) -> Option<&str>` (first value), `.get_all(key) -> &[String]`, `.contains(key)`, `.keys() -> impl Iterator<Item = &str>`.
+**`AsyncValue<T>`** — wraps a future streamed to client after shell renders. Use `AsyncValue::spawn(async { ... })` or `AsyncValue::ready(value)`.
 
-**`ActionResult`** — `Result<Response, AppError>` — return type for action fns
+**`AsyncHtml`** — streams complete HTML fragment into a named slot. `AsyncHtml::spawn("name", loading_html, async { html_string })`.
 
-**`Deferred<T>`** — wraps a future whose value is streamed to the client after the shell renders:
+**`LiveProp`** — re-evaluated on interval or explicit trigger for real-time UI updates.
 
-```rust
-pub struct Props {
-    pub title: String,
-    pub count: Deferred<i32>,   // resolved after shell
-}
+`AsyncValue`, `AsyncHtml`, and `LiveProp` patches stream concurrently — faster-resolving fields arrive first.
 
-pub async fn load(_req: Req) -> AppResult<Props> {
-    Ok(Props {
-        title: "Hello".to_string(),
-        count: Deferred::spawn(async {
-            // heavy work here
-            42
-        }),
-    })
-}
-```
-
-The framework:
-1. Renders the shell immediately (`Deferred` fields display as `""` via `Display`).
-2. Streams `<script>window.__pilcrow_deferred('count', 42)</script>` as each future resolves.
-3. silcrow.js applies the patch via its normal `:text`/`:value` binding system.
-
-`Deferred::ready(value)` creates an already-resolved value (no streaming overhead).
-
-**`DeferredHtml`** — streams a complete HTML fragment into a named slot after the shell renders:
-
-```rust
-pub struct Props {
-    pub title: String,
-    pub product_list: DeferredHtml,   // HTML fragment, resolved after shell
-}
-
-pub async fn load(_req: Req) -> AppResult<Props> {
-    Ok(Props {
-        title: "Shop".to_string(),
-        product_list: DeferredHtml::spawn("product_list", "<p>Loading…</p>", async {
-            // expensive DB call — returns the full HTML string
-            fragments::widgets::product_list::render(
-                fragments::widgets::product_list::Props { items: db_fetch().await }
-            ).unwrap_or_default()
-        }),
-    })
-}
-```
-
-The framework:
-1. Renders the shell immediately. `DeferredHtml` fields display as `__pilcrow_html_slot_{name}__` which codegen replaces with `<span data-pilcrow-slot="{name}">{loading_html}</span>`.
-2. Injects a `window.__pd` shim in `<head>` once.
-3. Streams `<script>window.__pd('product_list', '<ul>…</ul>')</script>` chunks as futures resolve.
-4. The shim replaces the slot `<span>` with the parsed HTML fragment.
-
-`DeferredHtml` and `Deferred<T>` patches are streamed concurrently — faster-resolving fields arrive first regardless of type.
-
-Fragment modules are auto-available via `fragments::{url_prefix}::{leaf_name}` with no import required in code-behind files.
-
-## Response Builders (from `pilcrow_web::*`)
+## Response Builders
 
 | Builder | Use |
 |---|---|
-| `redirect("/path")` | `ActionResult`: 303 redirect (use in action fns) |
+| `redirect("/path")` | `ActionResult`: 303 redirect (action fns) |
 | `navigate("/path")` | `NavigateResponse`: 303 redirect with `ResponseExt` |
 | `json(value)` | JSON response |
 | `status(StatusCode::...)` | Bare status |
 | `form_errors().error("field", "msg").value("field", val)` | In-place form patching via silcrow.js |
 | `AppError::Redirect("/path")` | Redirect from `load()` before render |
 
-`navigate`, `json`, `status`, and `form_errors` implement `ResponseExt`, giving: `.with_toast(msg, ToastLevel::*)`, `.with_header(key, val)`, `.with_status(code)`, `.no_cache()`, `.trigger_event(name)`, `.retarget(sel)`, `.push_history(url)`, `.patch_target(sel, &data)`, `.invalidate_target(sel)`, `.client_navigate(path)`, `.sse(path)`, `.ws(path)`.
+All builders implement `ResponseExt`: `.with_toast()`, `.with_header()`, `.with_status()`, `.no_cache()`, `.trigger_event()`, `.retarget()`, `.push_history()`, `.patch_target()`, `.invalidate_target()`, `.client_navigate()`, `.sse()`, `.ws()`.
 
-## Actions Pattern
+## Actions
 
-Each named action is its own `pub async fn <name>(req: Req) -> ActionResult`. The URL fragment `?/<name>` maps 1:1 to the function named `<name>` in the code-behind file.
-
-```rust
-// pages/items.rs
-pub async fn create(req: Req) -> ActionResult {
-    let name = req.form.get("name").unwrap_or("");
-    // ...
-    redirect("/items")
-}
-
-pub async fn delete(req: Req) -> ActionResult {
-    // ...
-    redirect("/items")
-}
-```
-
-```html
-<form s-post="?/create" s-target="#items">...</form>
-<button s-post="?/delete">Delete</button>
-```
-
-**Rules:**
-- POST only. There is no default action — a plain `POST /items` with no `?/<name>` fragment hits no action route and returns 404.
-- Unknown action names (e.g. `?/nonexistent`) return `AppError::NotFound` via the page's `_error.html`.
-- Action fns are discovered at build time by signature: `pub async fn <name>(req: Req) -> ActionResult` (or any `Result`-shaped return). `load()` is excluded. Layouts cannot define actions; UI components must not define them (build error).
-- Action fns run on the page's own URL — no separate route is registered.
-
-## Form Validation
-
-```rust
-pub async fn signup(req: Req) -> ActionResult {
-    let email = req.form.get("email").unwrap_or("");
-    if email.is_empty() {
-        return req.fail(form_errors()
-            .error("email", "Email is required")
-            .value("email", email));
-    }
-    redirect("/dashboard")
-}
-
-// In load(), repopulate after a plain-browser POST failure:
-pub async fn load(req: Req) -> AppResult<Props> {
-    let flash = req.take_form_flash();
-    Ok(Props { errors: flash, ..Default::default() })
-}
-```
-
-- **Enhanced** (`req.is_enhanced == true`): `req.fail()` returns JSON that silcrow.js patches into the form
-- **Plain browser POST**: `req.fail()` stores errors in a `silcrow_form_flash` cookie and redirects back
-
-## Middleware
-
-Place `hooks.rs` at the project root. The build pipeline detects it and wires global request/error/startup hooks automatically:
-
-```rust
-// hooks.rs
-use pilcrow_web::{AppError, Next, Req, Response};
-use axum::response::IntoResponse;
-
-pub async fn handle(req: Req, next: Next) -> Response {
-    let token = req.cookies.get("session").map(|c| c.value().to_string());
-    match auth::verify(token).await {
-        Ok(user) => req.locals.set(user),
-        Err(_) if req.path.starts_with("/admin") => {
-            return AppError::Unauthorized.into_response();
-        }
-        _ => {}
-    }
-    next.run().await
-}
-```
-
-- `req.locals` and `req.res` set in hooks are shared with all downstream `load()` and action fns
-- `next.run().await` forwards the original request (body intact) to the route handler
-- Short-circuit by returning a `Response` directly without calling `next.run()`
-- `hooks.rs` is auto-added to Cargo's rerun-if-changed watch list
-
-## AppError
-
-```rust
-AppError::NotFound(String)   // 404
-AppError::Unauthorized       // 401
-AppError::Validation(String) // 422
-AppError::Internal           // 500
-AppError::Redirect(String)   // 303 — use from load() to redirect before render
-```
-
-`AppError::Redirect` short-circuits before any error page render in the generated handler. Any `req.res` modifiers set before returning `Err(AppError::Redirect(...))` — such as `req.res.with_toast(...)` — are applied to the redirect response.
+Named actions are `pub async fn <name>(req: Req) -> ActionResult`. POST only. Plain `POST /path` with no `?/<name>` returns 404. Unknown action names return `AppError::NotFound` via `_error.html`. Layouts and UI components cannot define actions (build error).
 
 ## silcrow.js
 
-> **Always read `crates/runtime/assets/silcrow.js` (or use MCP `silcrow-docs`) before writing anything about silcrow's API. Do not infer its behaviour from memory.**
+> **Always read `crates/runtime/assets/silcrow.js` (or use MCP `silcrow-docs`) before writing anything about silcrow's API.**
 
-### HTTP verb attributes
+HTTP verb attributes: `s-get`, `s-post`, `s-put`, `s-patch`, `s-delete`. Reactive bindings: `:text`, `:show`, `:value`, `:class`, `:style`, `:disabled`. List reconciliation: `<template s-for="item in items" :key="item.id">`.
 
-Elements get one of: `s-get`, `s-post`, `s-put`, `s-patch`, `s-delete` with a URL value.
+## ISR (Incremental Static Regeneration)
 
-```html
-<a s-get="/products?category=shoes" s-target="#product-list">Shoes</a>
-<form s-post="?/create" s-target="#my-form" id="my-form">...</form>
-<button s-delete="/items/:key">Delete</button>   <!-- :key interpolated from nearest [:key] ancestor -->
-```
+Implemented via `crates/runtime/src/isr.rs`. Pages can declare `pub const REVALIDATE: u64 = 60;` for time-based revalidation. Cache is in-memory with optional SQLite/Redis persistence. Thundering-herd coalescing exists but has a race condition (Bug #6 above).
 
-### Modifier attributes
+## Adapter System
 
-| Attribute | Effect |
-|---|---|
-| `s-target="#sel"` | CSS selector for the swap target (default: the element itself) |
-| `s-html` | Request `text/html` instead of `application/json` |
-| `s-skip-history` | Don't push to browser history |
-| `s-preload` | Prefetch on mouseenter |
-| `s-timeout="5000"` | Override request timeout (ms) |
-| `s-sse="/path"` | Open SSE connection to URL, patch target on message |
-| `s-ws="/path"` | Open WebSocket connection |
-| `s-debug` (on `<body>`) | Enable silcrow debug warnings |
+Implemented via `PilcrowAdapter` trait (`crates/runtime/src/adapter.rs`). Built-in adapters: `TokioAdapter` (default), `PortEnvAdapter`, `FlyAdapter`, `RailwayAdapter`, `CloudRunAdapter`, `RenderAdapter`, `VercelAdapter`. Lambda adapter requires `lambda` feature flag.
 
-### Reactive bindings (colon directives)
+Use: `pilcrow_web::start_with_adapter(pilcrow_router(), |_| async {}, MyAdapter).await`.
 
-```html
-<span :text="errors.email"></span>
-<span :show="has_errors"></span>
-<input :value="values.email" />
-<div :class="{ active: is_active }"></div>
-<div :style="{ color: label_color }"></div>
-<input :disabled="is_loading" />
-<div s-use="ui"></div>   <!-- spread: apply all keys from ui object -->
-```
+## routekit Codegen
 
-### List reconciliation
+Codegen is split across `crates/routekit/src/templating/codegen/`: `types.rs`, `api_routes.rs`, `page_routes.rs`, `templates.rs`, `instrument.rs`, `app_module.rs`, `emit.rs`, `util.rs`.
 
-```html
-<template s-for="item in products" :key="item.id">
-  <div><span :text="item.title"></span></div>
-</template>
-```
+Key structs:
+- `LoadSignature` — all page/layout loads validated as `async fn(req: Req) -> AppResult<Props>`
+- `ActionFn` — discovered actions; `emit_action_route` generates one POST route per page with `match req.action()` dispatch
+- `make_merged_props_struct` — builds `__MergedProps` when layout has `load()`; detects field name collisions at build time
 
-### Response handling
-
-- JSON response → `Silcrow.patch(data, targetEl)` — applies colon bindings in-place
-- HTML response (when `s-html` is set or server returns `text/html`) → `safeSetHTML(targetEl, html)`
-- `FormErrors` shape (`{ errors, values, has_errors, error_list }`) patches directly into a form target
-
-### Loading state
-
-While a request is in-flight, silcrow adds `class="silcrow-loading"` and `aria-busy="true"` to the target element.
-
-### Response headers (server-side)
-
-Set these from `req.res` methods to trigger client-side side-effects:
-
-| Header | Effect |
-|---|---|
-| `silcrow-navigate` | Client-side redirect |
-| `silcrow-patch` | Patch a secondary target (`{target, data}`) |
-| `silcrow-invalidate` | Clear binding cache for a selector |
-| `silcrow-trigger` | Dispatch a custom DOM event |
-| `silcrow-retarget` | Override swap target |
-| `silcrow-push` | Override history URL |
-| `silcrow-sse` | Open SSE connection on target |
-| `silcrow-ws` | Open WS connection on target |
-| `silcrow-cache: no-cache` | Prevent GET response caching |
-
-### JS API
-
-```js
-Silcrow.go(path, {method, body, target, skipHistory})
-Silcrow.patch(data, root)
-Silcrow.invalidate(root)
-Silcrow.stream(root)          // batched high-frequency updates
-Silcrow.live(root, url)       // open SSE connection
-Silcrow.send(data, root)      // send WS message
-Silcrow.disconnect(root)
-Silcrow.reconnect(root)
-Silcrow.optimistic(data, root)
-Silcrow.revert(root)
-Silcrow.onToast(handler)
-Silcrow.use(middlewareFn)     // patch middleware (must call before DOMContentLoaded)
-Silcrow.onRoute(handler)
-Silcrow.onError(handler)
-```
-
-## routekit Codegen (crates/routekit/src/templating/codegen.rs)
-
-This is the most complex file. Key structs:
-- `LoadSignature` — tracks whether `load()` exists, is async, returns Result, wants `Req`, wants `PilcrowClient`. All page/layout load functions are validated to have `is_async=true`, `returns_result=true`, `wants_req=true` — the flexible fields exist for internal tracking but non-conforming signatures are rejected at build time in `instrument_frontmatter`.
-- `ActionFn` — one entry per discovered action: `name` (the URL key), `is_async`, `returns_result`, `wants_req`. `action_map: HashMap<page, Vec<ActionFn>>` drives `emit_action_route`, which emits one POST route per page with an inner `match req.action()` dispatch to the named fns (unknown names → `AppError::NotFound`).
-- `InstrumentedFrontmatter` — parsed code-behind with injected imports, detected signatures
-- `GeneratedTemplatesModule` — all per-page codegen state including `action_map`
-- `make_merged_props_struct` — builds `__MergedProps` (layout fields + page fields) when a layout has `load()`. Detects field name collisions between layout and page `Props` at build time and fails with a clear message (e.g. `Props field 'title' is defined in both the layout and the page`).
-
-When editing codegen, always run `cargo test -p pilcrow-routekit` — the pipeline tests exercise the full compile path including codegen.
-
-## Audit Findings (April 2026)
-
-### Known Bugs
-
-| # | Location | Severity | Description |
-|---|----------|----------|-------------|
-| 1 | `routekit/constraint.rs` | ✅ Fixed | The broken `Regex` variant was completely removed rather than pulling in the heavy `regex` crate. |
-| 2 | `tools/cli/scaffold.rs` | ✅ Fixed | Dynamic path injection using `pilcrow_web::assets::assets::silcrow_js_path()` is now implemented. |
-| 3 | `tools/cli/scaffold.rs` | ✅ Fixed | Replaced `*` versions with git dependencies pointing to the Pilcrow repo. |
-| 4 | `tools/cli/check.rs` | ✅ Fixed | The misleading `check-arch` command and file were completely removed. |
-| 5 | `runtime/context.rs` | ✅ Fixed | Replaced `.unwrap()` with `.unwrap_or_else(|e| e.into_inner())` on lock guards to gracefully recover from thread panics. |
-| 6 | `runtime/start.rs` | ✅ Fixed | Replaced `expect("bind")` with a custom panic message showing the requested port, and added `tracing::info!` for logging. |
-
-### Code Quality Improvements
-
-| # | Location | Status | Description |
-|---|----------|--------|-------------|
-| 1 | `routekit/codegen.rs` | ✅ Fixed | **95KB single file** — split into focused modules within the `codegen/` directory (`types.rs`, `api_routes.rs`, `page_routes.rs`, `templates.rs`, `instrument.rs`, `app_module.rs`, `emit.rs`, `util.rs`). |
-| 2 | `runtime/start.rs` L19 | ✅ Fixed | Replaced `println!` with `tracing::info!` for consistency with the rest of the framework. |
-| 3 | `runtime/context.rs` + `response/response.rs` | ✅ Fixed | Duplicate logic — `Res` methods and `ResponseExt` trait now delegate to shared methods inside `BaseResponse`. |
-| 4 | All crates | ✅ Fixed | Added unit tests to `pilcrow-client` and `pilcrow-macros`. |
-| 5 | `runtime/Cargo.toml` | ✅ Fixed | Downgraded all crates to `edition = "2021"` and refactored Rust 2024 `let_chains` into nested `if let` conditions. |
-
-### Missing Features vs SvelteKit / Astro
-
-**Critical (core architectural vision):**
-
-| Feature | SvelteKit | Astro | Pilcrow Status |
-|---------|-----------|-------|----------------|
-| SSG (Static Site Generation) | ✅ `prerender = true` | ✅ Default mode | ✅ `PRERENDER = true` (startup prerender) |
-| Incremental SSR (ISR) | ✅ `isr` | ✅ Hybrid | ❌ Not implemented |
-| Island Architecture | ❌ (not core) | ✅ Core feature | ❌ Not implemented |
-| Adapter System (deploy targets) | ✅ Vercel/Cloudflare/Node | ✅ Multiple | ❌ Hardcoded tokio TcpListener |
-| Dev Server / HMR | ✅ Vite-powered | ✅ Vite-powered | ❌ Only cargo-watch restarts |
-
-**Important (DX parity):**
-
-| Feature | Status |
-|---------|--------|
-| Server hooks (`handle`, `handle_error`, `init`) | 🟡 `hooks.rs` at project root |
-| `$env` modules (static/private, static/public, dynamic) | 🟡 `env_codegen.rs` exists but early |
-| Head/meta management (`svelte:head`, `<head>` injection) | ❌ Manual only |
-| Snapshot/state preservation across navigations | ❌ Not implemented |
-| i18n routing | ❌ Not implemented |
-| Image optimization pipeline | ❌ Not implemented |
-| Content collections / MDX | ❌ Not implemented |
-| Client-side JS bundling beyond silcrow.js | ❌ Not implemented |
-| View Transitions API | ❌ Not implemented |
-
-## pilcrow-mcp as Source of Truth
-
-`tools/mcp/pilcrow-mcp` is the authoritative knowledge source for AI assistants working in this codebase. **After every change to framework functionality, update the MCP server to match.** This is not optional — a stale MCP will give wrong answers to future AI sessions.
-
-The three files to keep in sync:
-
-| File | What to update |
-|------|----------------|
-| `registry.toml` | Feature status (`planned` → `stable`), spec, constraints, canonical_usage, source_refs, test_refs |
-| `tools/mcp/pilcrow-mcp/src/validation.rs` | Remove error rules for newly-implemented features; add validation rules for new constants/syntax |
-| `tools/mcp/pilcrow-mcp/src/docs.rs` — `document_specs()` | Add new runtime/routekit source files as `DocumentSpec` entries so the knowledge base can pull evidence from them |
-
-After any update, run `cargo check --manifest-path tools/mcp/pilcrow-mcp/Cargo.toml` to verify the MCP server still compiles.
-
-### Priority Roadmap (Suggested)
-
-1. **Fix scaffold bugs** — users can't create working projects (`silcrow.js` path + crate references)
-2. **Split codegen.rs** — 95KB single file is the #1 regression risk
-3. **Add SSG support** — `pub const PRERENDER: bool = true` in code-behind
-4. **Add adapter system** — trait-based output target (tokio standalone, Vercel serverless, Cloudflare Workers)
-5. **Island Architecture** — `client:load`, `client:idle`, `client:visible` directives paired with Silcrow hydration
-6. **Dev server with live-reload** — filesystem watcher + WebSocket push to browser
+When editing codegen, always run `cargo test -p pilcrow-routekit`. Note: tests at lines 544 and 625 currently fail to compile (Bug #1).

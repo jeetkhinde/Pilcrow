@@ -229,7 +229,6 @@ Suggested fix: keep `pilcrow dev` as a thin, well-documented wrapper over `cargo
 - Visual route inspector.
 - AI-generated migration/fix suggestions via MCP.
 
-
 ## Phase 5: DX Improvements
 
 Preferred cache policy syntax:
@@ -267,7 +266,6 @@ pub async fn load(ctx: Page) -> AppResult<Props> {
 ```
 
 Decision: no `#[page("/products/[id:int]")]` for normal pages. Routekit remains file/folder based; the path is the source of truth. Dynamic route params are generated as a page-local `Params` type plus a page-local `Page` alias, matching the existing `Props` convention and avoiding duplicated route declarations.
-
 
 Decision: no `#[cache(...)]` attribute for normal cache policy. Routekit should continue discovering `REVALIDATE` and `CACHE_TAGS` constants from code-behind files.
 

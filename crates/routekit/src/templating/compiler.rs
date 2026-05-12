@@ -90,31 +90,25 @@ pub fn transpile_html_module(input: &str) -> Result<HtmlModuleParts, HtmlModuleP
 }
 
 /// Rewrites `{{ field }}` interpolations for `LiveProp<T>` fields into
-/// `<span :text="field">{{ field }}</span>` so Silcrow can patch them via SSE.
+/// `<span data-pilcrow-live-field="field">{{ field }}</span>` so the live-patch
+/// head shim can update them via SSE without relying on Silcrow's `:text` binding.
 ///
 /// Only fields whose names appear in `live_fields` are wrapped. Fields with
 /// `LiveTarget::Store` (atom-only, no DOM binding) should not appear in this
-/// list — only `Dom` and `DomAndStore` fields need the `:text` span.
-///
-/// The transformation is skipped when the interpolation is already wrapped
-/// (i.e., preceded by `>`), so calling this twice is safe.
+/// list — only `Dom` and `DomAndStore` fields need the span.
 pub fn inject_live_text_spans(template: &str, live_fields: &[String]) -> String {
     if live_fields.is_empty() {
         return template.to_string();
     }
     let mut out = template.to_string();
     for field in live_fields {
-        // Match {{ field }} with optional surrounding whitespace inside braces.
         let expr = format!("{{{{ {field} }}}}");
-        let span = format!("<span :text=\"{field}\">{{{{ {field} }}}}</span>");
-        // Only replace when not already inside a :text span (check for preceding `>`
-        // is not foolproof, but replacing the full pattern avoids double-wrapping
-        // since the replacement contains the original as a substring).
+        let span = format!("<span data-pilcrow-live-field=\"{field}\">{{{{ {field} }}}}</span>");
         out = out.replace(&expr, &span);
-        // Also handle no-space variant: {{field}}
         let expr_ns = format!("{{{{{field}}}}}");
         if expr_ns != expr {
-            let span_ns = format!("<span :text=\"{field}\">{{{{{field}}}}}</span>");
+            let span_ns =
+                format!("<span data-pilcrow-live-field=\"{field}\">{{{{{field}}}}}</span>");
             out = out.replace(&expr_ns, &span_ns);
         }
     }

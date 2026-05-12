@@ -817,14 +817,14 @@ fn preprocess_discovered_sources(
         .filter(|p| {
             modules
                 .get(*p)
-                .map_or(false, |m| m.kind == HtmlSourceKind::Page)
+                .is_some_and(|m| m.kind == HtmlSourceKind::Page)
         })
         .cloned()
         .collect();
 
     for page_path in &page_paths {
         // Skip layout wrapping entirely when the page opts out via `pub const LAYOUT: &str = "none"`.
-        if modules.get(page_path).map_or(false, |m| m.skip_layout) {
+        if modules.get(page_path).is_some_and(|m| m.skip_layout) {
             continue;
         }
 

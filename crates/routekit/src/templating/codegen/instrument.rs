@@ -433,6 +433,8 @@ pub fn instrument_frontmatter(
     out.push_str("use pilcrow_web::ActionResult;\n");
     out.push_str("#[allow(unused_imports)]\n");
     out.push_str("use pilcrow_web::redirect;\n");
+    out.push_str("#[allow(unused_imports)]\n");
+    out.push_str("use pilcrow_web::{ok, ActionResultExt, ResponseExt, ToastLevel};\n");
     // Make `fragments::prefix::name::render(props)` available without an explicit import.
     // Not injected for ui/ components since they can't call fragments directly.
     if !in_ui {

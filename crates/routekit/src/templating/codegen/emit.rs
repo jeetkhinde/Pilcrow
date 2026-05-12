@@ -135,6 +135,7 @@ pub fn emit_action_route(
         "        .route({pattern_lit}, ::pilcrow_web::axum::routing::post(|req: ::pilcrow_web::Req| async move {{"
     );
     s.push_str("            use ::pilcrow_web::axum::response::IntoResponse;\n");
+    s.push_str("            use ::pilcrow_web::ResponseExt;\n");
     s.push_str("            let __resp_handle = req.res.clone();\n");
     s.push_str("            let __action = req.action().to_owned();\n");
     s.push_str("            let mut __response = match __action.as_str() {\n");

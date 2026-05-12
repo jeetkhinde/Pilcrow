@@ -100,6 +100,19 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
             }
         }
 
+        // Nudge: Ok(StatusCode::OK.into_response()) → ok()
+        if line.contains("StatusCode::OK.into_response()") && !line_lower.contains("//") {
+            findings.push(finding_with_line(
+                Severity::Info,
+                "pilcrow-use-ok-helper",
+                "Use `ok()` instead of `Ok(StatusCode::OK.into_response())` — shorter and supports chaining via ActionResultExt.".to_string(),
+                path,
+                Some(lnum),
+                Some("crates/runtime/src/response/response.rs"),
+                Some("ok() returns ActionResult directly. Chain modifiers: ok().with_toast(\"Done\", ToastLevel::Success)."),
+            ));
+        }
+
         // Warn on direct std::env::var access when env-config may be appropriate
         if line.contains("std::env::var(") || line.contains("env::var(") {
             if !line_lower.contains("//") {

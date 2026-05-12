@@ -473,10 +473,7 @@ fn run_vite(manifest_dir: &Path, config_path: &Path) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "React island Vite build failed",
-        ))
+        Err(io::Error::other("React island Vite build failed"))
     }
 }
 
@@ -1148,10 +1145,9 @@ fn render_static_shell(
     let output = result?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Node shell render failed for island `{id}`: {stderr}"),
-        ));
+        return Err(io::Error::other(format!(
+            "Node shell render failed for island `{id}`: {stderr}"
+        )));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -1195,7 +1191,7 @@ fn check_budgets(dist_dir: &Path, react_config: &ReactBuildConfig) -> io::Result
                 limit_kb
             );
             if react_config.fail_on_budget {
-                return Err(io::Error::new(io::ErrorKind::Other, msg));
+                return Err(io::Error::other(msg));
             }
             println!("cargo:warning={msg}");
         }
@@ -1227,7 +1223,7 @@ fn check_entry_budgets(
                 limit_kb
             );
             if react_config.fail_on_budget {
-                return Err(io::Error::new(io::ErrorKind::Other, msg));
+                return Err(io::Error::other(msg));
             }
             println!("cargo:warning={msg}");
         }

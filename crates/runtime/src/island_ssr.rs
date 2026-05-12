@@ -272,7 +272,8 @@ fn build_props_from_tag(tag: &str) -> serde_json::Value {
         let (raw_name, value, next) = read_attr_tail(remaining);
         remaining = next;
         let camel = to_camel_case(raw_name);
-        let parsed = serde_json::from_str::<serde_json::Value>(&value).unwrap_or(serde_json::Value::Null);
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&value).unwrap_or(serde_json::Value::Null);
         props.insert(camel, parsed);
     }
 

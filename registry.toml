@@ -298,8 +298,8 @@ name = "Named Actions"
 domain = "pilcrow"
 status = "stable"
 summary = "Page and fragment code-behind files can declare named action handlers for enhanced and plain form posts."
-spec = "Named actions are public functions other than load that return ActionResult, commonly `pub async fn create(req: Req) -> ActionResult`. The client invokes them with ?/name URL fragment (POST only) on the page or fragment URL. Unknown action names return AppError::NotFound."
-canonical_usage = "In products/index.rs or widgets/user-card.rs: `pub async fn create(req: Req) -> ActionResult { let name = req.form.get(\"name\").unwrap_or(\"\"); redirect(\"/products\") }`. In template: `<form s-post=\"?/create\">`. A plain POST to /products?/create or /widgets/user-card?/create triggers this action."
+spec = "Named actions are public functions other than load that return ActionResult, commonly `pub async fn create(req: Req) -> ActionResult`. The client invokes them with ?/name URL fragment (POST only) on the page or fragment URL. Unknown action names return AppError::NotFound. Use `ok()` to return a 200 with no body, `redirect(path)` for a 303. Both return ActionResult and support chaining via ActionResultExt: `.with_toast(msg, level)`, `.with_header(key, val)`, `.trigger_event(name)`, `.no_cache()`, `.retarget(sel)`, `.push_history(url)`. All these helpers plus ActionResultExt and ToastLevel are auto-imported in every page module."
+canonical_usage = "In products/index.rs: `pub async fn create(req: Req) -> ActionResult { let name = req.form.get(\"name\").unwrap_or(\"\"); redirect(\"/products\").with_toast(\"Created!\", ToastLevel::Success) }`. For mutations with no redirect: `pub async fn toggle(_req: Req) -> ActionResult { toggle_state(); ok().with_toast(\"Done\", ToastLevel::Success) }`. In template: `<form s-post=\"?/create\">`."
 constraints = [
   "Action fns must return ActionResult (or Result<Response, AppError>).",
   "Action fns must be POST-only — GET requests do not trigger actions.",
@@ -315,11 +315,14 @@ invalid_examples = [
 source_refs = [
   "crates/routekit/src/templating/codegen/page_routes.rs",
   "crates/routekit/src/templating/codegen/instrument.rs",
+  "crates/runtime/src/response/response.rs",
 ]
 test_refs = ["crates/routekit/src/templating/codegen/tests.rs"]
 validation_rules = [
   "Named action handlers should return ActionResult.",
   "Actions should live next to the page template they serve.",
+  "Use ok() for 200 OK responses, not Ok(StatusCode::OK.into_response()).",
+  "Use redirect(path) or ok() — both chain .with_toast(), .with_header(), etc. via ActionResultExt.",
 ]
 scaffold_templates = ["route", "silcrow-form"]
 

@@ -295,8 +295,6 @@ fn pattern_name(route_pattern: &str) -> String {
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
                 ch
-            } else if ch == '/' {
-                '_'
             } else {
                 '_'
             }

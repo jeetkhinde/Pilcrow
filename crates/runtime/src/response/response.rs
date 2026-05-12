@@ -451,23 +451,25 @@ pub fn navigate(path: impl Into<String>) -> NavigateResponse {
     }
 }
 
-/// Issue a `303 See Other` redirect from an `actions()` handler.
-///
-/// This is the idiomatic way to complete a successful action:
+/// Return a plain `200 OK` from an `actions()` handler. Chain modifiers via [`ActionResultExt`]:
 ///
 /// ```rust,ignore
-/// pub async fn actions(req: Req) -> ActionResult {
-///     db::create_item(&req.form).await?;
-///     redirect("/items")
+/// pub async fn action_toggle(_req: Req) -> ActionResult {
+///     toggle_state();
+///     ok().with_toast("Done!", ToastLevel::Success)
 /// }
 /// ```
-///
-/// If you need to add a toast or header alongside the redirect, set it on
-/// `req.res` before calling `redirect`:
+pub fn ok() -> ActionResult {
+    Ok(StatusCode::OK.into_response())
+}
+
+/// Issue a `303 See Other` redirect from an `actions()` handler. Chain modifiers via [`ActionResultExt`]:
 ///
 /// ```rust,ignore
-/// req.res.with_toast("Item created!", ToastLevel::Success);
-/// redirect("/items")
+/// pub async fn action_create(req: Req) -> ActionResult {
+///     db::create_item(&req.form).await?;
+///     redirect("/items").with_toast("Created!", ToastLevel::Success)
+/// }
 /// ```
 pub fn redirect(path: impl Into<String>) -> ActionResult {
     Ok(NavigateResponse {
@@ -475,6 +477,69 @@ pub fn redirect(path: impl Into<String>) -> ActionResult {
         base: BaseResponse::default(),
     }
     .into_response())
+}
+
+/// Chainable modifiers for [`ActionResult`].
+///
+/// Imported automatically in every page module by Pilcrow's codegen.
+pub trait ActionResultExt: Sized {
+    fn with_toast(self, message: impl Into<String>, level: ToastLevel) -> Self;
+    fn with_header(self, key: &'static str, value: impl Into<String>) -> Self;
+    fn no_cache(self) -> Self;
+    fn trigger_event(self, event_name: &str) -> Self;
+    fn retarget(self, selector: &str) -> Self;
+    fn push_history(self, url: &str) -> Self;
+}
+
+impl ActionResultExt for ActionResult {
+    fn with_toast(self, message: impl Into<String>, level: ToastLevel) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.add_toast(message, level);
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
+    fn with_header(self, key: &'static str, value: impl Into<String>) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.set_header(key, value);
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
+    fn no_cache(self) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.set_no_cache();
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
+    fn trigger_event(self, event_name: &str) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.add_trigger_event(event_name);
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
+    fn retarget(self, selector: &str) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.set_retarget(selector);
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
+    fn push_history(self, url: &str) -> Self {
+        self.map(|mut r| {
+            let mut base = BaseResponse::default();
+            base.set_push_history(url);
+            base.apply_to_response(&mut r);
+            r
+        })
+    }
 }
 
 impl ResponseExt for HtmlResponse {

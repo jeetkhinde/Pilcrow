@@ -558,6 +558,8 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             HookFlags::default(),
             false,
             false,
+            &HashMap::new(),
+            &HashMap::new(),
         )
         .expect("streaming app module should render");
 
@@ -639,6 +641,8 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             HookFlags::default(),
             false,
             false,
+            &HashMap::new(),
+            &HashMap::new(),
         )
         .expect_err("invalid streaming + ISR config should be reported");
 
