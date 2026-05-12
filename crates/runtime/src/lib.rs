@@ -5,6 +5,8 @@ pub mod adapters;
 pub mod assets;
 #[cfg(feature = "experimental-baked-pages")]
 pub mod baked_pages;
+#[cfg(feature = "live-props")]
+pub mod live_props;
 pub mod context;
 pub mod csrf;
 pub mod deferred;

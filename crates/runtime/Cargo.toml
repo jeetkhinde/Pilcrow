@@ -14,9 +14,17 @@ path = "src/lib.rs"
 [features]
 lambda = ["dep:lambda_http"]
 experimental-baked-pages = []
+live-props = ["dep:sqlx"]
 
 [dependencies]
 lambda_http = { version = "0.13", optional = true }
+sqlx = { version = "0.8", optional = true, features = [
+    "postgres",
+    "macros",
+    "runtime-tokio-native-tls",
+    "json",
+    "chrono",
+] }
 http-body-util = "0.1"
 http = "1"
 pilcrow-macros = { path = "../macros" }
