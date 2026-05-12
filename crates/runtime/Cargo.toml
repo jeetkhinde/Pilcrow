@@ -14,7 +14,7 @@ path = "src/lib.rs"
 [features]
 lambda = ["dep:lambda_http"]
 experimental-baked-pages = []
-live-props = ["dep:sqlx"]
+live-props = ["dep:sqlx", "experimental-baked-pages"]
 
 [dependencies]
 lambda_http = { version = "0.13", optional = true }

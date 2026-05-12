@@ -1,1 +1,2 @@
-// live_props module — populated in subsequent tasks
+mod model;
+pub use model::{LiveFieldData, LiveProps, LivePropsExtract};
