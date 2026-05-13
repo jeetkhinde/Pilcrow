@@ -155,7 +155,8 @@ where
     } else {
         None
     };
-
+    
+    #[allow(unused_mut)]
     let mut app = app
         .layer(axum::Extension(config))
         .layer(axum::Extension(http))
@@ -182,7 +183,8 @@ where
         }
     }
 
-    let mut app = app.layer(
+    let mut app = app
+        .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(|err: BoxError| async move {
                     if err.is::<tower::timeout::error::Elapsed>() {

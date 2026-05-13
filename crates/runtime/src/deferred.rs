@@ -147,6 +147,7 @@ pub struct AsyncHtmlPatch {
 /// Build a `Stream<Item = AsyncHtmlPatch>` from (slot, future → html) pairs.
 /// Resolves concurrently and yields in completion order.
 #[doc(hidden)]
+#[allow(clippy::type_complexity)]
 pub fn __async_html_patch_stream(
     pairs: Vec<(&'static str, Pin<Box<dyn Future<Output = String> + Send>>)>,
 ) -> impl Stream<Item = AsyncHtmlPatch> + Send {
@@ -390,6 +391,7 @@ pub fn __serialize_page_props<T: Serialize>(value: T) -> String {
 /// Build a `Stream<Item = AsyncValuePatch>` from a vec of `(field, future → String)` pairs.
 /// Resolves patches concurrently and yields them in completion order.
 #[doc(hidden)]
+#[allow(clippy::type_complexity)]
 pub fn __async_value_patch_stream(
     pairs: Vec<(&'static str, Pin<Box<dyn Future<Output = String> + Send>>)>,
 ) -> impl Stream<Item = AsyncValuePatch> + Send {
@@ -406,30 +408,32 @@ pub fn __async_value_patch_stream(
 
 /// Build an SSE response for pages with `LiveProp<T>` fields.
 ///
-/// Merges all field streams and emits `custom` SSE events with type `"live"`.
-/// Silcrow dispatches these as `silcrow:sse:live` CustomEvents; the page's
-/// `window.__pilcrow_live_patch` shim then updates `[data-pilcrow-live-field]` elements.
+/// Merges all field streams and emits `live` SSE events containing a flat
+/// `{"field_name": value}` JSON object. The injected client script listens for
+/// `event: live` and forwards the parsed object directly to `__pilcrow_live_patch`.
 /// Called by generated SSE route handlers — not part of the public API.
 #[doc(hidden)]
+#[allow(clippy::type_complexity)]
 pub fn __live_props_response(
     streams: Vec<Pin<Box<dyn Stream<Item = (&'static str, String)> + Send + 'static>>>,
 ) -> impl axum::response::IntoResponse {
-    use crate::sse::{sse_stream, SilcrowEvent};
+    use axum::response::sse::{Event, KeepAlive, Sse};
     use futures_util::StreamExt as _;
+    use std::convert::Infallible;
 
-    let mut merged = futures_util::stream::select_all(streams);
+    let merged = futures_util::stream::select_all(streams);
 
-    sse_stream(move |emit| async move {
-        while let Some((field, json_str)) = merged.next().await {
-            let value: serde_json::Value =
-                serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
-            let mut map = serde_json::Map::new();
-            map.insert(field.to_string(), value);
-            emit.send(SilcrowEvent::custom("live", serde_json::Value::Object(map)))
-                .await?;
-        }
-        Ok(())
-    })
+    let event_stream = merged.map(|(field, json_str)| {
+        let value: serde_json::Value =
+            serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+        let mut map = serde_json::Map::new();
+        map.insert(field.to_string(), value);
+        let data = serde_json::to_string(&serde_json::Value::Object(map))
+            .unwrap_or_else(|_| "{}".to_string());
+        Ok::<Event, Infallible>(Event::default().event("live").data(data))
+    });
+
+    Sse::new(event_stream).keep_alive(KeepAlive::default())
 }
 
 // ── LiveProp<T> ──────────────────────────────────────────────────────────────
@@ -629,7 +633,9 @@ pub enum PatchDelay {
 
 impl PatchDelay {
     pub fn debounced(duration: Duration) -> Self {
-        Self::Debounced { millis: duration.as_millis() as u64 }
+        Self::Debounced {
+            millis: duration.as_millis() as u64,
+        }
     }
 
     pub fn as_duration(&self) -> Option<Duration> {
@@ -640,6 +646,7 @@ impl PatchDelay {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) enum BakedProducer<T: 'static> {
     Watch(watch::Receiver<T>),
     Poll {
@@ -670,6 +677,7 @@ pub(crate) enum BakedProducer<T: 'static> {
 pub struct BakedProp<T: 'static> {
     pub(crate) initial: T,
     pub(crate) dep_key: String,
+    #[allow(dead_code)]
     pub(crate) producer: BakedProducer<T>,
     pub(crate) patch_delay: PatchDelay,
 }

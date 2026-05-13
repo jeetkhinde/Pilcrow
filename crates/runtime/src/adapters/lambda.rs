@@ -1,5 +1,5 @@
-use axum::body::Body as AxumBody;
 use axum::Router;
+use axum::body::Body as AxumBody;
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use lambda_http::Body as LambdaBody;
@@ -58,10 +58,7 @@ impl PilcrowAdapter for LambdaAdapter {
                             app.oneshot(http_req)
                                 .await
                                 .map_err(|e| -> lambda_http::Error {
-                                    Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        e.to_string(),
-                                    ))
+                                    Box::new(std::io::Error::other(e.to_string()))
                                 })?;
 
                         let (resp_parts, resp_body) = resp.into_parts();
@@ -69,10 +66,7 @@ impl PilcrowAdapter for LambdaAdapter {
                             .collect()
                             .await
                             .map_err(|e| -> lambda_http::Error {
-                                Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    e.to_string(),
-                                ))
+                                Box::new(std::io::Error::other(e.to_string()))
                             })?
                             .to_bytes();
 

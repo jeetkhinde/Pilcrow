@@ -38,8 +38,8 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut rewritten: Vec<TokenStream2> = vec![];
 
     for param in &func.sig.inputs {
-        if let FnArg::Typed(PatType { pat, ty, .. }) = param {
-            if let Pat::Ident(ident) = pat.as_ref() {
+        if let FnArg::Typed(PatType { pat, ty, .. }) = param
+            && let Pat::Ident(ident) = pat.as_ref() {
                 let name = ident.ident.to_string();
                 match name.as_str() {
                     "form" => {
@@ -63,7 +63,6 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
                     _ => {}
                 }
             }
-        }
         rewritten.push(quote! { #param });
     }
 

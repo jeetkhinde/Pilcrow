@@ -58,13 +58,19 @@ mod tests {
         let shell = r#"<span data-pilcrow-live-field="status">Loading</span>"#;
         let slots = vec![("status".to_string(), serde_json::json!("Resolved"))];
         let result = inject_live_slots(shell, &slots);
-        assert_eq!(result, r#"<span data-pilcrow-live-field="status">Resolved</span>"#);
+        assert_eq!(
+            result,
+            r#"<span data-pilcrow-live-field="status">Resolved</span>"#
+        );
     }
 
     #[test]
     fn escapes_html_in_value() {
         let shell = r#"<span data-pilcrow-live-field="title">old</span>"#;
-        let slots = vec![("title".to_string(), serde_json::json!("<script>alert(1)</script>"))];
+        let slots = vec![(
+            "title".to_string(),
+            serde_json::json!("<script>alert(1)</script>"),
+        )];
         let result = inject_live_slots(shell, &slots);
         assert!(result.contains("&lt;script&gt;"));
         assert!(!result.contains("<script>"));

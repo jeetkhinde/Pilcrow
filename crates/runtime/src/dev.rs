@@ -18,7 +18,7 @@ pub(crate) enum DevEvent {
 }
 
 impl DevEvent {
-    fn to_sse(self) -> Event {
+    fn into_sse(self) -> Event {
         match self {
             DevEvent::CssReload { path } => Event::default().event("custom").data(
                 serde_json::json!({
@@ -83,7 +83,7 @@ impl Stream for DevSseStream {
 
         loop {
             match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Ready(Some(Ok(ev))) => return Poll::Ready(Some(Ok(ev.to_sse()))),
+                Poll::Ready(Some(Ok(ev))) => return Poll::Ready(Some(Ok(ev.into_sse()))),
                 Poll::Ready(Some(Err(_lagged))) => continue,
                 Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => return Poll::Pending,

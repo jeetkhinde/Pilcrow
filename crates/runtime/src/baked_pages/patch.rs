@@ -1,8 +1,7 @@
 use super::{BakedPageStore, DependencyKey};
 use std::{collections::BTreeMap, io, sync::Arc};
 
-type FieldRecomputeFn =
-    Arc<dyn Fn(&DependencyKey) -> io::Result<serde_json::Value> + Send + Sync>;
+type FieldRecomputeFn = Arc<dyn Fn(&DependencyKey) -> io::Result<serde_json::Value> + Send + Sync>;
 
 /// Registry of per-field recompute functions, keyed by dependency key.
 ///
@@ -54,10 +53,7 @@ impl BakedPatchRegistry {
     ///
     /// Pages whose JSON artifact does not exist yet (not yet baked) are skipped.
     /// Pages where the recompute fails are marked stale so the next request re-renders.
-    pub fn patch_dependency(
-        &self,
-        key: impl Into<DependencyKey>,
-    ) -> io::Result<BakedPatchOutcome> {
+    pub fn patch_dependency(&self, key: impl Into<DependencyKey>) -> io::Result<BakedPatchOutcome> {
         let key = key.into();
         let index = self.store.ensure_reverse_index()?;
         let pages = index.get(key.as_str()).cloned().unwrap_or_default();
@@ -82,19 +78,20 @@ impl BakedPatchRegistry {
                     .map(|(_, f)| f.clone());
 
                 let Some(recompute) = recompute else {
-                    self.store
-                        .mark_stale(
-                            &concrete_path,
-                            format!("no recompute fn registered for field `{field_name}`"),
-                        )
-                        ?;
+                    self.store.mark_stale(
+                        &concrete_path,
+                        format!("no recompute fn registered for field `{field_name}`"),
+                    )?;
                     outcome.stale_paths.push(concrete_path.clone());
                     continue;
                 };
 
                 match recompute(&key) {
                     Ok(new_value) => {
-                        match self.store.patch_json_key(&concrete_path, field_name, new_value) {
+                        match self
+                            .store
+                            .patch_json_key(&concrete_path, field_name, new_value)
+                        {
                             Ok(()) => {
                                 outcome.patched_paths.push(concrete_path.clone());
                             }
@@ -138,16 +135,18 @@ impl BakedPatchOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baked_pages::model::{BakedPage, BakedSlot, DependencyConfig};
+    use crate::baked_pages::model::{BakedPage, BakedPagePaths, BakedSlot, DependencyConfig};
     use serde_json::json;
 
     fn make_baked_page(store: &BakedPageStore, concrete_path: &str) -> BakedPage {
         let mut page = BakedPage::new(
-            "/tickets/:id",
-            concrete_path,
-            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-            store.json_path(concrete_path).to_string_lossy().to_string(),
-            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            BakedPagePaths::new(
+                "/tickets/:id",
+                concrete_path,
+                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store.json_path(concrete_path).to_string_lossy().to_string(),
+                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
             Some(10),
@@ -163,13 +162,13 @@ mod tests {
         let store = BakedPageStore::new(temp.path());
         let page = make_baked_page(&store, "/tickets/123");
         store.write_page(&page).unwrap();
-        store.write_json("/tickets/123", &json!({ "status": "Open" })).unwrap();
+        store
+            .write_json("/tickets/123", &json!({ "status": "Open" }))
+            .unwrap();
         store.upsert_reverse_index_page(&page).unwrap();
 
         let mut registry = BakedPatchRegistry::new(store.clone());
-        registry.register_field_recompute("TicketStatus:123", "status", |_key| {
-            Ok(json!("Closed"))
-        });
+        registry.register_field_recompute("TicketStatus:123", "status", |_key| Ok(json!("Closed")));
 
         let outcome = registry.patch_dependency("TicketStatus:123").unwrap();
 
@@ -189,9 +188,7 @@ mod tests {
         store.upsert_reverse_index_page(&page).unwrap();
 
         let mut registry = BakedPatchRegistry::new(store.clone());
-        registry.register_field_recompute("TicketStatus:123", "status", |_key| {
-            Ok(json!("Closed"))
-        });
+        registry.register_field_recompute("TicketStatus:123", "status", |_key| Ok(json!("Closed")));
 
         let outcome = registry.patch_dependency("TicketStatus:123").unwrap();
 
@@ -205,7 +202,9 @@ mod tests {
         let store = BakedPageStore::new(temp.path());
         let page = make_baked_page(&store, "/tickets/123");
         store.write_page(&page).unwrap();
-        store.write_json("/tickets/123", &json!({ "status": "Open" })).unwrap();
+        store
+            .write_json("/tickets/123", &json!({ "status": "Open" }))
+            .unwrap();
         store.upsert_reverse_index_page(&page).unwrap();
 
         let mut registry = BakedPatchRegistry::new(store.clone());
@@ -228,11 +227,13 @@ mod tests {
 
         for path in ["/tickets/123", "/tickets/456"] {
             let mut page = BakedPage::new(
-                "/tickets/:id",
-                path,
-                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-                store.json_path(path).to_string_lossy().to_string(),
-                store.metadata_path(path).to_string_lossy().to_string(),
+                BakedPagePaths::new(
+                    "/tickets/:id",
+                    path,
+                    store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                    store.json_path(path).to_string_lossy().to_string(),
+                    store.metadata_path(path).to_string_lossy().to_string(),
+                ),
                 vec![BakedSlot::text("status")],
                 vec![DependencyConfig::immediate("SharedKey", "status")],
                 None,

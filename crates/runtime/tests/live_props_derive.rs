@@ -22,10 +22,17 @@ fn derive_extracts_only_live_props_fields() {
         title: "My bug".to_string(),
     };
     let fields = props.live_fields();
-    assert_eq!(fields.len(), 1, "only LiveProps<T> fields should be extracted");
+    assert_eq!(
+        fields.len(),
+        1,
+        "only LiveProps<T> fields should be extracted"
+    );
     assert_eq!(fields[0].field_name, "status");
     assert_eq!(fields[0].json_value, serde_json::json!("Open"));
-    assert_eq!(fields[0].depends_on, vec![DependencyKey::new("tickets:id=123")]);
+    assert_eq!(
+        fields[0].depends_on,
+        vec![DependencyKey::new("tickets:id=123")]
+    );
     assert_eq!(fields[0].promote_after, Some(50));
     assert_eq!(fields[0].patch_debounce, Some(30));
 }
@@ -62,7 +69,9 @@ struct NoBakeProps {
 
 #[test]
 fn derive_works_without_field_attributes() {
-    let props = NoBakeProps { count: LiveProps::new(42i64, vec![]) };
+    let props = NoBakeProps {
+        count: LiveProps::new(42i64, vec![]),
+    };
     let fields = props.live_fields();
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0].field_name, "count");

@@ -30,7 +30,7 @@ pub fn inject_slots(shell: &str, json: &serde_json::Value, slots: &[BakedSlot]) 
     }
 
     // Sort by position descending so byte offsets remain valid as we apply patches.
-    patches.sort_by(|a, b| b.0.cmp(&a.0));
+    patches.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let mut result = shell.to_string();
     for (start, end, replacement) in patches {
@@ -105,7 +105,10 @@ mod tests {
         let shell = r#"<p>Status: <span data-pilcrow-slot="status">Loading</span></p>"#;
         let json = json!({ "status": "Resolved" });
         let result = inject_slots(shell, &json, &[text_slot("status")]);
-        assert_eq!(result, r#"<p>Status: <span data-pilcrow-slot="status">Resolved</span></p>"#);
+        assert_eq!(
+            result,
+            r#"<p>Status: <span data-pilcrow-slot="status">Resolved</span></p>"#
+        );
     }
 
     #[test]
@@ -123,7 +126,10 @@ mod tests {
         let shell = r#"<div data-pilcrow-slot="body">placeholder</div>"#;
         let json = json!({ "body": "<strong>bold</strong>" });
         let result = inject_slots(shell, &json, &[html_slot("body")]);
-        assert_eq!(result, r#"<div data-pilcrow-slot="body"><strong>bold</strong></div>"#);
+        assert_eq!(
+            result,
+            r#"<div data-pilcrow-slot="body"><strong>bold</strong></div>"#
+        );
     }
 
     #[test]
@@ -136,7 +142,8 @@ mod tests {
 
     #[test]
     fn injects_multiple_slots() {
-        let shell = r#"<span data-pilcrow-slot="a">old-a</span><span data-pilcrow-slot="b">old-b</span>"#;
+        let shell =
+            r#"<span data-pilcrow-slot="a">old-a</span><span data-pilcrow-slot="b">old-b</span>"#;
         let json = json!({ "a": "new-a", "b": "new-b" });
         let result = inject_slots(shell, &json, &[text_slot("a"), text_slot("b")]);
         assert!(result.contains(">new-a<"));

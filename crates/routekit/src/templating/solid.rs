@@ -320,8 +320,7 @@ fn run_vite(manifest_dir: &Path, config_path: &Path) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "Solid island Vite build failed",
         ))
     }
@@ -466,7 +465,7 @@ fn check_budgets(dist_dir: &Path, solid_config: &SolidBuildConfig) -> io::Result
                 limit_kb
             );
             if solid_config.fail_on_budget {
-                return Err(io::Error::new(io::ErrorKind::Other, msg));
+                return Err(io::Error::other(msg));
             }
             println!("cargo:warning={msg}");
         }
@@ -498,7 +497,7 @@ fn check_entry_budgets(
                 limit_kb
             );
             if solid_config.fail_on_budget {
-                return Err(io::Error::new(io::ErrorKind::Other, msg));
+                return Err(io::Error::other(msg));
             }
             println!("cargo:warning={msg}");
         }

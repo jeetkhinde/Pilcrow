@@ -44,16 +44,36 @@ impl PilcrowAdapter for TokioAdapter {
     fn serve(self, bind_addr: &str, app: Router) -> AdapterFuture {
         let bind_addr = bind_addr.to_string();
         Box::pin(async move {
-            let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
-                Ok(listener) => listener,
-                Err(err) => {
-                    tracing::error!(addr = %bind_addr, error = %err, "failed to bind server");
-                    eprintln!("pilcrow: failed to bind {bind_addr}: {err}");
-                    std::process::exit(1);
+            let listener = 'bind: {
+                // Try the configured address first, then scan up to 10 subsequent ports.
+                let (host, port) = bind_addr
+                    .rsplit_once(':')
+                    .and_then(|(h, p)| p.parse::<u16>().ok().map(|p| (h, p)))
+                    .unwrap_or(("127.0.0.1", 3000));
+                let mut last_err = None;
+                for offset in 0u16..=10 {
+                    let candidate = format!("{host}:{}", port.saturating_add(offset));
+                    match tokio::net::TcpListener::bind(&candidate).await {
+                        Ok(listener) => {
+                            if offset > 0 {
+                                eprintln!(
+                                    "pilcrow: port {} in use, using http://{candidate} instead",
+                                    port
+                                );
+                            }
+                            break 'bind listener;
+                        }
+                        Err(err) => last_err = Some((candidate, err)),
+                    }
                 }
+                let (addr, err) = last_err.unwrap();
+                tracing::error!(addr = %addr, error = %err, "failed to bind server");
+                eprintln!("pilcrow: failed to bind any port starting at {port}: {err}");
+                std::process::exit(1);
             };
-            tracing::info!("listening on http://{bind_addr}");
-            eprintln!("pilcrow: listening on http://{bind_addr}");
+            let bound = listener.local_addr().unwrap();
+            tracing::info!("listening on http://{bound}");
+            eprintln!("pilcrow: listening on http://{bound}");
             if let Err(err) = axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal())
                 .await

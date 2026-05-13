@@ -9,7 +9,9 @@ struct InvalidateInput {
 
 impl Parse for InvalidateInput {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        Ok(Self { dep_key_expr: input.parse()? })
+        Ok(Self {
+            dep_key_expr: input.parse()?,
+        })
     }
 }
 

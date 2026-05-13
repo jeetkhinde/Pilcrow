@@ -12,8 +12,8 @@ use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
     build_generated_fragment_manifest, write_generated_api_routes_module,
     write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
-    GeneratedApiRoute, GeneratedPageRoute, GeneratedRouteParam, GeneratedTemplateEntry, HookFlags,
-    TemplateCodegenInput,
+    AppCodegenMaps, GeneratedApiRoute, GeneratedPageRoute, GeneratedRouteParam,
+    GeneratedTemplateEntry, HookFlags, TemplateCodegenInput,
 };
 use crate::templating::compiler::{
     inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
@@ -427,22 +427,24 @@ pub fn compile_to_out_dir_with_config(
     write_generated_app_module(
         &all_page_routes,
         &generated_api_routes,
-        &templates_output.load_map,
-        &templates_output.layout_fields_map,
-        &error_module_for_page,
-        not_found_module.as_deref(),
-        &loading_module_for_page,
-        &templates_output.action_map,
-        &templates_output.page_options,
-        &templates_output.deferred_fields_map,
-        &templates_output.deferred_html_fields_map,
-        &templates_output.isr_config_map,
-        &templates_output.ssg_config_map,
+        &AppCodegenMaps {
+            load_map: &templates_output.load_map,
+            layout_fields_map: &templates_output.layout_fields_map,
+            error_module_for_page: &error_module_for_page,
+            not_found_module: not_found_module.as_deref(),
+            loading_module_for_page: &loading_module_for_page,
+            action_map: &templates_output.action_map,
+            page_options_map: &templates_output.page_options,
+            deferred_fields_map: &templates_output.deferred_fields_map,
+            deferred_html_fields_map: &templates_output.deferred_html_fields_map,
+            isr_config_map: &templates_output.isr_config_map,
+            ssg_config_map: &templates_output.ssg_config_map,
+            live_fields_map: &templates_output.live_fields_map,
+            has_live_fn_map: &templates_output.has_live_fn_map,
+        },
         hook_flags,
         !react_urls.is_empty(),
         !solid_urls.is_empty(),
-        &templates_output.live_fields_map,
-        &templates_output.has_live_fn_map,
         src_root,
         out_dir,
     )?;
@@ -1696,8 +1698,8 @@ fn expand_known_components(
             continue;
         }
 
-        if ch == '<' {
-            if let Some(invocation) = parse_component_invocation(&template[i..]) {
+        if ch == '<'
+            && let Some(invocation) = parse_component_invocation(&template[i..]) {
                 let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
                 let (line, col) = line_col_at(template, i);
                 let mut msg = format!(
@@ -1780,7 +1782,6 @@ fn expand_known_components(
                 i += invocation.consumed;
                 continue;
             }
-        }
 
         out.push(ch);
         i += ch.len_utf8();

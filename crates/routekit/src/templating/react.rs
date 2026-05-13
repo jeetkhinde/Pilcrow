@@ -217,6 +217,7 @@ fn parse_react_tag(
 /// Build all React island assets. Returns:
 /// - `id_to_urls`: island-id → (JS entry URL, CSS URLs) for entry/CSS placeholder replacement
 /// - `shell_html`: island-id → static shell HTML for shell placeholder replacement (build time)
+#[allow(clippy::type_complexity)]
 pub fn build_react_assets(
     manifest_dir: &Path,
     out_dir: &Path,

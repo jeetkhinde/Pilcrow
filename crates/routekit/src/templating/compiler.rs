@@ -171,6 +171,7 @@ pub fn inject_async_value_text_spans(template: &str, async_fields: &[String]) ->
         true
     }
 
+    #[allow(clippy::if_same_then_else)]
     fn replace_expr(input: String, expr: &str, replacement: &str, field: &str) -> String {
         let mut out = String::with_capacity(input.len());
         let mut cursor = 0;
@@ -241,13 +242,12 @@ pub fn inject_form_method_attrs(template: &str) -> String {
             let after = i + 5;
             let next_char = template[after..].chars().next();
             // Must be followed by whitespace or '>' to be a real <form> tag
-            if matches!(next_char, Some(c) if c.is_whitespace() || c == '>') {
-                if let Some((transformed, consumed)) = try_inject_form_tag(&template[i..]) {
+            if matches!(next_char, Some(c) if c.is_whitespace() || c == '>')
+                && let Some((transformed, consumed)) = try_inject_form_tag(&template[i..]) {
                     output.push_str(&transformed);
                     i += consumed;
                     continue;
                 }
-            }
         }
 
         let c = template[i..].chars().next().unwrap();
@@ -458,13 +458,12 @@ pub fn transpile_component_tags(template: &str) -> String {
             continue;
         }
 
-        if ch == '<' {
-            if let Some((replacement, consumed)) = parse_component_tag(&template[i..]) {
+        if ch == '<'
+            && let Some((replacement, consumed)) = parse_component_tag(&template[i..]) {
                 output.push_str(&replacement);
                 i += consumed;
                 continue;
             }
-        }
 
         output.push(ch);
         i += ch.len_utf8();
@@ -917,25 +916,23 @@ pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
         if template[i..].starts_with("<pilcrow:image") {
             let rest = &template[i + 14..];
             let next = rest.chars().next();
-            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>') {
-                if let Some((html, consumed)) = parse_pilcrow_image_tag(&template[i..]) {
+            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>')
+                && let Some((html, consumed)) = parse_pilcrow_image_tag(&template[i..]) {
                     output.push_str(&html);
                     i += consumed;
                     continue;
                 }
-            }
         }
         // Strip <pilcrow:head> blocks that survived layout slot expansion
         // (pages with LAYOUT="none" or no _layout.html in the chain).
         if template[i..].starts_with("<pilcrow:head") {
             let rest = &template[i + 13..];
             let next = rest.chars().next();
-            if matches!(next, Some(c) if c.is_whitespace() || c == '>') {
-                if let Some(consumed) = strip_pilcrow_head_block(&template[i..]) {
+            if matches!(next, Some(c) if c.is_whitespace() || c == '>')
+                && let Some(consumed) = strip_pilcrow_head_block(&template[i..]) {
                     i += consumed;
                     continue;
                 }
-            }
         }
         let c = template[i..].chars().next().unwrap();
         output.push(c);
@@ -1155,8 +1152,8 @@ pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> Stri
         if template[i..].starts_with("<island") {
             let rest = &template[i + 7..];
             let next = rest.chars().next();
-            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>') {
-                if let Some((html, consumed)) =
+            if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>')
+                && let Some((html, consumed)) =
                     parse_island_tag(&template[i..], page_url_base, counter)
                 {
                     output.push_str(&html);
@@ -1164,7 +1161,6 @@ pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> Stri
                     counter += 1;
                     continue;
                 }
-            }
         }
         let c = template[i..].chars().next().unwrap();
         output.push(c);

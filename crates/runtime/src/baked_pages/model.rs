@@ -54,11 +54,17 @@ pub struct BakedSlot {
 
 impl BakedSlot {
     pub fn text(name: impl Into<String>) -> Self {
-        Self { name: name.into(), kind: BakedSlotKind::Text }
+        Self {
+            name: name.into(),
+            kind: BakedSlotKind::Text,
+        }
     }
 
     pub fn trusted_html(name: impl Into<String>) -> Self {
-        Self { name: name.into(), kind: BakedSlotKind::TrustedHtml }
+        Self {
+            name: name.into(),
+            kind: BakedSlotKind::TrustedHtml,
+        }
     }
 }
 
@@ -117,11 +123,47 @@ pub struct StaleState {
 
 impl StaleState {
     pub fn fresh() -> Self {
-        Self { stale: false, reason: None }
+        Self {
+            stale: false,
+            reason: None,
+        }
     }
 
     pub fn stale(reason: impl Into<String>) -> Self {
-        Self { stale: true, reason: Some(reason.into()) }
+        Self {
+            stale: true,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+// ── BakedPagePaths ────────────────────────────────────────────────────────────
+
+/// The five file-system paths that identify a baked page artifact.
+#[derive(Debug, Clone)]
+pub struct BakedPagePaths {
+    pub route_pattern: String,
+    pub concrete_path: String,
+    pub shell_path: String,
+    pub json_path: String,
+    pub metadata_path: String,
+}
+
+impl BakedPagePaths {
+    pub fn new(
+        route_pattern: impl Into<String>,
+        concrete_path: impl Into<String>,
+        shell_path: impl Into<String>,
+        json_path: impl Into<String>,
+        metadata_path: impl Into<String>,
+    ) -> Self {
+        Self {
+            route_pattern: route_pattern.into(),
+            concrete_path: concrete_path.into(),
+            shell_path: shell_path.into(),
+            json_path: json_path.into(),
+            metadata_path: metadata_path.into(),
+        }
     }
 }
 
@@ -157,11 +199,7 @@ pub struct BakedPage {
 
 impl BakedPage {
     pub fn new(
-        route_pattern: impl Into<String>,
-        concrete_path: impl Into<String>,
-        shell_path: impl Into<String>,
-        json_path: impl Into<String>,
-        metadata_path: impl Into<String>,
+        paths: BakedPagePaths,
         slots: Vec<BakedSlot>,
         dependency_configs: Vec<DependencyConfig>,
         auto_prebake_threshold: Option<u32>,
@@ -169,11 +207,11 @@ impl BakedPage {
     ) -> Self {
         let dependency_keys = dependency_configs.iter().map(|c| c.key.clone()).collect();
         Self {
-            route_pattern: route_pattern.into(),
-            concrete_path: concrete_path.into(),
-            shell_path: shell_path.into(),
-            json_path: json_path.into(),
-            metadata_path: metadata_path.into(),
+            route_pattern: paths.route_pattern,
+            concrete_path: paths.concrete_path,
+            shell_path: paths.shell_path,
+            json_path: paths.json_path,
+            metadata_path: paths.metadata_path,
             slots,
             dependency_configs,
             dependency_keys,
@@ -201,11 +239,13 @@ mod tests {
 
     fn make_page() -> BakedPage {
         BakedPage::new(
-            "/tickets/:id",
-            "/tickets/123",
-            "shells/tickets__id.html",
-            "data/tickets/123.json",
-            "metadata/tickets/123.json",
+            BakedPagePaths::new(
+                "/tickets/:id",
+                "/tickets/123",
+                "shells/tickets__id.html",
+                "data/tickets/123.json",
+                "metadata/tickets/123.json",
+            ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
             Some(10),
@@ -239,12 +279,17 @@ mod tests {
     #[test]
     fn multiple_dependency_configs() {
         let page = BakedPage::new(
-            "/tickets/:id",
-            "/tickets/123",
-            "shells/tickets__id.html",
-            "data/tickets/123.json",
-            "metadata/tickets/123.json",
-            vec![BakedSlot::text("status"), BakedSlot::trusted_html("description")],
+            BakedPagePaths::new(
+                "/tickets/:id",
+                "/tickets/123",
+                "shells/tickets__id.html",
+                "data/tickets/123.json",
+                "metadata/tickets/123.json",
+            ),
+            vec![
+                BakedSlot::text("status"),
+                BakedSlot::trusted_html("description"),
+            ],
             vec![
                 DependencyConfig::immediate("TicketStatus:123", "status"),
                 DependencyConfig::immediate("TicketBody:123", "description"),

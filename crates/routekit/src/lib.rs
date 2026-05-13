@@ -648,11 +648,10 @@ impl Router {
             self.routes.remove(pos);
         }
 
-        if let Some(layout) = self.layouts.remove(pattern) {
-            if let Some(name) = &layout.layout_name {
+        if let Some(layout) = self.layouts.remove(pattern)
+            && let Some(name) = &layout.layout_name {
                 self.named_layouts.remove(name);
             }
-        }
 
         self.error_pages.remove(pattern);
         self.loading_pages.remove(pattern);

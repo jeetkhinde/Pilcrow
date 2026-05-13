@@ -5,7 +5,7 @@
 //! cargo run -p pilcrow-web --features experimental-baked-pages --example baked_prebake
 
 use pilcrow_web::experimental::baked_pages::{
-    BakedPage, BakedPageStore, BakedRoute, BakedSlot, DependencyConfig,
+    BakedPage, BakedPagePaths, BakedPageStore, BakedRoute, BakedSlot, DependencyConfig,
 };
 use serde_json::json;
 use std::{fs, io};
@@ -26,11 +26,13 @@ fn main() -> io::Result<()> {
 
     // Mark the page as already baked so `serve()` hits the artifact.
     let mut page = BakedPage::new(
-        "/tickets/:id",
-        "/tickets/123",
-        store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-        store.json_path("/tickets/123").to_string_lossy().to_string(),
-        store.metadata_path("/tickets/123").to_string_lossy().to_string(),
+        BakedPagePaths::new(
+            "/tickets/:id",
+            "/tickets/123",
+            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+            store.json_path("/tickets/123").to_string_lossy().to_string(),
+            store.metadata_path("/tickets/123").to_string_lossy().to_string(),
+        ),
         vec![BakedSlot::text("status")],
         vec![DependencyConfig::immediate("ticket:123", "status")],
         None,

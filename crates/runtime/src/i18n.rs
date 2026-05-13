@@ -160,13 +160,9 @@ fn load_bundle(locale_dir: &Path, locale: &str) -> std::io::Result<ConcurrentBun
 
 /// Locale code stored in request extensions by the locale-rewrite middleware.
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct CurrentLocale(pub String);
 
-impl Default for CurrentLocale {
-    fn default() -> Self {
-        CurrentLocale(String::new())
-    }
-}
 
 // ── Locale-rewrite middleware ─────────────────────────────────
 

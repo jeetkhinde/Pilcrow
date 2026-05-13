@@ -93,10 +93,7 @@ pub mod experimental {
         /// Called at app startup (generated code) to wire dep-key → recompute functions.
         /// Each field's `BakedProducer` supplies the value; the registry stores it for
         /// `patch_dependency()` calls when a dep key fires.
-        pub fn register_baked_fields(
-            _registry: &mut BakedPatchRegistry,
-            _fields: Vec<BakedField>,
-        ) {
+        pub fn register_baked_fields(_registry: &mut BakedPatchRegistry, _fields: Vec<BakedField>) {
             // Codegen-driven: field producers are registered by the generated baked-route
             // infrastructure in app_module.rs. This function is the stable public signature.
         }
@@ -119,8 +116,8 @@ pub mod experimental {
 #[cfg(all(test, feature = "experimental-baked-pages"))]
 mod baked_page_tests {
     use super::experimental::baked_pages::{
-        BakedPage, BakedPageStore, BakedPatchRegistry, BakedRenderedOutput, BakedRoute, BakedSlot,
-        DependencyConfig,
+        BakedPage, BakedPagePaths, BakedPageStore, BakedPatchRegistry, BakedRenderedOutput,
+        BakedRoute, BakedSlot, DependencyConfig,
     };
     use axum::{
         body::Body,
@@ -145,11 +142,13 @@ mod baked_page_tests {
 
     fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>) -> BakedPage {
         BakedPage::new(
-            "/tickets/:id",
-            concrete_path,
-            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-            store.json_path(concrete_path).to_string_lossy().to_string(),
-            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            BakedPagePaths::new(
+                "/tickets/:id",
+                concrete_path,
+                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store.json_path(concrete_path).to_string_lossy().to_string(),
+                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
             threshold,
@@ -173,9 +172,7 @@ mod baked_page_tests {
         let page = make_page(&store, "/tickets/123", Some(5));
         store.write_page(&page).unwrap();
 
-        let response = route
-            .serve(page, || render_output("Open"))
-            .unwrap();
+        let response = route.serve(page, || render_output("Open")).unwrap();
 
         assert_eq!(response.headers()["x-pilcrow-baked"], "never-bake-rendered");
         assert_eq!(response.headers()["x-pilcrow-ssr-load"], "ran");
@@ -200,14 +197,11 @@ mod baked_page_tests {
                     let store = store.clone();
                     let render_count = render_count.clone();
                     async move {
-                        let page = store
-                            .read_page("/tickets/123")
-                            .unwrap()
-                            .unwrap_or_else(|| {
-                                let p = make_page(&store, "/tickets/123", Some(1));
-                                store.write_page(&p).unwrap();
-                                p
-                            });
+                        let page = store.read_page("/tickets/123").unwrap().unwrap_or_else(|| {
+                            let p = make_page(&store, "/tickets/123", Some(1));
+                            store.write_page(&p).unwrap();
+                            p
+                        });
                         route
                             .serve(page, || {
                                 render_count.fetch_add(1, Ordering::SeqCst);
@@ -225,7 +219,12 @@ mod baked_page_tests {
 
         let first = app
             .clone()
-            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(first.status(), StatusCode::OK);
@@ -234,7 +233,12 @@ mod baked_page_tests {
         assert_eq!(render_count.load(Ordering::SeqCst), 1);
 
         let second = app
-            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
@@ -314,7 +318,12 @@ mod baked_page_tests {
 
         let first = app
             .clone()
-            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(first.headers()["x-pilcrow-baked"], "miss-rendered");
@@ -323,7 +332,12 @@ mod baked_page_tests {
 
         let second = app
             .clone()
-            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(second.headers()["x-pilcrow-baked"], "hit");
@@ -344,7 +358,12 @@ mod baked_page_tests {
         assert_eq!(close.status(), StatusCode::OK);
 
         let after_patch = app
-            .oneshot(Request::builder().uri("/tickets/123").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/tickets/123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(after_patch.headers()["x-pilcrow-baked"], "hit");
@@ -386,8 +405,8 @@ pub mod adapters {
 
 // ── Async streaming ──────────────────────────────────────────
 pub use runtime::{
-    async_response_combined, async_value_response, AsyncHtml, AsyncHtmlPatch, AsyncValue,
-    AsyncValuePatch, LiveProp, LiveTarget, __live_props_response,
+    __live_props_response, async_response_combined, async_value_response, AsyncHtml,
+    AsyncHtmlPatch, AsyncValue, AsyncValuePatch, LiveProp, LiveTarget,
 };
 
 // ── ISR (Incremental Static Regeneration) ────────────────────

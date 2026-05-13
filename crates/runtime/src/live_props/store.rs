@@ -10,7 +10,9 @@ pub struct LivePageStore {
 
 impl LivePageStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool: Arc::new(pool) }
+        Self {
+            pool: Arc::new(pool),
+        }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -27,8 +29,11 @@ impl LivePageStore {
         fields: &[LiveFieldData],
     ) -> sqlx::Result<()> {
         for field in fields {
-            let dep_keys: Vec<String> =
-                field.depends_on.iter().map(|k| k.as_str().to_string()).collect();
+            let dep_keys: Vec<String> = field
+                .depends_on
+                .iter()
+                .map(|k| k.as_str().to_string())
+                .collect();
             let dep_array = serde_json::to_value(&dep_keys).unwrap_or_default();
             sqlx::query(
                 r#"
@@ -78,10 +83,7 @@ impl LivePageStore {
 
     /// Mark all `pilcrow_cache` rows whose `depends_on` contains `dep_key` as stale.
     /// Returns the distinct routes that were affected.
-    pub async fn invalidate_dep_key(
-        &self,
-        dep_key: &DependencyKey,
-    ) -> sqlx::Result<Vec<String>> {
+    pub async fn invalidate_dep_key(&self, dep_key: &DependencyKey) -> sqlx::Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
             UPDATE pilcrow_cache
@@ -150,7 +152,9 @@ mod tests {
     async fn test_pool() -> PgPool {
         let url = std::env::var("DATABASE_URL")
             .expect("DATABASE_URL must be set for live-props integration tests");
-        PgPool::connect(&url).await.expect("failed to connect to DATABASE_URL")
+        PgPool::connect(&url)
+            .await
+            .expect("failed to connect to DATABASE_URL")
     }
 
     fn make_status_field(dep_key: &str) -> LiveFieldData {
@@ -174,10 +178,14 @@ mod tests {
             .await
             .unwrap();
 
-        let slots =
-            store.read_live_slots("/tickets/:id", &json!({"id": "write-test"})).await.unwrap();
+        let slots = store
+            .read_live_slots("/tickets/:id", &json!({"id": "write-test"}))
+            .await
+            .unwrap();
         assert!(
-            slots.iter().any(|(name, val)| name == "status" && val == &json!("Open")),
+            slots
+                .iter()
+                .any(|(name, val)| name == "status" && val == &json!("Open")),
             "expected status slot to be 'Open', got: {slots:?}"
         );
     }
@@ -205,8 +213,10 @@ mod tests {
             "expected /tickets/:id in affected routes, got: {affected:?}"
         );
 
-        let slots =
-            store.read_live_slots("/tickets/:id", &json!({"id": "invalidate-test"})).await.unwrap();
+        let slots = store
+            .read_live_slots("/tickets/:id", &json!({"id": "invalidate-test"}))
+            .await
+            .unwrap();
         assert!(
             slots.is_empty(),
             "stale slot should not be returned by read_live_slots, got: {slots:?}"
@@ -231,7 +241,10 @@ mod tests {
 
         store.increment_hit(route, Some(3)).await.unwrap();
         let promoted = store.increment_hit(route, Some(3)).await.unwrap();
-        assert!(promoted, "should promote when hit_count reaches threshold of 3");
+        assert!(
+            promoted,
+            "should promote when hit_count reaches threshold of 3"
+        );
 
         // Further hits should not report promotion again.
         let promoted_again = store.increment_hit(route, Some(3)).await.unwrap();

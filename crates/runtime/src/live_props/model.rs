@@ -17,7 +17,12 @@ pub struct LiveProps<T> {
 
 impl<T: Serialize + Clone> LiveProps<T> {
     pub fn new(value: T, depends_on: Vec<DependencyKey>) -> Self {
-        Self { value, depends_on, promote_after: None, patch_debounce: None }
+        Self {
+            value,
+            depends_on,
+            promote_after: None,
+            patch_debounce: None,
+        }
     }
 
     pub fn promote_after(mut self, hits: u32) -> Self {
@@ -81,7 +86,9 @@ mod tests {
 
     #[test]
     fn live_props_builder_sets_options() {
-        let lp = LiveProps::new("Open".to_string(), vec![]).promote_after(50).patch_debounce(30);
+        let lp = LiveProps::new("Open".to_string(), vec![])
+            .promote_after(50)
+            .patch_debounce(30);
         assert_eq!(lp.promote_after, Some(50));
         assert_eq!(lp.patch_debounce, Some(30));
     }

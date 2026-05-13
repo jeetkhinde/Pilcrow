@@ -68,11 +68,7 @@ impl BakedPageStore {
     /// 2. If the JSON artifact is fresh, reads shell + JSON → injects slots → returns `Hit`.
     /// 3. Otherwise calls `render`, writes shell (idempotent) and conditionally writes JSON
     ///    (when `hit_count >= auto_prebake_threshold` or the page is `BuildTime`).
-    pub fn get_or_render<F>(
-        &self,
-        mut page: BakedPage,
-        render: F,
-    ) -> io::Result<BakedServeOutcome>
+    pub fn get_or_render<F>(&self, mut page: BakedPage, render: F) -> io::Result<BakedServeOutcome>
     where
         F: FnOnce() -> io::Result<BakedRenderedOutput>,
     {
@@ -160,7 +156,7 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baked_pages::model::{BakedPage, BakedSlot, DependencyConfig};
+    use crate::baked_pages::model::{BakedPage, BakedPagePaths, BakedSlot, DependencyConfig};
     use serde_json::json;
 
     fn shell_html() -> &'static str {
@@ -169,11 +165,13 @@ mod tests {
 
     fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>) -> BakedPage {
         BakedPage::new(
-            "/tickets/:id",
-            concrete_path,
-            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-            store.json_path(concrete_path).to_string_lossy().to_string(),
-            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            BakedPagePaths::new(
+                "/tickets/:id",
+                concrete_path,
+                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store.json_path(concrete_path).to_string_lossy().to_string(),
+                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
             threshold,
@@ -196,9 +194,7 @@ mod tests {
         let page = make_page(&store, "/tickets/123", Some(5));
         store.write_page(&page).unwrap();
 
-        let outcome = store
-            .get_or_render(page, || render_output("Open"))
-            .unwrap();
+        let outcome = store.get_or_render(page, || render_output("Open")).unwrap();
 
         assert_eq!(outcome.state, BakedServeState::RenderedUnbaked);
         assert!(outcome.page.is_none());
@@ -213,9 +209,7 @@ mod tests {
         page.hit_count = 0; // threshold is 1, first hit increments to 1 → bake
         store.write_page(&page).unwrap();
 
-        let outcome = store
-            .get_or_render(page, || render_output("Open"))
-            .unwrap();
+        let outcome = store.get_or_render(page, || render_output("Open")).unwrap();
 
         assert_eq!(outcome.state, BakedServeState::MissRendered);
         assert!(outcome.page.as_ref().unwrap().is_baked);
@@ -272,9 +266,7 @@ mod tests {
         let page = make_page(&store, "/tickets/123", None);
         store.write_page(&page).unwrap();
 
-        let outcome = store
-            .get_or_render(page, || render_output("Open"))
-            .unwrap();
+        let outcome = store.get_or_render(page, || render_output("Open")).unwrap();
 
         assert_eq!(outcome.state, BakedServeState::RenderedUnbaked);
         assert!(store.read_json("/tickets/123").unwrap().is_none());

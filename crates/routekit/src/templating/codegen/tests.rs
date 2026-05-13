@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -25,9 +26,11 @@ mod tests {
         assert!(patterns.contains(&"/about"));
         assert!(patterns.contains(&"/posts/:id"));
         assert!(entries.iter().any(|e| e.symbol == "page_posts_id"));
-        assert!(entries
-            .iter()
-            .any(|e| e.render_symbol == "render_page_posts_id"));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.render_symbol == "render_page_posts_id")
+        );
 
         cleanup(&root);
     }
@@ -140,9 +143,11 @@ mod tests {
 
         assert!(generated.source.contains("pub struct Params"));
         assert!(generated.source.contains("pub id: i64"));
-        assert!(generated
-            .source
-            .contains("pub type Page = ::pilcrow_web::Page<Params>"));
+        assert!(
+            generated
+                .source
+                .contains("pub type Page = ::pilcrow_web::Page<Params>")
+        );
         assert!(generated.source.contains("parse::<i64>"));
     }
 
@@ -161,9 +166,10 @@ mod tests {
         .expect_err("duplicate props should fail");
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err
-            .to_string()
-            .contains("declares multiple `Props` structs"));
+        assert!(
+            err.to_string()
+                .contains("declares multiple `Props` structs")
+        );
     }
 
     fn mk_temp_root(prefix: &str) -> PathBuf {
@@ -284,8 +290,12 @@ mod tests {
         assert!(source.contains("match __action.as_str()"));
 
         // Per-action dispatch arms calling the code-behind fns
-        assert!(source.contains("\"create\" => match __pilcrow_gen::page_items::create(req).await"));
-        assert!(source.contains("\"delete\" => match __pilcrow_gen::page_items::delete(req).await"));
+        assert!(
+            source.contains("\"create\" => match __pilcrow_gen::page_items::create(req).await")
+        );
+        assert!(
+            source.contains("\"delete\" => match __pilcrow_gen::page_items::delete(req).await")
+        );
 
         // Unknown action → 404 via AppError::NotFound
         assert!(source.contains("_ => {"));
@@ -415,7 +425,7 @@ pub async fn load(_req: pilcrow_web::Req) -> pilcrow_web::AppResult<Props> {
         assert!(!ssg.has_entries_fn);
 
         // Must NOT be in the ISR map.
-        assert!(generated.isr_config_map.get("page_about").is_none());
+        assert!(!generated.isr_config_map.contains_key("page_about"));
     }
 
     #[test]
@@ -544,22 +554,24 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         let source = render_generated_app_module(
             &[page_route],
             &[],
-            &load_map,
-            &HashMap::new(),
-            &HashMap::new(),
-            None,
-            &HashMap::new(),
-            &HashMap::new(),
-            &page_opts,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
+            &AppCodegenMaps {
+                load_map: &load_map,
+                layout_fields_map: &HashMap::new(),
+                error_module_for_page: &HashMap::new(),
+                not_found_module: None,
+                loading_module_for_page: &HashMap::new(),
+                action_map: &HashMap::new(),
+                page_options_map: &page_opts,
+                deferred_fields_map: &HashMap::new(),
+                deferred_html_fields_map: &HashMap::new(),
+                isr_config_map: &HashMap::new(),
+                ssg_config_map: &HashMap::new(),
+                live_fields_map: &HashMap::new(),
+                has_live_fn_map: &HashMap::new(),
+            },
             HookFlags::default(),
             false,
             false,
-            &HashMap::new(),
-            &HashMap::new(),
         )
         .expect("streaming app module should render");
 
@@ -627,22 +639,24 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         let err = render_generated_app_module(
             &[page_route],
             &[],
-            &load_map,
-            &HashMap::new(),
-            &HashMap::new(),
-            None,
-            &HashMap::new(),
-            &HashMap::new(),
-            &page_opts,
-            &HashMap::new(),
-            &HashMap::new(),
-            &isr_opts,
-            &HashMap::new(),
+            &AppCodegenMaps {
+                load_map: &load_map,
+                layout_fields_map: &HashMap::new(),
+                error_module_for_page: &HashMap::new(),
+                not_found_module: None,
+                loading_module_for_page: &HashMap::new(),
+                action_map: &HashMap::new(),
+                page_options_map: &page_opts,
+                deferred_fields_map: &HashMap::new(),
+                deferred_html_fields_map: &HashMap::new(),
+                isr_config_map: &isr_opts,
+                ssg_config_map: &HashMap::new(),
+                live_fields_map: &HashMap::new(),
+                has_live_fn_map: &HashMap::new(),
+            },
             HookFlags::default(),
             false,
             false,
-            &HashMap::new(),
-            &HashMap::new(),
         )
         .expect_err("invalid streaming + ISR config should be reported");
 

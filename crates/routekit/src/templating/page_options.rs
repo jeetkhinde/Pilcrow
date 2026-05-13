@@ -76,7 +76,7 @@ pub enum TrailingSlash {
 }
 
 impl TrailingSlash {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_label(s: &str) -> Self {
         match s.trim_matches('"').trim_matches('\'') {
             "always" => Self::Always,
             "ignore" => Self::Ignore,

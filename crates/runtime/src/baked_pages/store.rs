@@ -122,14 +122,12 @@ impl BakedPageStore {
         key: &str,
         value: serde_json::Value,
     ) -> io::Result<()> {
-        let mut json = self
-            .read_json(concrete_path)?
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("no JSON artifact for `{concrete_path}`"),
-                )
-            })?;
+        let mut json = self.read_json(concrete_path)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no JSON artifact for `{concrete_path}`"),
+            )
+        })?;
         set_json_key(&mut json, key, value);
         self.write_json(concrete_path, &json)
     }
@@ -194,7 +192,12 @@ impl BakedPageStore {
                 Err(_) => continue,
             };
             for config in &page.dependency_configs {
-                add_index_entry(&mut index, &config.key, &page.concrete_path, &config.field_name);
+                add_index_entry(
+                    &mut index,
+                    &config.key,
+                    &page.concrete_path,
+                    &config.field_name,
+                );
             }
         }
         Ok(index)
@@ -226,7 +229,12 @@ impl BakedPageStore {
         }
         index.retain(|_, pages| !pages.is_empty());
         for config in &page.dependency_configs {
-            add_index_entry(&mut index, &config.key, &page.concrete_path, &config.field_name);
+            add_index_entry(
+                &mut index,
+                &config.key,
+                &page.concrete_path,
+                &config.field_name,
+            );
         }
         self.write_reverse_index(&index)
     }
@@ -361,7 +369,10 @@ fn temp_path_for(path: &Path) -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let pid = std::process::id();
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("artifact");
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("artifact");
     path.with_file_name(format!(".{filename}.{pid}.{nonce}.tmp"))
 }
 
@@ -375,16 +386,18 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::baked_pages::model::{BakedSlot, DependencyConfig};
+    use crate::baked_pages::model::{BakedPagePaths, BakedSlot, DependencyConfig};
     use serde_json::json;
 
     fn make_page(store: &BakedPageStore, concrete_path: &str) -> BakedPage {
         BakedPage::new(
-            "/tickets/:id",
-            concrete_path,
-            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-            store.json_path(concrete_path).to_string_lossy().to_string(),
-            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            BakedPagePaths::new(
+                "/tickets/:id",
+                concrete_path,
+                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store.json_path(concrete_path).to_string_lossy().to_string(),
+                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
             Some(10),
@@ -408,7 +421,9 @@ mod tests {
     fn patch_json_key_updates_single_field() {
         let temp = tempfile::tempdir().unwrap();
         let store = BakedPageStore::new(temp.path());
-        store.write_json("/tickets/123", &json!({ "status": "Open" })).unwrap();
+        store
+            .write_json("/tickets/123", &json!({ "status": "Open" }))
+            .unwrap();
 
         store
             .patch_json_key("/tickets/123", "status", json!("Closed"))
@@ -424,7 +439,10 @@ mod tests {
         let store = BakedPageStore::new(temp.path());
 
         store
-            .write_shell("/tickets/:id", "<span data-pilcrow-slot=\"status\">Loading</span>")
+            .write_shell(
+                "/tickets/:id",
+                "<span data-pilcrow-slot=\"status\">Loading</span>",
+            )
             .unwrap();
 
         let shell = store.read_shell("/tickets/:id").unwrap().unwrap();
@@ -467,7 +485,10 @@ mod tests {
 
         assert_eq!(count1, 1);
         assert_eq!(count2, 2);
-        assert_eq!(store.read_page("/tickets/123").unwrap().unwrap().hit_count, 2);
+        assert_eq!(
+            store.read_page("/tickets/123").unwrap().unwrap().hit_count,
+            2
+        );
     }
 
     #[test]
@@ -520,7 +541,10 @@ mod tests {
 
         assert_eq!(
             store.metadata_path("/tickets/123"),
-            temp.path().join("metadata").join("tickets").join("123.json")
+            temp.path()
+                .join("metadata")
+                .join("tickets")
+                .join("123.json")
         );
     }
 }

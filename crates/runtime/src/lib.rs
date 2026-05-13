@@ -5,8 +5,6 @@ pub mod adapters;
 pub mod assets;
 #[cfg(feature = "experimental-baked-pages")]
 pub mod baked_pages;
-#[cfg(feature = "live-props")]
-pub mod live_props;
 pub mod context;
 pub mod csrf;
 pub mod deferred;
@@ -16,6 +14,8 @@ pub mod i18n;
 pub mod image;
 pub mod island_ssr;
 pub mod isr;
+#[cfg(feature = "live-props")]
+pub mod live_props;
 pub mod middleware;
 pub mod response;
 pub mod sse;
@@ -55,10 +55,10 @@ pub use axum;
 pub use response::response::html;
 
 pub use deferred::{
-    __async_html_patch_stream, __async_value_patch_stream, __serialize_async_value,
-    __serialize_page_props, __streaming_props_response, async_response_combined,
-    async_value_response, AsyncHtml, AsyncHtmlPatch, AsyncValue, AsyncValuePatch, LiveProp,
-    LiveTarget, __live_props_response,
+    __async_html_patch_stream, __async_value_patch_stream, __live_props_response,
+    __serialize_async_value, __serialize_page_props, __streaming_props_response,
+    async_response_combined, async_value_response, AsyncHtml, AsyncHtmlPatch, AsyncValue,
+    AsyncValuePatch, LiveProp, LiveTarget,
 };
 // ── ISR ──────────────────────────────────────────────────────
 pub use isr::{__isr_cache_key, CacheEntrySnapshot, IsrCache, IsrCacheState, IsrHandle};

@@ -12,8 +12,8 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use pilcrow_web::experimental::baked_pages::{
-    BakedPage, BakedPageStore, BakedPatchRegistry, BakedRenderedOutput, BakedRoute, BakedSlot,
-    DependencyConfig,
+    BakedPage, BakedPagePaths, BakedPageStore, BakedPatchRegistry, BakedRenderedOutput, BakedRoute,
+    BakedSlot, DependencyConfig,
 };
 use serde_json::json;
 use std::{
@@ -114,8 +114,15 @@ async fn main() -> io::Result<()> {
 
     // Second request: served from baked JSON + shell (no render call).
     let second = get_text(app.clone(), TICKET_PATH).await?;
-    assert!(second.contains("Open"), "second response should contain Open");
-    assert_eq!(render_count.load(Ordering::SeqCst), 1, "render should not be called again");
+    assert!(
+        second.contains("Open"),
+        "second response should contain Open"
+    );
+    assert_eq!(
+        render_count.load(Ordering::SeqCst),
+        1,
+        "render should not be called again"
+    );
 
     // Fire the dep key — patches the JSON artifact in place.
     let close = app
@@ -133,8 +140,15 @@ async fn main() -> io::Result<()> {
 
     // After patch: hit response but now contains "Closed" — no render involved.
     let patched = get_text(app.clone(), TICKET_PATH).await?;
-    assert!(patched.contains("Closed"), "patched response should contain Closed");
-    assert_eq!(render_count.load(Ordering::SeqCst), 1, "render still not called after patch");
+    assert!(
+        patched.contains("Closed"),
+        "patched response should contain Closed"
+    );
+    assert_eq!(
+        render_count.load(Ordering::SeqCst),
+        1,
+        "render still not called after patch"
+    );
 
     println!("lazy baked ticket example served, hit, and patched at {root:?}");
     let _ = fs::remove_dir_all(&root);
@@ -143,11 +157,13 @@ async fn main() -> io::Result<()> {
 
 fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>) -> BakedPage {
     BakedPage::new(
-        TICKET_PATTERN,
-        concrete_path,
-        store.shell_path(TICKET_PATTERN).to_string_lossy().to_string(),
-        store.json_path(concrete_path).to_string_lossy().to_string(),
-        store.metadata_path(concrete_path).to_string_lossy().to_string(),
+        BakedPagePaths::new(
+            TICKET_PATTERN,
+            concrete_path,
+            store.shell_path(TICKET_PATTERN).to_string_lossy().to_string(),
+            store.json_path(concrete_path).to_string_lossy().to_string(),
+            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+        ),
         vec![BakedSlot::text("status")],
         vec![DependencyConfig::immediate(DEP_KEY, "status")],
         threshold,

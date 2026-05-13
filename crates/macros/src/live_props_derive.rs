@@ -72,23 +72,20 @@ fn extract_live_fields(fields: &Fields) -> TokenStream2 {
 }
 
 fn is_live_props_type(ty: &Type) -> bool {
-    if let Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
+    if let Type::Path(tp) = ty
+        && let Some(seg) = tp.path.segments.last() {
             return seg.ident == "LiveProps";
         }
-    }
     false
 }
 
 fn find_u32_attr(attrs: &[syn::Attribute], name: &str) -> TokenStream2 {
     for attr in attrs {
-        if attr.path().is_ident(name) {
-            if let Ok(lit) = attr.parse_args::<syn::LitInt>() {
-                if let Ok(val) = lit.base10_parse::<u32>() {
+        if attr.path().is_ident(name)
+            && let Ok(lit) = attr.parse_args::<syn::LitInt>()
+                && let Ok(val) = lit.base10_parse::<u32>() {
                     return quote! { ::std::option::Option::Some(#val as u32) };
                 }
-            }
-        }
     }
     quote! { ::std::option::Option::None::<u32> }
 }

@@ -23,12 +23,12 @@ pub fn instrument_frontmatter(
     let mut page_options = PageOptions::default();
     let mut const_remove_indices: Vec<usize> = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
-        if let syn::Item::Const(c) = item {
-            if matches!(c.vis, syn::Visibility::Public(_)) {
+        if let syn::Item::Const(c) = item
+            && matches!(c.vis, syn::Visibility::Public(_)) {
                 let value_str = c.expr.to_token_stream().to_string();
                 let value = value_str.trim_matches('"').trim_matches('\'');
                 if c.ident == "TRAILING_SLASH" {
-                    page_options.trailing_slash = TrailingSlash::from_str(value);
+                    page_options.trailing_slash = TrailingSlash::from_label(value);
                     const_remove_indices.push(index);
                 } else if c.ident == "LAYOUT" {
                     page_options.layout = if value.trim_matches('"').trim_matches('\'') == "none" {
@@ -61,7 +61,6 @@ pub fn instrument_frontmatter(
                     const_remove_indices.push(index);
                 }
             }
-        }
     }
     // Remove in reverse order to preserve indices.
     for idx in const_remove_indices.into_iter().rev() {
@@ -70,8 +69,8 @@ pub fn instrument_frontmatter(
 
     let mut props_indices = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
-        if let syn::Item::Struct(item_struct) = item {
-            if item_struct.ident == "Props" {
+        if let syn::Item::Struct(item_struct) = item
+            && item_struct.ident == "Props" {
                 if !matches!(item_struct.vis, syn::Visibility::Public(_)) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -80,7 +79,6 @@ pub fn instrument_frontmatter(
                 }
                 props_indices.push(index);
             }
-        }
     }
 
     if props_indices.len() > 1 {
@@ -236,8 +234,8 @@ pub fn instrument_frontmatter(
 
     // Pages and layouts must use a canonical load() signature so that
     // response modifiers (toasts, headers, cookies) are always applied.
-    if let Some(ref sig) = load_signature {
-        if source_path.contains("/pages/") || is_fragment {
+    if let Some(ref sig) = load_signature
+        && (source_path.contains("/pages/") || is_fragment) {
             if !sig.is_async {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -266,14 +264,12 @@ pub fn instrument_frontmatter(
                 ));
             }
         }
-    }
 
     let has_manual_default = file.items.iter().any(|item| {
-        if let syn::Item::Impl(impl_block) = item {
-            if let Some((_, path, _)) = &impl_block.trait_ {
+        if let syn::Item::Impl(impl_block) = item
+            && let Some((_, path, _)) = &impl_block.trait_ {
                 return path.segments.last().is_some_and(|s| s.ident == "Default");
             }
-        }
         false
     });
 
@@ -319,14 +315,13 @@ pub fn instrument_frontmatter(
     let deferred_fields: Vec<String> = own_syn_fields
         .iter()
         .filter_map(|f| {
-            if let Some(ident) = &f.ident {
-                if type_last_ident(&f.ty)
+            if let Some(ident) = &f.ident
+                && type_last_ident(&f.ty)
                     .map(|id| id == "AsyncValue")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
                 }
-            }
             None
         })
         .collect();
@@ -334,14 +329,13 @@ pub fn instrument_frontmatter(
     let deferred_html_fields: Vec<String> = own_syn_fields
         .iter()
         .filter_map(|f| {
-            if let Some(ident) = &f.ident {
-                if type_last_ident(&f.ty)
+            if let Some(ident) = &f.ident
+                && type_last_ident(&f.ty)
                     .map(|id| id == "AsyncHtml")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
                 }
-            }
             None
         })
         .collect();
@@ -350,14 +344,13 @@ pub fn instrument_frontmatter(
     let live_fields: Vec<String> = own_syn_fields
         .iter()
         .filter_map(|f| {
-            if let Some(ident) = &f.ident {
-                if type_last_ident(&f.ty)
+            if let Some(ident) = &f.ident
+                && type_last_ident(&f.ty)
                     .map(|id| id == "LiveProp")
                     .unwrap_or(false)
                 {
                     return Some(ident.to_string());
                 }
-            }
             None
         })
         .collect();
@@ -633,11 +626,10 @@ pub fn normalize_derive_path(input: &str) -> String {
 
 /// Parse a `u64` literal from a `pub const X: u64 = N;` expression.
 fn parse_u64_const(expr: &syn::Expr) -> Result<u64, ()> {
-    if let syn::Expr::Lit(lit_expr) = expr {
-        if let syn::Lit::Int(lit_int) = &lit_expr.lit {
+    if let syn::Expr::Lit(lit_expr) = expr
+        && let syn::Lit::Int(lit_int) = &lit_expr.lit {
             return lit_int.base10_parse::<u64>().map_err(|_| ());
         }
-    }
     Err(())
 }
 

@@ -129,13 +129,11 @@ impl IsrCache {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if let Ok(raw) = std::fs::read_to_string(&path) {
-                        if let Ok(ce) = serde_json::from_str::<CacheEntry>(&raw) {
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && let Ok(raw) = std::fs::read_to_string(&path)
+                        && let Ok(ce) = serde_json::from_str::<CacheEntry>(&raw) {
                             map.insert(ce.key.clone(), ce);
                         }
-                    }
-                }
             }
         }
 
@@ -154,7 +152,7 @@ impl IsrCache {
                     IsrCacheState::Fresh(entry.html.clone())
                 } else {
                     let stale_secs = entry.age_secs().saturating_sub(entry.ttl_secs);
-                    if max_stale.map_or(true, |ms| stale_secs <= ms) {
+                    if max_stale.is_none_or(|ms| stale_secs <= ms) {
                         IsrCacheState::Stale(entry.html.clone())
                     } else {
                         IsrCacheState::Miss
@@ -193,8 +191,8 @@ impl IsrCache {
     /// Write a rendered HTML string to the cache with the given TTL and tags.
     pub async fn store(&self, key: &str, html: String, ttl_secs: u64, tags: Vec<String>) {
         let entry = CacheEntry::new(key.to_string(), html, ttl_secs, tags);
-        if let Some(dir) = &self.persist_dir {
-            if let Err(err) = persist_entry(dir, key, &entry).await {
+        if let Some(dir) = &self.persist_dir
+            && let Err(err) = persist_entry(dir, key, &entry).await {
                 tracing::error!(
                     key,
                     path = %dir.display(),
@@ -202,7 +200,6 @@ impl IsrCache {
                     "failed to persist ISR cache entry"
                 );
             }
-        }
         self.map.insert(key.to_string(), entry);
     }
 
@@ -264,8 +261,8 @@ impl IsrCache {
             self.map.remove(&key);
             if let Some(dir) = &self.persist_dir {
                 let path = cache_file_path(dir, &key);
-                if let Err(err) = std::fs::remove_file(&path) {
-                    if err.kind() != std::io::ErrorKind::NotFound {
+                if let Err(err) = std::fs::remove_file(&path)
+                    && err.kind() != std::io::ErrorKind::NotFound {
                         tracing::error!(
                             key,
                             path = %path.display(),
@@ -273,7 +270,6 @@ impl IsrCache {
                             "failed to remove ISR cache entry"
                         );
                     }
-                }
             }
         }
     }
@@ -291,9 +287,8 @@ async fn persist_entry(dir: &Path, key: &str, entry: &CacheEntry) -> std::io::Re
     ));
     let json = serde_json::to_vec(entry).map_err(std::io::Error::other)?;
     tokio::fs::write(&tmp_path, json).await?;
-    tokio::fs::rename(&tmp_path, &path).await.or_else(|err| {
+    tokio::fs::rename(&tmp_path, &path).await.inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp_path);
-        Err(err)
     })?;
     Ok(())
 }

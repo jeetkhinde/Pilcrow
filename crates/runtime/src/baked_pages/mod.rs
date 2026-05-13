@@ -10,12 +10,12 @@ mod patch;
 mod serving;
 mod store;
 
-pub use model::{
-    BakeEligibility, BakedPage, BakedSlot, BakedSlotKind, DependencyConfig, DependencyKey,
-    StaleState,
-};
 pub use crate::deferred::{BakedField, BakedProp, PatchDelay};
+pub use inject::inject_slots;
+pub use model::{
+    BakeEligibility, BakedPage, BakedPagePaths, BakedSlot, BakedSlotKind, DependencyConfig,
+    DependencyKey, StaleState,
+};
 pub use patch::{BakedPatchOutcome, BakedPatchRegistry};
 pub use serving::{BakedRenderedOutput, BakedServeOutcome, BakedServeState};
 pub use store::{BakedPageStore, ReverseIndex};
-pub use inject::inject_slots;

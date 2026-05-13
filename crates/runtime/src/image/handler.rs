@@ -44,7 +44,7 @@ pub async fn image_handler(
         }
     }
 
-    let quality = q.quality.unwrap_or(cfg.quality).min(100).max(1);
+    let quality = q.quality.unwrap_or(cfg.quality).clamp(1, 100);
     let fmt_str = q.format.as_deref().unwrap_or("auto");
     let format = OutputFormat::from_str(fmt_str).resolve(&cfg.formats);
 

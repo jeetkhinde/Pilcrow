@@ -96,6 +96,7 @@ impl Validator {
 
     /// Consume the validator. Returns `Ok(())` when no rules failed, or
     /// `Err(FormErrors)` containing all accumulated errors.
+    #[allow(clippy::result_large_err)]
     pub fn into_result(self) -> Result<(), FormErrors> {
         if self.inner.has_errors {
             Err(self.inner)
