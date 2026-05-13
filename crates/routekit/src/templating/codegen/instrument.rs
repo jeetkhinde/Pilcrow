@@ -59,6 +59,9 @@ pub fn instrument_frontmatter(
                 } else if c.ident == "STREAMING" {
                     page_options.streaming = value_str.trim() == "true";
                     const_remove_indices.push(index);
+                } else if c.ident == "FSR_JSON" {
+                    page_options.fsr.json = value_str.trim() == "true";
+                    const_remove_indices.push(index);
                 }
             }
     }
@@ -448,6 +451,8 @@ pub fn instrument_frontmatter(
         deferred_html_fields,
         live_fields,
         has_live_fn,
+        fsr_live_source: None, // Set by templates.rs after calling process_live_rs
+        fsr_live_fields: vec![], // Set by templates.rs
     })
 }
 

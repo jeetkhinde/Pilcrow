@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 lambda = ["runtime/lambda"]
 experimental-baked-pages = ["runtime/experimental-baked-pages"]
+live-props = ["runtime/live-props"]
 
 [[example]]
 name = "baked_prebake"

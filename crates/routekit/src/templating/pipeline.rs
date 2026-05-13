@@ -441,6 +441,8 @@ pub fn compile_to_out_dir_with_config(
             ssg_config_map: &templates_output.ssg_config_map,
             live_fields_map: &templates_output.live_fields_map,
             has_live_fn_map: &templates_output.has_live_fn_map,
+            fsr_live_source_map: &templates_output.fsr_live_source_map,
+            fsr_live_fields_map: &templates_output.fsr_live_fields_map,
         },
         hook_flags,
         !react_urls.is_empty(),

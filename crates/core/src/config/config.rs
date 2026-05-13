@@ -22,6 +22,8 @@ pub struct PilcrowConfig {
     pub client: ClientRuntimeConfig,
     #[serde(default)]
     pub live: LiveConfig,
+    #[serde(default)]
+    pub fsr: FsrConfig,
 }
 
 /// Configuration for the `[live]` section in `Pilcrow.toml`.
@@ -43,6 +45,34 @@ impl Default for LiveConfig {
         Self {
             promote_after_hits: 100,
             patch_debounce_seconds: 30,
+            purge_after_seconds: 2_592_000,
+        }
+    }
+}
+
+/// Configuration for the `[fsr]` section in `Pilcrow.toml`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FsrConfig {
+    /// `"embedded"` (Tokio task inside Pilcrow) or `"external"` (caller-driven).
+    pub watcher: String,
+    /// How often the embedded watcher polls for stale rows (milliseconds).
+    pub poll_interval_ms: u64,
+    /// Framework default promote_after_hits.
+    pub promote_after_hits: u32,
+    /// Framework default patch_debounce_secs.
+    pub patch_debounce_secs: u32,
+    /// Seconds before stale baked artefacts are purged.
+    pub purge_after_seconds: u64,
+}
+
+impl Default for FsrConfig {
+    fn default() -> Self {
+        Self {
+            watcher: "embedded".to_string(),
+            poll_interval_ms: 500,
+            promote_after_hits: 100,
+            patch_debounce_secs: 30,
             purge_after_seconds: 2_592_000,
         }
     }

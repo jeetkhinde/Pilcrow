@@ -439,6 +439,36 @@ fn document_specs() -> Vec<DocumentSpec> {
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
+            id: "fsr-live-surface",
+            title: "FSR developer surface: `use pilcrow::live::*;`",
+            path: "crates/web/src/live.rs",
+            category: KnowledgeCategory::WebApi,
+        },
+        DocumentSpec {
+            id: "fsr-mod",
+            title: "FSR runtime module (LiveProps, LiveQuery, PilcrowLive, watcher, hub)",
+            path: "crates/runtime/src/fsr/mod.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "fsr-live-props",
+            title: "FSR LiveProps<T> and DependencyKey types",
+            path: "crates/runtime/src/fsr/live_props.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "fsr-live-trait",
+            title: "FSR PilcrowLive trait and LiveQuery",
+            path: "crates/runtime/src/fsr/live_trait.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "fsr-macros",
+            title: "FSR macros: fsr_dep!, live_query!",
+            path: "crates/runtime/src/fsr/macros.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
             id: "runtime-middleware",
             title: "Middleware",
             path: "crates/runtime/src/middleware.rs",

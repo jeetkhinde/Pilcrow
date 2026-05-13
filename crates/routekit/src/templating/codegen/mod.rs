@@ -91,4 +91,8 @@ pub struct WrittenTemplatesOutput {
     pub ssg_config_map: HashMap<String, SsgOpts>,
     pub live_fields_map: HashMap<String, Vec<String>>,
     pub has_live_fn_map: HashMap<String, bool>,
+    /// Map from page module_name to processed live.rs source (with from_row() injected).
+    pub fsr_live_source_map: HashMap<String, String>,
+    /// Map from page module_name to LiveProps field names from live.rs.
+    pub fsr_live_fields_map: HashMap<String, Vec<String>>,
 }

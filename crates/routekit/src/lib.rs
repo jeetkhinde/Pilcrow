@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use routing::path::{normalize_path, PathHierarchy};
 
+pub mod fsr;
 pub mod routing;
 pub mod templating;
 

@@ -32,6 +32,24 @@ pub struct SsgOpts {
     pub has_entries_fn: bool,
 }
 
+/// FSR options derived from filesystem discovery and `pub const` declarations.
+///
+/// All constants are stripped from the emitted module — they never reach runtime code.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FsrOpts {
+    /// `live.rs` was found alongside this page's `page.rs`.
+    pub has_live_file: bool,
+    /// `pub const FSR_JSON: bool = true` was declared in `page.rs`.
+    pub json: bool,
+}
+
+impl FsrOpts {
+    /// `true` when this page participates in FSR (has a `live.rs` companion).
+    pub fn is_active(&self) -> bool {
+        self.has_live_file
+    }
+}
+
 /// Per-page options parsed from `pub const` declarations in code-behind files.
 ///
 /// ```rust,ignore
@@ -40,6 +58,7 @@ pub struct SsgOpts {
 /// pub const REVALIDATE: u64 = 60;            // ISR: cache TTL in seconds
 /// pub const PRERENDER: bool = true;          // SSG: pre-render at server startup
 /// pub const STREAMING: bool = true;          // SSR Streaming: shell renders immediately, page data streamed
+/// pub const FSR_JSON: bool = true;           // FSR: opt in to baked JSON alongside baked HTML
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PageOptions {
@@ -51,6 +70,8 @@ pub struct PageOptions {
     /// spawned in the background, and the shell renders before data arrives. The resolved
     /// `Props` are streamed as a single `Silcrow.patch()` call once `load()` completes.
     pub streaming: bool,
+    /// FSR options — populated when a `live.rs` companion file is present.
+    pub fsr: FsrOpts,
 }
 
 /// Whether this page participates in the automatic layout chain.

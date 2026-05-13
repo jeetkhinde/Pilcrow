@@ -156,6 +156,10 @@ where
         None
     };
     
+    // Capture fsr config before config is moved into extension.
+    #[cfg(feature = "live-props")]
+    let fsr_config = config.fsr.clone();
+
     #[allow(unused_mut)]
     let mut app = app
         .layer(axum::Extension(config))
@@ -178,6 +182,49 @@ where
                 }
                 Err(err) => {
                     tracing::warn!("live-props: failed to connect to DATABASE_URL: {err}");
+                }
+            }
+        }
+    }
+
+    // FSR: register broadcast channel, optional DB store, and embedded watcher.
+    #[cfg(feature = "live-props")]
+    {
+        use crate::fsr::{FsrStore, WatcherConfig, WatcherEventTx};
+        use crate::fsr::watcher::spawn_embedded_watcher;
+
+        let fsr_tx: Arc<WatcherEventTx> =
+            Arc::new(tokio::sync::broadcast::channel::<crate::fsr::watcher::SlotPatch>(256).0);
+        app = app
+            .route("/__pilcrow/fsr", axum::routing::get(crate::fsr::fsr_hub_handler))
+            .layer(axum::Extension(Arc::clone(&fsr_tx)));
+
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            match sqlx::PgPool::connect(&db_url).await {
+                Ok(pool) => {
+                    let fsr_store = Arc::new(FsrStore::new(pool));
+                    app = app.layer(axum::Extension(Arc::clone(&fsr_store)));
+
+                    if fsr_config.watcher == "embedded" {
+                        let watcher_cfg = WatcherConfig {
+                            poll_interval_ms: fsr_config.poll_interval_ms,
+                            promote_after_hits: fsr_config.promote_after_hits,
+                            patch_debounce_secs: fsr_config.patch_debounce_secs,
+                            purge_after_seconds: fsr_config.purge_after_seconds,
+                        };
+                        spawn_embedded_watcher(
+                            Arc::clone(&fsr_store),
+                            watcher_cfg,
+                            Some((*fsr_tx).clone()),
+                        );
+                        tracing::info!(
+                            "FSR: embedded watcher started (poll: {}ms)",
+                            fsr_config.poll_interval_ms
+                        );
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("FSR: failed to connect to DATABASE_URL for FsrStore: {err}");
                 }
             }
         }

@@ -115,6 +115,10 @@ pub struct GeneratedTemplatesModule {
     pub live_fields_map: HashMap<String, Vec<String>>,
     /// Map from page module_name to whether a `live()` fn and/or `LiveProps` struct are present.
     pub has_live_fn_map: HashMap<String, bool>,
+    /// Map from page module_name to processed live.rs source (with from_row() injected).
+    pub fsr_live_source_map: HashMap<String, String>,
+    /// Map from page module_name to LiveProps field names from live.rs.
+    pub fsr_live_fields_map: HashMap<String, Vec<String>>,
 }
 
 /// Which server hook functions are present in `src/hooks.rs`.
@@ -149,4 +153,8 @@ pub struct InstrumentedFrontmatter {
     pub live_fields: Vec<String>,
     /// True when a `live()` fn or `LiveProps` struct is present in the frontmatter.
     pub has_live_fn: bool,
+    /// Processed source from a sibling `live.rs` file (stripped + from_row injected), if any.
+    pub fsr_live_source: Option<String>,
+    /// Names of `LiveProps<T>` fields in `Live` struct from `live.rs`.
+    pub fsr_live_fields: Vec<String>,
 }

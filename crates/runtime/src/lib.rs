@@ -15,6 +15,8 @@ pub mod image;
 pub mod island_ssr;
 pub mod isr;
 #[cfg(feature = "live-props")]
+pub mod fsr;
+#[cfg(feature = "live-props")]
 pub mod live_props;
 pub mod middleware;
 pub mod response;

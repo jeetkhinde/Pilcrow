@@ -40,6 +40,8 @@ pub fn render_generated_templates_module(
     let mut ssg_config_map: HashMap<String, SsgOpts> = HashMap::new();
     let mut live_fields_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut has_live_fn_map: HashMap<String, bool> = HashMap::new();
+    let mut fsr_live_source_map: HashMap<String, String> = HashMap::new();
+    let mut fsr_live_fields_map: HashMap<String, Vec<String>> = HashMap::new();
     // fragment_url_prefix → [(leaf_name, module_name)] — built to emit `pub mod fragments`.
     let mut fragment_groups: std::collections::BTreeMap<String, Vec<(String, String)>> =
         std::collections::BTreeMap::new();
@@ -148,6 +150,31 @@ pub fn render_generated_templates_module(
             has_live_fn_map.insert(entry.module_name.clone(), true);
         }
 
+        // Detect live.rs alongside this page (FSR companion file).
+        let live_rs_path = Path::new(&entry.source_path)
+            .parent()
+            .map(|p| p.join("live.rs"))
+            .filter(|p| p.exists());
+        if let Some(ref live_path) = live_rs_path {
+            match crate::fsr::process_live_rs(live_path) {
+                Ok((src, fields)) => {
+                    if !fields.is_empty() {
+                        fsr_live_fields_map.insert(
+                            entry.module_name.clone(),
+                            fields.iter().map(|f| f.name.clone()).collect(),
+                        );
+                    }
+                    fsr_live_source_map.insert(entry.module_name.clone(), src);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[pilcrow-routekit] warning: failed to process {}: {e}",
+                        live_path.display()
+                    );
+                }
+            }
+        }
+
         if instrumented.page_options.isr.is_active() {
             isr_config_map.insert(
                 entry.module_name.clone(),
@@ -181,6 +208,29 @@ pub fn render_generated_templates_module(
             out.push_str("    ");
             out.push_str(line);
             out.push('\n');
+        }
+        // Emit processed live.rs source (FSR companion), if present.
+        if let Some(live_src) = fsr_live_source_map.get(&entry.module_name) {
+            out.push_str("    // FSR: live.rs companion\n");
+            for line in live_src.lines() {
+                out.push_str("    ");
+                out.push_str(line);
+                out.push('\n');
+            }
+            // Emit FromRequestParts impl for Live.
+            out.push_str("    #[::pilcrow_web::axum::async_trait]\n");
+            out.push_str("    impl<__S: ::std::marker::Send + ::std::marker::Sync>\n");
+            out.push_str("        ::pilcrow_web::axum::extract::FromRequestParts<__S>\n");
+            out.push_str("        for Live\n");
+            out.push_str("    {\n");
+            out.push_str("        type Rejection = ::pilcrow_web::AppError;\n");
+            out.push_str("        async fn from_request_parts(\n");
+            out.push_str("            parts: &mut ::pilcrow_web::axum::http::request::Parts,\n");
+            out.push_str("            _state: &__S,\n");
+            out.push_str("        ) -> ::std::result::Result<Self, ::pilcrow_web::AppError> {\n");
+            out.push_str("            ::pilcrow_runtime::fsr::extract_live_from_parts(parts).await\n");
+            out.push_str("        }\n");
+            out.push_str("    }\n");
         }
         let _ = writeln!(
             out,
@@ -266,6 +316,8 @@ pub fn render_generated_templates_module(
         ssg_config_map,
         live_fields_map,
         has_live_fn_map,
+        fsr_live_source_map,
+        fsr_live_fields_map,
     })
 }
 
@@ -351,5 +403,7 @@ pub fn write_generated_templates_module(
         ssg_config_map: generated.ssg_config_map,
         live_fields_map: generated.live_fields_map,
         has_live_fn_map: generated.has_live_fn_map,
+        fsr_live_source_map: generated.fsr_live_source_map,
+        fsr_live_fields_map: generated.fsr_live_fields_map,
     })
 }

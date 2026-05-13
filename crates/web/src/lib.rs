@@ -44,6 +44,12 @@ pub use runtime::island_ssr::IslandSsrWorker;
 pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
 
+/// FSR (Field-Selective Rendering) developer-facing surface.
+///
+/// Import all live types and macros with: `use pilcrow::live::*;`
+#[cfg(feature = "live-props")]
+pub mod live;
+
 /// Experimental APIs that may change before stabilization.
 #[cfg(feature = "experimental-baked-pages")]
 pub mod experimental {

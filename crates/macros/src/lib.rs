@@ -4,6 +4,7 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input, Expr, LitStr, Token,
 };
+mod fsr_invalidate;
 mod handler;
 mod invalidate_macro;
 mod live_props_derive;
@@ -21,6 +22,11 @@ pub fn derive_pilcrow_props(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn invalidate(input: TokenStream) -> TokenStream {
     invalidate_macro::expand(input)
+}
+
+#[proc_macro]
+pub fn fsr_invalidate(input: TokenStream) -> TokenStream {
+    fsr_invalidate::expand(input)
 }
 
 struct SseEntry {
