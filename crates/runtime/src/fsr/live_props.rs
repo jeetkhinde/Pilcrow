@@ -22,16 +22,28 @@ impl std::fmt::Display for DependencyKey {
 
 /// A field whose value is tracked, cached, and live-patched by Pilcrow FSR.
 ///
-/// `T` must implement `serde::Serialize + serde::de::DeserializeOwned`.
+/// `T` must implement `serde::Serialize + serde::de::DeserializeOwned + Default`.
+/// For scalar types (`String`, `i64`, `bool`, etc.) these bounds are satisfied
+/// automatically. For struct fields, add the derives explicitly:
+///
+/// ```rust,ignore
+/// #[derive(Serialize, Deserialize, Default)]
+/// pub struct TicketBadge { pub label: String, pub color: String }
+///
+/// pub ticket_badge: LiveProp<TicketBadge>,
+/// ```
+///
+/// On SSE patch, object values are published to the Silcrow atom `"fsr.<slot_name>"`.
+/// Bind with `s-use="fsr.ticket_badge"` and `:text="label"` in the template.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiveProps<T> {
+pub struct LiveProp<T> {
     pub value: T,
     pub depends_on: Vec<String>, // stored as "table:column=value" strings
     pub promote_after: Option<u32>,
     pub patch_debounce: Option<u32>,
 }
 
-impl<T: Serialize + Clone> LiveProps<T> {
+impl<T: Serialize + Clone> LiveProp<T> {
     pub fn new(value: T, depends_on: Vec<DependencyKey>) -> Self {
         Self {
             value,
