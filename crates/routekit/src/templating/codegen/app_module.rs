@@ -100,31 +100,32 @@ pub fn render_generated_api_mods(
     // Expose src/params/ as `crate::params` when the directory exists.
     let params_dir = src_root.join("params");
     if params_dir.exists()
-        && let Ok(read_dir) = fs::read_dir(&params_dir) {
-            let params_dir_str = params_dir.to_string_lossy().replace('\\', "/");
-            let mut param_mods: Vec<String> = read_dir
-                .flatten()
-                .filter_map(|entry| {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .map(|s| s.to_string())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            param_mods.sort();
-            if !param_mods.is_empty() {
-                let _ = writeln!(out, "#[path = \"{params_dir_str}\"]");
-                out.push_str("pub mod params {\n");
-                for mod_name in &param_mods {
-                    let _ = writeln!(out, "    pub mod {mod_name};");
+        && let Ok(read_dir) = fs::read_dir(&params_dir)
+    {
+        let params_dir_str = params_dir.to_string_lossy().replace('\\', "/");
+        let mut param_mods: Vec<String> = read_dir
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
                 }
-                out.push_str("}\n");
+            })
+            .collect();
+        param_mods.sort();
+        if !param_mods.is_empty() {
+            let _ = writeln!(out, "#[path = \"{params_dir_str}\"]");
+            out.push_str("pub mod params {\n");
+            for mod_name in &param_mods {
+                let _ = writeln!(out, "    pub mod {mod_name};");
             }
+            out.push_str("}\n");
         }
+    }
 
     if api_entries.is_empty() {
         return out;
@@ -388,13 +389,29 @@ pub fn render_generated_app_module(
             || error_mod.is_some()
             || any_load_returns_result
             || !live_fields.is_empty();
+        let page_wants_live = page_load.is_some_and(|s| s.wants_live);
 
-        // PilcrowClient is FromRequestParts and must come before Req (FromRequest).
-        let closure_args = match (needs_req, needs_client) {
-            (true, true) => "client: ::pilcrow_web::PilcrowClient, req: ::pilcrow_web::Req",
-            (true, false) => "req: ::pilcrow_web::Req",
-            (false, true) => "client: ::pilcrow_web::PilcrowClient",
-            (false, false) => "",
+        // PilcrowClient and Live are both FromRequestParts and must come before Req (FromRequest).
+        // Order: client?, live?, req?
+        let live_closure_arg = if page_wants_live {
+            format!("__live: __pilcrow_gen::{mod_name}::Live")
+        } else {
+            String::new()
+        };
+        let closure_args = {
+            let mut parts: Vec<&str> = Vec::new();
+            if needs_client {
+                parts.push("client: ::pilcrow_web::PilcrowClient");
+            }
+            // Live extractor is named __live to avoid shadowing the user's `live` local.
+            // The generated load() call passes `__live` as the `live` argument.
+            if page_wants_live {
+                parts.push(&live_closure_arg);
+            }
+            if needs_req {
+                parts.push("req: ::pilcrow_web::Req");
+            }
+            parts.join(", ")
         };
 
         let isr_opts = isr_config_map.get(&entry.symbol);
@@ -672,11 +689,18 @@ pub fn render_generated_app_module(
                 } else {
                     ""
                 };
-                let page_call_args = match (req_arg.as_str(), client_arg) {
-                    ("", "") => String::new(),
-                    (r, "") => r.to_string(),
-                    ("", cl) => cl.to_string(),
-                    (r, cl) => format!("{r}, {cl}"),
+                // When load() declares a `live: Live` parameter, it was already extracted
+                // as a closure argument via FromRequestParts (see closure_args below).
+                let live_arg = if psig.wants_live { "__live" } else { "" };
+                let page_call_args = match (req_arg.as_str(), client_arg, live_arg) {
+                    ("", "", "") => String::new(),
+                    (r, "", "") => r.to_string(),
+                    ("", cl, "") => cl.to_string(),
+                    ("", "", lv) => lv.to_string(),
+                    (r, cl, "") => format!("{r}, {cl}"),
+                    (r, "", lv) => format!("{r}, {lv}"),
+                    ("", cl, lv) => format!("{cl}, {lv}"),
+                    (r, cl, lv) => format!("{r}, {cl}, {lv}"),
                 };
                 let call_expr = format!("__pilcrow_gen::{mod_name}::load({page_call_args})");
                 let awaited = if psig.is_async {
@@ -855,11 +879,14 @@ pub fn render_generated_app_module(
                 out.push_str("                format!(\"{}{}\", __DEFERRED_SHIM, __shell_html)\n");
                 out.push_str("            };\n");
                 // ── FSR: inject client script before </head> ─────────────────
-                if !live_fields.is_empty() && has_fsr {
-                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=d[k]==null?'':String(d[k]);});});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+                if has_fsr {
+                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
                     let fsr_script_tag = format!("<script>{fsr_script}</script>");
                     let fsr_script_lit = rust_string(&fsr_script_tag);
-                    let _ = writeln!(out, "            const __FSR_SCRIPT: &str = {fsr_script_lit};");
+                    let _ = writeln!(
+                        out,
+                        "            const __FSR_SCRIPT: &str = {fsr_script_lit};"
+                    );
                     out.push_str("            let __shell_html = if let Some(__pos) = __shell_html.find(\"</head>\") {\n");
                     out.push_str("                let mut __s = String::with_capacity(__shell_html.len() + __FSR_SCRIPT.len());\n");
                     out.push_str("                __s.push_str(&__shell_html[..__pos]);\n");
@@ -899,8 +926,8 @@ pub fn render_generated_app_module(
                     3,
                 ));
                 // ── FSR: inject client script before </head> ─────────────────
-                if !live_fields.is_empty() && has_fsr {
-                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=d[k]==null?'':String(d[k]);});});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+                if has_fsr {
+                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
                     let fsr_script_tag = format!("<script>{fsr_script}</script>");
                     let fsr_script_lit = rust_string(&fsr_script_tag);
                     let _ = writeln!(
@@ -971,14 +998,15 @@ pub fn render_generated_app_module(
 
         // ── Action POST route (same URL, dispatched by `?/<name>`) ──────────────
         if let Some(actions) = page_actions
-            && !actions.is_empty() {
-                out.push_str(&emit_action_route(
-                    actions,
-                    &entry.pattern,
-                    mod_name,
-                    error_mod,
-                ));
-            }
+            && !actions.is_empty()
+        {
+            out.push_str(&emit_action_route(
+                actions,
+                &entry.pattern,
+                mod_name,
+                error_mod,
+            ));
+        }
 
         // ── Live props SSE route ──────────────────────────────────────────────────
         // FSR routes use the shared /__pilcrow/fsr hub instead of per-route SSE.
@@ -1505,7 +1533,10 @@ fn emit_isr_revalidation_body(
         };
         let var = format!("layout_data_{idx}");
         if lsig.returns_result {
-            let _ = writeln!(out, "                                    let {var} = {awaited}.map_err(|e| e.to_string())?;");
+            let _ = writeln!(
+                out,
+                "                                    let {var} = {awaited}.map_err(|e| e.to_string())?;"
+            );
         } else {
             let _ = writeln!(
                 out,
@@ -1529,7 +1560,10 @@ fn emit_isr_revalidation_body(
         page_call
     };
     if page_sig.returns_result {
-        let _ = writeln!(out, "                                    let page_data = {page_awaited}.map_err(|e| e.to_string())?;");
+        let _ = writeln!(
+            out,
+            "                                    let page_data = {page_awaited}.map_err(|e| e.to_string())?;"
+        );
     } else {
         let _ = writeln!(
             out,
@@ -2157,7 +2191,12 @@ fn emit_ssg_load_render_store(
     page_sig: LoadSignature,
     ctx: &SsgRenderCtx<'_>,
 ) -> String {
-    let SsgRenderCtx { active_chain, chain_info, ttl_expr, tags_expr } = ctx;
+    let SsgRenderCtx {
+        active_chain,
+        chain_info,
+        ttl_expr,
+        tags_expr,
+    } = ctx;
     // Determine the indentation based on the call context.
     // Static blocks are at 8-space indent; dynamic blocks are at 12-space (inside for loop).
     // We detect this by checking whether key_expr starts with '&' (dynamic path variable).
@@ -2265,4 +2304,11 @@ fn emit_ssg_load_render_store(
     let _ = writeln!(out, "{indent}}}");
 
     out
+}
+
+/// Returns the FSR inline patch script. Exposed for tests only.
+#[cfg(test)]
+pub fn fsr_patch_script() -> &'static str {
+    const S: &str = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+    S
 }

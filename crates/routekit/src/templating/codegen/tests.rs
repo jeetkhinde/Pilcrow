@@ -172,6 +172,64 @@ mod tests {
         );
     }
 
+    #[test]
+    fn render_generated_templates_module_validates_fsr_live_slots_against_live_rs() {
+        let root = mk_temp_root("fsr_live_validation");
+        let page_path = root.join("src/pages/tickets/index.html");
+        let live_path = root.join("src/pages/tickets/live.rs");
+        write_file(
+            &live_path,
+            r#"
+use pilcrow_web::live::*;
+
+pub struct Live {
+    pub status: LiveProp<String>,
+}
+"#,
+        );
+
+        let err = render_generated_templates_module(&[TemplateCodegenInput {
+            module_name: "page_tickets".to_string(),
+            render_symbol: "render_page_tickets".to_string(),
+            source_path: page_path.display().to_string(),
+            rust_frontmatter: "pub struct Props { pub status: String }".to_string(),
+            template_source: r#"<span s-live="ticket_status">{{ status }}</span>"#.to_string(),
+            layout_chain: vec![],
+            fragment_url_prefix: None,
+            route_params: vec![],
+        }])
+        .expect_err("mismatched FSR live slots should fail");
+
+        cleanup(&root);
+
+        let message = err.to_string();
+        assert!(message.contains("failed to validate"));
+        assert!(message.contains("s-live=\"ticket_status\" exists"));
+        assert!(message.contains("no matching Live field exists"));
+        assert!(message.contains("Live field `status` exists"));
+        assert!(message.contains("#[pilcrow::allow_unused]"));
+    }
+
+    #[test]
+    fn fsr_script_routes_objects_to_silcrow_publish() {
+        let script = super::app_module::fsr_patch_script();
+        assert!(
+            script.contains("window.Silcrow&&window.Silcrow.publish"),
+            "expected Silcrow.publish call in FSR script"
+        );
+        assert!(
+            script.contains("typeof v==='object'"),
+            "expected typeof object check in FSR script"
+        );
+    }
+
+    #[test]
+    fn fsr_script_still_patches_scalars_via_s_live() {
+        let script = super::app_module::fsr_patch_script();
+        assert!(script.contains("s-live"), "expected s-live selector");
+        assert!(script.contains("textContent"), "expected textContent assignment");
+    }
+
     fn mk_temp_root(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -538,6 +596,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             wants_client: false,
             wants_req: true,
             wants_page: false,
+            wants_live: false,
         };
         let mut load_map: HashMap<String, Option<LoadSignature>> = HashMap::new();
         load_map.insert("page_products".to_string(), Some(load_sig));
@@ -617,6 +676,7 @@ pub async fn load(_req: Req) -> AppResult<Props> {
             wants_client: false,
             wants_req: true,
             wants_page: false,
+            wants_live: false,
         };
         let mut load_map: HashMap<String, Option<LoadSignature>> = HashMap::new();
         load_map.insert("page_products".to_string(), Some(load_sig));
