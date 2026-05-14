@@ -9,7 +9,9 @@ pub struct FsrStore {
 
 impl FsrStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool: Arc::new(pool) }
+        Self {
+            pool: Arc::new(pool),
+        }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -46,18 +48,20 @@ impl FsrStore {
         depends_on: &[String],
         promote_after: Option<u32>,
         debounce_secs: Option<u32>,
+        column_name: Option<&str>,
     ) -> sqlx::Result<()> {
         sqlx::query(
             r#"
             INSERT INTO pilcrow_fsr
-                (route, slot, query, query_params, depends_on, promote_after, debounce_secs)
-            VALUES ($1, $2, $3, $4, $5::text[], $6, $7)
+                (route, slot, query, query_params, depends_on, promote_after, debounce_secs, column_name)
+            VALUES ($1, $2, $3, $4, $5::text[], $6, $7, $8)
             ON CONFLICT (route, slot) DO UPDATE SET
                 query         = EXCLUDED.query,
                 query_params  = EXCLUDED.query_params,
                 depends_on    = EXCLUDED.depends_on,
                 promote_after = EXCLUDED.promote_after,
-                debounce_secs = EXCLUDED.debounce_secs
+                debounce_secs = EXCLUDED.debounce_secs,
+                column_name   = EXCLUDED.column_name
             "#,
         )
         .bind(route)
@@ -67,6 +71,7 @@ impl FsrStore {
         .bind(depends_on)
         .bind(promote_after.map(|n| n as i32))
         .bind(debounce_secs.map(|n| n as i32))
+        .bind(column_name)
         .execute(&*self.pool)
         .await?;
         Ok(())
@@ -100,12 +105,10 @@ impl FsrStore {
         };
 
         if just_crossed {
-            sqlx::query(
-                "UPDATE pilcrow_fsr SET promoted = TRUE WHERE route = $1 AND slot = ''",
-            )
-            .bind(route)
-            .execute(&*self.pool)
-            .await?;
+            sqlx::query("UPDATE pilcrow_fsr SET promoted = TRUE WHERE route = $1 AND slot = ''")
+                .bind(route)
+                .execute(&*self.pool)
+                .await?;
         }
 
         Ok(just_crossed)
@@ -153,7 +156,7 @@ impl FsrStore {
     pub async fn fetch_stale_slots(&self) -> sqlx::Result<Vec<StaleSlot>> {
         sqlx::query_as(
             r#"
-            SELECT route, slot, query, query_params, depends_on, promoted, debounce_secs, html_path, json_path
+            SELECT route, slot, query, query_params, depends_on, promoted, debounce_secs, html_path, json_path, column_name
             FROM pilcrow_fsr
             WHERE stale = TRUE AND slot != ''
             "#,
@@ -200,6 +203,21 @@ impl FsrStore {
         Ok(())
     }
 
+    /// Fetch all rows for the FSR dev-inspect endpoint.
+    pub async fn fetch_all_for_inspect(&self) -> sqlx::Result<Vec<InspectRow>> {
+        sqlx::query_as(
+            r#"
+            SELECT route, slot, depends_on, stale, version, hit_count,
+                   promoted, html_path, json_path,
+                   to_char(last_hit AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS UTC') AS last_hit
+            FROM pilcrow_fsr
+            ORDER BY route, slot
+            "#,
+        )
+        .fetch_all(&*self.pool)
+        .await
+    }
+
     /// Mark a slot as no longer stale and bump its version.
     pub async fn mark_fresh(&self, route: &str, slot: &str) -> sqlx::Result<()> {
         sqlx::query(
@@ -211,6 +229,73 @@ impl FsrStore {
         .await?;
         Ok(())
     }
+
+    /// Fetch all slot rows for a route for use by the snapshot endpoint.
+    ///
+    /// When `slots` is non-empty, only those slot names are returned.
+    /// Never returns the route-level row (slot = '').
+    pub async fn fetch_slots_for_snapshot(
+        &self,
+        route: &str,
+        slots: &[&str],
+    ) -> sqlx::Result<Vec<StaleSlot>> {
+        if slots.is_empty() {
+            sqlx::query_as(
+                "SELECT route, slot, query, query_params, depends_on, promoted, \
+                 debounce_secs, html_path, json_path, column_name \
+                 FROM pilcrow_fsr \
+                 WHERE route = $1 AND slot != '' \
+                 ORDER BY slot",
+            )
+            .bind(route)
+            .fetch_all(&*self.pool)
+            .await
+        } else {
+            sqlx::query_as(
+                "SELECT route, slot, query, query_params, depends_on, promoted, \
+                 debounce_secs, html_path, json_path, column_name \
+                 FROM pilcrow_fsr \
+                 WHERE route = $1 AND slot != '' AND slot = ANY($2) \
+                 ORDER BY slot",
+            )
+            .bind(route)
+            .bind(slots)
+            .fetch_all(&*self.pool)
+            .await
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_slot_fields_cover_snapshot_needs() {
+        // Compile-time check: StaleSlot has all fields needed by the snapshot handler.
+        fn _assert_fields(s: StaleSlot) {
+            let _: Option<String> = s.query;
+            let _: Option<serde_json::Value> = s.query_params;
+            let _: Option<String> = s.column_name;
+            let _: String = s.slot;
+        }
+    }
+}
+
+/// A row returned by the FSR dev-inspect endpoint.
+#[derive(Debug, sqlx::FromRow)]
+pub struct InspectRow {
+    pub route: String,
+    pub slot: String,
+    pub depends_on: Vec<String>,
+    pub stale: bool,
+    pub version: i32,
+    pub hit_count: i32,
+    pub promoted: bool,
+    pub html_path: Option<String>,
+    pub json_path: Option<String>,
+    /// Formatted as `"YYYY-MM-DD HH:MM:SS UTC"` by the query, or `None` if never hit.
+    pub last_hit: Option<String>,
 }
 
 /// A stale slot fetched for watcher re-execution.
@@ -225,4 +310,6 @@ pub struct StaleSlot {
     pub debounce_secs: Option<i32>,
     pub html_path: Option<String>,
     pub json_path: Option<String>,
+    /// SQL column name to extract from the query result. When `None`, falls back to `slot`.
+    pub column_name: Option<String>,
 }
