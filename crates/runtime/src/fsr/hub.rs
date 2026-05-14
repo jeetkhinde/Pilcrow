@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
-use tokio_stream::StreamExt as _;
+use futures_util::StreamExt as FuturesStreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
 use super::store::FsrStore;
@@ -86,12 +86,22 @@ pub struct FsrHubQuery {
 
 /// SSE handler at `/__pilcrow/fsr`.
 ///
-/// Subscribes the client to slot-patch events for their current route.
-/// Query params: `route=...&slots=slot1,slot2,...`
+/// - Returns 503 when the connection limit (`FsrHubConfig::max_connections`) is reached.
+/// - Sends `fsr-resync` when the broadcast buffer overflows (client missed events).
+/// - Closes the stream after `connection_ttl_secs`; `EventSource` auto-reconnects.
+/// - Heartbeat interval is `keepalive_secs`.
 pub async fn fsr_hub_handler(
     Query(query): Query<FsrHubQuery>,
     Extension(event_tx): Extension<Arc<WatcherEventTx>>,
-) -> impl IntoResponse {
+    Extension(counter): Extension<FsrConnectionCounter>,
+    Extension(hub_config): Extension<Arc<FsrHubConfig>>,
+) -> Response {
+    let current = counter.fetch_add(1, Ordering::Relaxed);
+    if current >= hub_config.max_connections {
+        counter.fetch_sub(1, Ordering::Relaxed);
+        return (StatusCode::SERVICE_UNAVAILABLE, "FSR connection limit reached").into_response();
+    }
+
     let subscribed_route = query.route.unwrap_or_default();
     let subscribed_slots: Vec<String> = query
         .slots
@@ -101,44 +111,80 @@ pub async fn fsr_hub_handler(
         .map(str::to_string)
         .collect();
 
+    tracing::debug!(
+        route = %subscribed_route,
+        active_connections = current + 1,
+        "FSR client connected"
+    );
+
     let rx = BroadcastStream::new(event_tx.subscribe());
 
-    let stream = rx.filter_map(move |msg| {
-        let subscribed_route = subscribed_route.clone();
-        let subscribed_slots = subscribed_slots.clone();
-        match msg {
-            Ok(patch) => {
-                if patch.route != subscribed_route {
-                    return None;
-                }
-                if !subscribed_slots.is_empty() && !subscribed_slots.contains(&patch.slot) {
-                    return None;
-                }
-                let payload = serde_json::json!({ &patch.slot: patch.value });
-                let event = Event::default().event("fsr").data(payload.to_string());
-                Some(Ok::<Event, Infallible>(event))
-            }
-            Err(_) => None,
-        }
-    });
+    // Box::pin is required: tokio::time::Sleep is !Unpin, and GuardedStream
+    // requires its inner stream to be Unpin so we can poll it through Pin<&mut Self>.
+    let ttl_fut = Box::pin(tokio::time::sleep(std::time::Duration::from_secs(hub_config.connection_ttl_secs)));
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    let after_ttl = FuturesStreamExt::take_until(rx, ttl_fut);
+    let stream = tokio_stream::StreamExt::filter_map(after_ttl, move |msg| {
+            let subscribed_route = subscribed_route.clone();
+            let subscribed_slots = subscribed_slots.clone();
+            match msg {
+                Ok(patch) => {
+                    if patch.route != subscribed_route {
+                        return None;
+                    }
+                    if !subscribed_slots.is_empty() && !subscribed_slots.contains(&patch.slot) {
+                        return None;
+                    }
+                    let payload = serde_json::json!({ &patch.slot: patch.value });
+                    Some(Ok::<Event, Infallible>(
+                        Event::default().event("fsr").data(payload.to_string()),
+                    ))
+                }
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    tracing::debug!(
+                        route = %subscribed_route,
+                        lagged_by = n,
+                        "FSR client lagged — sending resync"
+                    );
+                    Some(Ok(Event::default().event("fsr-resync").data("lagged")))
+                }
+            }
+        });
+
+    let guarded = GuardedStream {
+        inner: stream,
+        _guard: ConnectionGuard(Arc::clone(&counter)),
+    };
+
+    Sse::new(guarded)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(std::time::Duration::from_secs(hub_config.keepalive_secs)),
+        )
+        .into_response()
 }
 
-/// SSE handler for FSR that works without a broadcast channel extension
-/// (returns 503 when FSR is not configured).
+/// SSE handler variant that returns 503 when FSR is not configured.
+///
+/// Use this when registering the route manually without guaranteed extensions.
 pub async fn fsr_hub_handler_or_unavailable(
     query: Query<FsrHubQuery>,
-    ext: Option<Extension<Arc<WatcherEventTx>>>,
-) -> axum::response::Response {
-    match ext {
-        Some(tx) => fsr_hub_handler(query, tx).await.into_response(),
-        None => (
+    event_tx: Option<Extension<Arc<WatcherEventTx>>>,
+    counter: Option<Extension<FsrConnectionCounter>>,
+    hub_config: Option<Extension<Arc<FsrHubConfig>>>,
+) -> Response {
+    let Some(tx) = event_tx else {
+        return (
             StatusCode::SERVICE_UNAVAILABLE,
             "FSR not configured (DATABASE_URL missing)",
         )
-            .into_response(),
-    }
+            .into_response();
+    };
+    let counter = counter.unwrap_or_else(|| Extension(Arc::new(AtomicUsize::new(0))));
+    let hub_config = hub_config
+        .map(|e| e.0.clone())
+        .unwrap_or_else(|| Arc::new(FsrHubConfig::default()));
+    fsr_hub_handler(query, tx, counter, Extension(hub_config)).await
 }
 
 /// Handler for `GET /__pilcrow/fsr/snapshot?route=...&slots=...`.
@@ -200,6 +246,63 @@ pub async fn fsr_snapshot_handler(
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::routing::get;
+    use tower::ServiceExt as _;
+    use crate::fsr::watcher::SlotPatch;
+
+    fn make_app(counter: FsrConnectionCounter, max: usize) -> Router {
+        let (tx, _) = tokio::sync::broadcast::channel::<SlotPatch>(1);
+        let event_tx: Arc<WatcherEventTx> = Arc::new(tx);
+        let hub_config = Arc::new(FsrHubConfig {
+            max_connections: max,
+            connection_ttl_secs: 3600,
+            keepalive_secs: 30,
+        });
+        Router::new()
+            .route("/__pilcrow/fsr", get(fsr_hub_handler))
+            .layer(Extension(event_tx))
+            .layer(Extension(counter))
+            .layer(Extension(hub_config))
+    }
+
+    #[tokio::test]
+    async fn hub_returns_503_when_limit_reached() {
+        let counter: FsrConnectionCounter = Arc::new(AtomicUsize::new(1)); // already at limit
+        let app = make_app(counter, 1);
+        let req = Request::builder()
+            .uri("/__pilcrow/fsr?route=/test&slots=")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn hub_returns_200_when_below_limit() {
+        let counter: FsrConnectionCounter = Arc::new(AtomicUsize::new(0));
+        let app = make_app(counter, 10);
+        let req = Request::builder()
+            .uri("/__pilcrow/fsr?route=/test&slots=")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn hub_increments_counter_on_connect() {
+        let counter: FsrConnectionCounter = Arc::new(AtomicUsize::new(0));
+        let app = make_app(Arc::clone(&counter), 10);
+        let req = Request::builder()
+            .uri("/__pilcrow/fsr?route=/test&slots=")
+            .body(Body::empty())
+            .unwrap();
+        let _resp = app.oneshot(req).await.unwrap();
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn connection_guard_decrements_on_drop() {
