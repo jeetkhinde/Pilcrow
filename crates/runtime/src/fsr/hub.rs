@@ -12,7 +12,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -20,6 +19,10 @@ use super::store::FsrStore;
 use super::watcher::{WatcherEventTx, execute_with_params};
 
 /// Shared atomic counter of open SSE connections.
+///
+/// # Contract
+/// Only the accept path in `fsr_hub_handler` may call `fetch_add(1, Relaxed)`.
+/// Only `ConnectionGuard::drop` may call `fetch_sub`. All other callers are reads only.
 pub type FsrConnectionCounter = Arc<AtomicUsize>;
 
 /// Runtime configuration for the FSR SSE hub, derived from `FsrConfig`.
@@ -45,7 +48,8 @@ struct ConnectionGuard(Arc<AtomicUsize>);
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        let prev = self.0.fetch_sub(1, Ordering::Relaxed);
+        debug_assert!(prev > 0, "ConnectionGuard dropped with counter already at zero");
     }
 }
 
@@ -126,8 +130,6 @@ pub async fn fsr_hub_handler_or_unavailable(
     query: Query<FsrHubQuery>,
     ext: Option<Extension<Arc<WatcherEventTx>>>,
 ) -> axum::response::Response {
-    use axum::http::StatusCode;
-
     match ext {
         Some(tx) => fsr_hub_handler(query, tx).await.into_response(),
         None => (
