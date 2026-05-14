@@ -2,15 +2,15 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::BoxError;
+use axum::Router;
 use axum::error_handling::HandleErrorLayer;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::BoxError;
-use axum::Router;
-use pilcrow_core::config::config::CacheProvider;
 use pilcrow_core::PilcrowConfig;
-use tower::timeout::TimeoutLayer;
+use pilcrow_core::config::config::CacheProvider;
 use tower::ServiceBuilder;
+use tower::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::adapter::{PilcrowAdapter, TokioAdapter};
@@ -18,10 +18,10 @@ use crate::assets::assets::{
     react_islands_js_path, serve_react_islands_js, serve_silcrow_js, serve_solid_islands_js,
     silcrow_js_path, solid_islands_js_path,
 };
-use crate::dev::{dev_inject_layer, dev_reload_handler, spawn_css_watcher, DevState};
-use crate::i18n::{locale_middleware_impl, I18nBundles};
-use crate::image::handler::{image_handler, ImageState};
-use crate::island_ssr::{replace_ssr_placeholders, IslandSsrWorker};
+use crate::dev::{DevState, dev_inject_layer, dev_reload_handler, spawn_css_watcher};
+use crate::i18n::{I18nBundles, locale_middleware_impl};
+use crate::image::handler::{ImageState, image_handler};
+use crate::island_ssr::{IslandSsrWorker, replace_ssr_placeholders};
 use crate::isr::{IsrCache, IsrHandle};
 use crate::sw::{sw_handler, sw_inject_layer};
 
@@ -155,7 +155,7 @@ where
     } else {
         None
     };
-    
+
     // Capture fsr config before config is moved into extension.
     #[cfg(feature = "live-props")]
     let fsr_config = config.fsr.clone();
@@ -190,14 +190,42 @@ where
     // FSR: register broadcast channel, optional DB store, and embedded watcher.
     #[cfg(feature = "live-props")]
     {
-        use crate::fsr::{FsrStore, WatcherConfig, WatcherEventTx};
         use crate::fsr::watcher::spawn_embedded_watcher;
+        use crate::fsr::{
+            FsrConnectionCounter, FsrHubConfig, FsrStore, WatcherConfig, WatcherEventTx,
+        };
+        use std::sync::atomic::AtomicUsize;
 
         let fsr_tx: Arc<WatcherEventTx> =
             Arc::new(tokio::sync::broadcast::channel::<crate::fsr::watcher::SlotPatch>(256).0);
+
+        let fsr_counter: FsrConnectionCounter = Arc::new(AtomicUsize::new(0));
+
+        let fsr_hub_config = Arc::new(FsrHubConfig {
+            max_connections: fsr_config.max_sse_connections as usize,
+            connection_ttl_secs: fsr_config.connection_ttl_secs,
+            keepalive_secs: fsr_config.keepalive_secs,
+        });
+
         app = app
-            .route("/__pilcrow/fsr", axum::routing::get(crate::fsr::fsr_hub_handler))
-            .layer(axum::Extension(Arc::clone(&fsr_tx)));
+            .route(
+                "/__pilcrow/fsr",
+                axum::routing::get(crate::fsr::fsr_hub_handler),
+            )
+            .route(
+                "/__pilcrow/fsr/snapshot",
+                axum::routing::get(crate::fsr::fsr_snapshot_handler),
+            )
+            .layer(axum::Extension(Arc::clone(&fsr_tx)))
+            .layer(axum::Extension(Arc::clone(&fsr_counter)))
+            .layer(axum::Extension(Arc::clone(&fsr_hub_config)));
+
+        if dev_mode {
+            app = app.route(
+                "/__pilcrow/fsr/inspect",
+                axum::routing::get(crate::fsr::fsr_inspect_handler),
+            );
+        }
 
         if let Ok(db_url) = std::env::var("DATABASE_URL") {
             match sqlx::PgPool::connect(&db_url).await {
@@ -218,8 +246,10 @@ where
                             Some((*fsr_tx).clone()),
                         );
                         tracing::info!(
-                            "FSR: embedded watcher started (poll: {}ms)",
-                            fsr_config.poll_interval_ms
+                            "FSR: embedded watcher started (poll: {}ms, max_connections: {}, ttl: {}s)",
+                            fsr_config.poll_interval_ms,
+                            fsr_config.max_sse_connections,
+                            fsr_config.connection_ttl_secs,
                         );
                     }
                 }
@@ -316,7 +346,7 @@ async fn island_ssr_middleware(
     let html = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
         Err(_) => {
-            return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
+            return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
         }
     };
 
