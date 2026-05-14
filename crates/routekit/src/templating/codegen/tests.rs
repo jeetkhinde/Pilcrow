@@ -227,7 +227,10 @@ pub struct Live {
     fn fsr_script_still_patches_scalars_via_s_live() {
         let script = super::app_module::fsr_patch_script();
         assert!(script.contains("s-live"), "expected s-live selector");
-        assert!(script.contains("textContent"), "expected textContent assignment");
+        assert!(
+            script.contains("n.textContent=v==null"),
+            "expected scalar textContent assignment in FSR script"
+        );
     }
 
     fn mk_temp_root(prefix: &str) -> PathBuf {

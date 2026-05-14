@@ -2,6 +2,13 @@ use super::*;
 
 // ── App module codegen (auto-wired router) ──────────────────
 
+/// Inline JS injected into every FSR-enabled page to open an SSE connection and
+/// patch the DOM when live-prop updates arrive.
+///
+/// Defined once here so all three use-sites (two codegen paths + the test helper)
+/// are guaranteed to stay in sync.
+const FSR_PATCH_SCRIPT: &str = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'&&!Array.isArray(v)){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+
 /// All route-map references needed during app-module codegen.
 /// Bundled into a single struct to keep function argument counts manageable.
 pub struct AppCodegenMaps<'a> {
@@ -880,7 +887,7 @@ pub fn render_generated_app_module(
                 out.push_str("            };\n");
                 // ── FSR: inject client script before </head> ─────────────────
                 if has_fsr {
-                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+                    let fsr_script = FSR_PATCH_SCRIPT;
                     let fsr_script_tag = format!("<script>{fsr_script}</script>");
                     let fsr_script_lit = rust_string(&fsr_script_tag);
                     let _ = writeln!(
@@ -927,7 +934,7 @@ pub fn render_generated_app_module(
                 ));
                 // ── FSR: inject client script before </head> ─────────────────
                 if has_fsr {
-                    let fsr_script = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
+                    let fsr_script = FSR_PATCH_SCRIPT;
                     let fsr_script_tag = format!("<script>{fsr_script}</script>");
                     let fsr_script_lit = rust_string(&fsr_script_tag);
                     let _ = writeln!(
@@ -2309,6 +2316,5 @@ fn emit_ssg_load_render_store(
 /// Returns the FSR inline patch script. Exposed for tests only.
 #[cfg(test)]
 pub fn fsr_patch_script() -> &'static str {
-    const S: &str = "(function(){var __fsr_route=window.location.pathname;var __fsr_es=null;function __fsr_slots(){return Array.from(document.querySelectorAll('[s-live]')).map(function(e){return e.getAttribute('s-live');}).filter(Boolean).join(',');}function __fsr_connect(){if(__fsr_es){__fsr_es.close();}var url='/__pilcrow/fsr?route='+encodeURIComponent(__fsr_route)+'&slots='+encodeURIComponent(__fsr_slots());__fsr_es=new EventSource(url);__fsr_es.addEventListener('fsr',function(e){try{var d=JSON.parse(e.data);Object.keys(d).forEach(function(k){var v=d[k];if(v!==null&&typeof v==='object'){if(window.Silcrow&&window.Silcrow.publish){window.Silcrow.publish('fsr.'+k,v);}}else{document.querySelectorAll('[s-live=\"'+k+'\"]').forEach(function(n){n.textContent=v==null?'':String(v);});}});}catch(x){}});}__fsr_connect();document.addEventListener('silcrow:navigate',function(){__fsr_route=window.location.pathname;__fsr_connect();});})()";
-    S
+    FSR_PATCH_SCRIPT
 }
