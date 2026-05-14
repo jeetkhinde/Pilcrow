@@ -121,10 +121,11 @@ async fn re_execute_query(store: &FsrStore, slot: &StaleSlot) -> sqlx::Result<se
     // For simplicity, bind all as text; Postgres will cast via implicit coercion.
     let row = execute_with_params(store.pool(), sql, &params).await?;
 
-    // Extract the column matching the slot name.
+    // Use the column_name override if present, else fall back to the slot/field name.
+    let col_key = slot.column_name.as_deref().unwrap_or(&slot.slot);
     let value = row
         .as_ref()
-        .and_then(|m| m.get(&slot.slot))
+        .and_then(|m| m.get(col_key))
         .cloned()
         .unwrap_or(serde_json::Value::Null);
 
@@ -133,7 +134,7 @@ async fn re_execute_query(store: &FsrStore, slot: &StaleSlot) -> sqlx::Result<se
 
 /// Execute a parameterised query and return the first row as a JSON map.
 /// Parameters are bound as text strings (Postgres will coerce to the column type).
-async fn execute_with_params(
+pub(crate) async fn execute_with_params(
     pool: &sqlx::PgPool,
     sql: &str,
     params: &[serde_json::Value],
