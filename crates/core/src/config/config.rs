@@ -64,6 +64,12 @@ pub struct FsrConfig {
     pub patch_debounce_secs: u32,
     /// Seconds before stale baked artefacts are purged.
     pub purge_after_seconds: u64,
+    /// Maximum concurrent SSE connections before returning 503.
+    pub max_sse_connections: u32,
+    /// Seconds before forcing a client reconnect (EventSource auto-reconnects).
+    pub connection_ttl_secs: u64,
+    /// SSE keep-alive heartbeat interval in seconds.
+    pub keepalive_secs: u64,
 }
 
 impl Default for FsrConfig {
@@ -74,6 +80,9 @@ impl Default for FsrConfig {
             promote_after_hits: 100,
             patch_debounce_secs: 30,
             purge_after_seconds: 2_592_000,
+            max_sse_connections: 1000,
+            connection_ttl_secs: 3600,
+            keepalive_secs: 30,
         }
     }
 }
@@ -459,4 +468,30 @@ fn default_image_formats() -> Vec<String> {
 
 fn default_image_concurrency() -> usize {
     4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fsr_config_new_fields_have_correct_defaults() {
+        let cfg = FsrConfig::default();
+        assert_eq!(cfg.max_sse_connections, 1000);
+        assert_eq!(cfg.connection_ttl_secs, 3600);
+        assert_eq!(cfg.keepalive_secs, 30);
+    }
+
+    #[test]
+    fn fsr_config_new_fields_deserialize_from_toml() {
+        let toml = r#"
+            max_sse_connections = 500
+            connection_ttl_secs  = 7200
+            keepalive_secs       = 45
+        "#;
+        let cfg: FsrConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.max_sse_connections, 500);
+        assert_eq!(cfg.connection_ttl_secs, 7200);
+        assert_eq!(cfg.keepalive_secs, 45);
+    }
 }
