@@ -1,5 +1,6 @@
 use axum::{
     Extension,
+    Json,
     extract::Query,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -140,6 +141,61 @@ pub async fn fsr_hub_handler_or_unavailable(
     }
 }
 
+/// Handler for `GET /__pilcrow/fsr/snapshot?route=...&slots=...`.
+///
+/// Re-executes stored queries for the requested slots and returns their current
+/// values as JSON. Called by the client after receiving an `fsr-resync` event.
+pub async fn fsr_snapshot_handler(
+    Query(query): Query<FsrHubQuery>,
+    store: Option<Extension<Arc<FsrStore>>>,
+) -> Response {
+    let Some(Extension(store)) = store else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "FSR store unavailable").into_response();
+    };
+
+    let route = query.route.unwrap_or_default();
+    let slot_names: Vec<&str> = query
+        .slots
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let slots = match store.fetch_slots_for_snapshot(&route, &slot_names).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "FSR snapshot: DB error");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let mut result = serde_json::Map::new();
+    for slot in &slots {
+        let Some(ref sql) = slot.query else { continue };
+        let params: Vec<serde_json::Value> = slot
+            .query_params
+            .as_ref()
+            .and_then(|p| p.as_array())
+            .cloned()
+            .unwrap_or_default();
+        match execute_with_params(store.pool(), sql, &params).await {
+            Ok(Some(row)) => {
+                let col_key = slot.column_name.as_deref().unwrap_or(&slot.slot);
+                if let Some(v) = row.get(col_key) {
+                    result.insert(slot.slot.clone(), v.clone());
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(slot = %slot.slot, error = %e, "FSR snapshot: query error for slot");
+            }
+        }
+    }
+
+    Json(serde_json::Value::Object(result)).into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +217,15 @@ mod tests {
         assert_eq!(cfg.max_connections, 1000);
         assert_eq!(cfg.connection_ttl_secs, 3600);
         assert_eq!(cfg.keepalive_secs, 30);
+    }
+
+    #[tokio::test]
+    async fn snapshot_returns_503_without_store() {
+        let resp = fsr_snapshot_handler(
+            Query(FsrHubQuery { route: None, slots: None }),
+            None,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
