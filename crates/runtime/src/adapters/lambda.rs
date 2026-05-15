@@ -37,6 +37,13 @@ use crate::adapter::{AdapterFuture, PilcrowAdapter};
 /// ```
 ///
 /// Works with AWS Lambda, Vercel Functions (Lambda-backed), and Netlify Functions.
+///
+/// # Version note
+///
+/// Pinned to `lambda_http` 0.13 in `Cargo.toml`. `lambda_http` 1.x is available
+/// (1.2.0 as of 2026); the `Body` enum (`Empty`, `Text`, `Binary`) and the
+/// `run` / `service_fn` surface are unchanged, so upgrading should be mechanical,
+/// but requires re-running the full lambda test suite before bumping the version.
 pub struct LambdaAdapter;
 
 impl PilcrowAdapter for LambdaAdapter {

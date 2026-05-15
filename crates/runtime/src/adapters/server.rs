@@ -1,6 +1,6 @@
 use axum::Router;
 
-use crate::adapter::{shutdown_signal, AdapterFuture, PilcrowAdapter};
+use crate::adapter::{AdapterFuture, PilcrowAdapter, shutdown_signal};
 
 /// Adapter for cloud platforms that inject a `PORT` env var at runtime.
 ///
@@ -28,10 +28,11 @@ pub type VercelAdapter = PortEnvAdapter;
 
 impl PilcrowAdapter for PortEnvAdapter {
     fn serve(self, bind_addr: &str, app: Router) -> AdapterFuture {
-        let addr = match std::env::var("PORT") {
-            Ok(port) => format!("0.0.0.0:{port}"),
-            Err(_) => bind_addr.to_string(),
-        };
+        // let addr = match std::env::var("PORT") {
+        //     Ok(port) => format!("0.0.0.0:{port}"),
+        //     Err(_) => bind_addr.to_string(),
+        // };
+        let addr = resolve_addr(bind_addr);
         Box::pin(async move {
             let listener = match tokio::net::TcpListener::bind(&addr).await {
                 Ok(listener) => listener,
@@ -51,5 +52,39 @@ impl PilcrowAdapter for PortEnvAdapter {
                 std::process::exit(1);
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn addr_uses_port_env_when_set() {
+        assert_eq!(
+            resolve_addr_impl("127.0.0.1:3000", Some("8080".into())),
+            "0.0.0.0:8080"
+        );
+    }
+
+    #[test]
+    fn addr_falls_back_to_bind_addr_when_port_absent() {
+        assert_eq!(resolve_addr_impl("127.0.0.1:3000", None), "127.0.0.1:3000");
+    }
+
+    #[test]
+    fn addr_preserves_non_loopback_bind_addr_as_fallback() {
+        assert_eq!(resolve_addr_impl("0.0.0.0:4000", None), "0.0.0.0:4000");
+    }
+}
+
+fn resolve_addr(bind_addr: &str) -> String {
+    resolve_addr_impl(bind_addr, std::env::var("PORT").ok())
+}
+
+fn resolve_addr_impl(bind_addr: &str, port: Option<String>) -> String {
+    match port {
+        Some(port) => format!("0.0.0.0:{port}"),
+        None => bind_addr.to_string(),
     }
 }
