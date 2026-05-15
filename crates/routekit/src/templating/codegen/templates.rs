@@ -156,8 +156,22 @@ pub fn render_generated_templates_module(
             .map(|p| p.join("live.rs"))
             .filter(|p| p.exists());
         if let Some(ref live_path) = live_rs_path {
-            match crate::fsr::process_live_rs(live_path) {
+            let route_params: Vec<String> =
+                entry.route_params.iter().map(|p| p.name.clone()).collect();
+            match crate::fsr::process_live_rs(live_path, &route_params) {
                 Ok((src, fields)) => {
+                    crate::fsr::validate_live_template_slots(
+                        &entry.template_source,
+                        &fields,
+                        Path::new(&entry.source_path),
+                        live_path,
+                    )
+                    .map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("failed to validate {}: {e}", live_path.display()),
+                        )
+                    })?;
                     if !fields.is_empty() {
                         fsr_live_fields_map.insert(
                             entry.module_name.clone(),
@@ -167,10 +181,10 @@ pub fn render_generated_templates_module(
                     fsr_live_source_map.insert(entry.module_name.clone(), src);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[pilcrow-routekit] warning: failed to process {}: {e}",
-                        live_path.display()
-                    );
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("failed to process {}: {e}", live_path.display()),
+                    ));
                 }
             }
         }
@@ -223,12 +237,17 @@ pub fn render_generated_templates_module(
             out.push_str("        ::pilcrow_web::axum::extract::FromRequestParts<__S>\n");
             out.push_str("        for Live\n");
             out.push_str("    {\n");
-            out.push_str("        type Rejection = ::pilcrow_web::AppError;\n");
+            out.push_str(
+                "        type Rejection = (::pilcrow_web::axum::http::StatusCode, String);\n",
+            );
             out.push_str("        async fn from_request_parts(\n");
             out.push_str("            parts: &mut ::pilcrow_web::axum::http::request::Parts,\n");
             out.push_str("            _state: &__S,\n");
-            out.push_str("        ) -> ::std::result::Result<Self, ::pilcrow_web::AppError> {\n");
-            out.push_str("            ::pilcrow_runtime::fsr::extract_live_from_parts(parts).await\n");
+            out.push_str("        ) -> ::std::result::Result<Self, Self::Rejection> {\n");
+            out.push_str(
+                "            ::pilcrow_runtime::fsr::extract_live_from_parts(parts).await\n",
+            );
+            out.push_str("                .map_err(|e| (::pilcrow_web::axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))\n");
             out.push_str("        }\n");
             out.push_str("    }\n");
         }

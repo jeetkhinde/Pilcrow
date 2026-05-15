@@ -1,12 +1,13 @@
 /// Construct an FSR `DependencyKey` from table name, column name, and a runtime value.
 ///
+/// Macro arguments mean: table, column, runtime value.
+///
 /// # Examples
 ///
 /// ```rust,ignore
 /// use pilcrow::live::*;
 ///
-/// let ticket_id = 123u32;
-/// let key = fsr_dep!(tickets, id, ticket_id);
+/// let key = fsr_dep!(tickets, id, params.id);
 /// // Produces: DependencyKey { table: "tickets", column: "id", value: "123" }
 /// ```
 #[macro_export]

@@ -1,4 +1,4 @@
-use markdown::{to_html_with_options, Options};
+use markdown::{Options, to_html_with_options};
 
 use crate::templating::compiler::{HtmlModuleParseError, HtmlModuleParts};
 

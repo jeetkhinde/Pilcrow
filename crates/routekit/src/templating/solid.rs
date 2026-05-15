@@ -320,9 +320,7 @@ fn run_vite(manifest_dir: &Path, config_path: &Path) -> io::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(
-            "Solid island Vite build failed",
-        ))
+        Err(io::Error::other("Solid island Vite build failed"))
     }
 }
 

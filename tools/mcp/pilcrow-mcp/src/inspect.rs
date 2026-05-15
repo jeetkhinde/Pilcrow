@@ -99,8 +99,7 @@ pub fn inspect_route(
         None
     };
 
-    let layout_chain =
-        crate::workspace::collect_layout_chain_pub(&pages, &rel_path);
+    let layout_chain = crate::workspace::collect_layout_chain_pub(&pages, &rel_path);
     let has_loading = layout_chain_has(&pages, &rel_path, "_loading");
     let has_error = layout_chain_has(&pages, &rel_path, "_error");
 
@@ -138,14 +137,16 @@ pub fn inspect_template(
     if !abs_path.exists() {
         bail!("template not found: {}", abs_path.display());
     }
-    Ok(inspect_template_file(&abs_path, path).unwrap_or_else(|| TemplateInspection {
-        path: path.to_string(),
-        component_imports: vec![],
-        slot_usages: vec![],
-        silcrow_directives: vec![],
-        fragment_slots: vec![],
-        has_layout_opt_out: false,
-    }))
+    Ok(
+        inspect_template_file(&abs_path, path).unwrap_or_else(|| TemplateInspection {
+            path: path.to_string(),
+            component_imports: vec![],
+            slot_usages: vec![],
+            silcrow_directives: vec![],
+            fragment_slots: vec![],
+            has_layout_opt_out: false,
+        }),
+    )
 }
 
 pub fn inspect_code_behind(
@@ -206,10 +207,12 @@ pub fn inspect_generated_route(
     let generated_app = fs::read_to_string(out_dir.join("generated_app.rs")).ok();
     let generated_routes = fs::read_to_string(out_dir.join("generated_routes.rs")).ok();
 
-    let app_excerpt =
-        generated_app.as_deref().map(|src| excerpt_for_route(src, route, &url_pattern));
-    let routes_excerpt =
-        generated_routes.as_deref().map(|src| excerpt_for_route(src, route, &url_pattern));
+    let app_excerpt = generated_app
+        .as_deref()
+        .map(|src| excerpt_for_route(src, route, &url_pattern));
+    let routes_excerpt = generated_routes
+        .as_deref()
+        .map(|src| excerpt_for_route(src, route, &url_pattern));
 
     let all_files = crate::workspace::list_files_recursive(&out_dir)
         .unwrap_or_default()
@@ -417,9 +420,10 @@ fn url_patterns_match(pattern: &str, target: &str) -> bool {
     if p_segs.len() != t_segs.len() {
         return false;
     }
-    p_segs.iter().zip(t_segs.iter()).all(|(p, t)| {
-        p == t || p.starts_with(':') || p.starts_with('*')
-    })
+    p_segs
+        .iter()
+        .zip(t_segs.iter())
+        .all(|(p, t)| p == t || p.starts_with(':') || p.starts_with('*'))
 }
 
 fn layout_chain_has(pages_root: &Path, rel_path: &str, special: &str) -> bool {
@@ -449,7 +453,10 @@ fn excerpt_for_route(source: &str, route: &str, url_pattern: &str) -> String {
     let mut excerpts = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
         let lower = line.to_ascii_lowercase();
-        if search_terms.iter().any(|t| lower.contains(&t.to_ascii_lowercase())) {
+        if search_terms
+            .iter()
+            .any(|t| lower.contains(&t.to_ascii_lowercase()))
+        {
             let start = idx.saturating_sub(2);
             let end = (idx + 3).min(lines.len());
             let chunk = lines[start..end].join("\n");

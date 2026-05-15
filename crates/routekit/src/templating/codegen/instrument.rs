@@ -24,46 +24,47 @@ pub fn instrument_frontmatter(
     let mut const_remove_indices: Vec<usize> = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
         if let syn::Item::Const(c) = item
-            && matches!(c.vis, syn::Visibility::Public(_)) {
-                let value_str = c.expr.to_token_stream().to_string();
-                let value = value_str.trim_matches('"').trim_matches('\'');
-                if c.ident == "TRAILING_SLASH" {
-                    page_options.trailing_slash = TrailingSlash::from_label(value);
-                    const_remove_indices.push(index);
-                } else if c.ident == "LAYOUT" {
-                    page_options.layout = if value.trim_matches('"').trim_matches('\'') == "none" {
-                        LayoutOpt::None
-                    } else {
-                        LayoutOpt::Inherit
-                    };
-                    const_remove_indices.push(index);
-                } else if c.ident == "REVALIDATE" {
-                    if let Ok(v) = parse_u64_const(&c.expr) {
-                        page_options.isr.revalidate = Some(v);
-                    }
-                    const_remove_indices.push(index);
-                } else if c.ident == "MAX_STALE" {
-                    if let Ok(v) = parse_u64_const(&c.expr) {
-                        page_options.isr.max_stale = Some(v);
-                    }
-                    const_remove_indices.push(index);
-                } else if c.ident == "CACHE_TAGS" {
-                    page_options.isr.cache_tags = parse_str_slice_const(&c.expr);
-                    const_remove_indices.push(index);
-                } else if c.ident == "CACHE_VARY" {
-                    page_options.isr.cache_vary = parse_str_slice_const(&c.expr);
-                    const_remove_indices.push(index);
-                } else if c.ident == "PRERENDER" {
-                    page_options.ssg.prerender = value_str.trim() == "true";
-                    const_remove_indices.push(index);
-                } else if c.ident == "STREAMING" {
-                    page_options.streaming = value_str.trim() == "true";
-                    const_remove_indices.push(index);
-                } else if c.ident == "FSR_JSON" {
-                    page_options.fsr.json = value_str.trim() == "true";
-                    const_remove_indices.push(index);
+            && matches!(c.vis, syn::Visibility::Public(_))
+        {
+            let value_str = c.expr.to_token_stream().to_string();
+            let value = value_str.trim_matches('"').trim_matches('\'');
+            if c.ident == "TRAILING_SLASH" {
+                page_options.trailing_slash = TrailingSlash::from_label(value);
+                const_remove_indices.push(index);
+            } else if c.ident == "LAYOUT" {
+                page_options.layout = if value.trim_matches('"').trim_matches('\'') == "none" {
+                    LayoutOpt::None
+                } else {
+                    LayoutOpt::Inherit
+                };
+                const_remove_indices.push(index);
+            } else if c.ident == "REVALIDATE" {
+                if let Ok(v) = parse_u64_const(&c.expr) {
+                    page_options.isr.revalidate = Some(v);
                 }
+                const_remove_indices.push(index);
+            } else if c.ident == "MAX_STALE" {
+                if let Ok(v) = parse_u64_const(&c.expr) {
+                    page_options.isr.max_stale = Some(v);
+                }
+                const_remove_indices.push(index);
+            } else if c.ident == "CACHE_TAGS" {
+                page_options.isr.cache_tags = parse_str_slice_const(&c.expr);
+                const_remove_indices.push(index);
+            } else if c.ident == "CACHE_VARY" {
+                page_options.isr.cache_vary = parse_str_slice_const(&c.expr);
+                const_remove_indices.push(index);
+            } else if c.ident == "PRERENDER" {
+                page_options.ssg.prerender = value_str.trim() == "true";
+                const_remove_indices.push(index);
+            } else if c.ident == "STREAMING" {
+                page_options.streaming = value_str.trim() == "true";
+                const_remove_indices.push(index);
+            } else if c.ident == "FSR_JSON" {
+                page_options.fsr.json = value_str.trim() == "true";
+                const_remove_indices.push(index);
             }
+        }
     }
     // Remove in reverse order to preserve indices.
     for idx in const_remove_indices.into_iter().rev() {
@@ -73,15 +74,16 @@ pub fn instrument_frontmatter(
     let mut props_indices = Vec::new();
     for (index, item) in file.items.iter().enumerate() {
         if let syn::Item::Struct(item_struct) = item
-            && item_struct.ident == "Props" {
-                if !matches!(item_struct.vis, syn::Visibility::Public(_)) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("frontmatter in {source_path} must declare `pub struct Props`"),
-                    ));
-                }
-                props_indices.push(index);
+            && item_struct.ident == "Props"
+        {
+            if !matches!(item_struct.vis, syn::Visibility::Public(_)) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("frontmatter in {source_path} must declare `pub struct Props`"),
+                ));
             }
+            props_indices.push(index);
+        }
     }
 
     if props_indices.len() > 1 {
@@ -238,41 +240,43 @@ pub fn instrument_frontmatter(
     // Pages and layouts must use a canonical load() signature so that
     // response modifiers (toasts, headers, cookies) are always applied.
     if let Some(ref sig) = load_signature
-        && (source_path.contains("/pages/") || is_fragment) {
-            if !sig.is_async {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "`load()` in `{source_path}` must be declared `async`.\n\
+        && (source_path.contains("/pages/") || is_fragment)
+    {
+        if !sig.is_async {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "`load()` in `{source_path}` must be declared `async`.\n\
                          Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
-                    ),
-                ));
-            }
-            if !sig.returns_result {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "`load()` in `{source_path}` must return `AppResult<Props>`.\n\
-                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
-                    ),
-                ));
-            }
-            if !sig.wants_req && !sig.wants_page {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "`load()` in `{source_path}` must take `req: Req` or `ctx: Page` as a parameter.\n\
-                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
-                    ),
-                ));
-            }
+                ),
+            ));
         }
+        if !sig.returns_result {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "`load()` in `{source_path}` must return `AppResult<Props>`.\n\
+                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
+                ),
+            ));
+        }
+        if !sig.wants_req && !sig.wants_page {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "`load()` in `{source_path}` must take `req: Req` or `ctx: Page` as a parameter.\n\
+                         Required signature: pub async fn load(req: Req) -> AppResult<Props> or pub async fn load(ctx: Page) -> AppResult<Props>"
+                ),
+            ));
+        }
+    }
 
     let has_manual_default = file.items.iter().any(|item| {
         if let syn::Item::Impl(impl_block) = item
-            && let Some((_, path, _)) = &impl_block.trait_ {
-                return path.segments.last().is_some_and(|s| s.ident == "Default");
-            }
+            && let Some((_, path, _)) = &impl_block.trait_
+        {
+            return path.segments.last().is_some_and(|s| s.ident == "Default");
+        }
         false
     });
 
@@ -295,10 +299,10 @@ pub fn instrument_frontmatter(
         file.items.len() - 1
     };
 
-    // Detect a `live()` fn or `LiveProps` struct — must be done before the mutable borrow.
+    // Detect a `live()` fn or `LiveProp` struct — must be done before the mutable borrow.
     let has_live_fn = file.items.iter().any(|item| match item {
         syn::Item::Fn(f) => f.sig.ident == "live",
-        syn::Item::Struct(s) => s.ident == "LiveProps",
+        syn::Item::Struct(s) => s.ident == "LiveProp",
         _ => false,
     });
 
@@ -322,9 +326,9 @@ pub fn instrument_frontmatter(
                 && type_last_ident(&f.ty)
                     .map(|id| id == "AsyncValue")
                     .unwrap_or(false)
-                {
-                    return Some(ident.to_string());
-                }
+            {
+                return Some(ident.to_string());
+            }
             None
         })
         .collect();
@@ -336,9 +340,9 @@ pub fn instrument_frontmatter(
                 && type_last_ident(&f.ty)
                     .map(|id| id == "AsyncHtml")
                     .unwrap_or(false)
-                {
-                    return Some(ident.to_string());
-                }
+            {
+                return Some(ident.to_string());
+            }
             None
         })
         .collect();
@@ -351,9 +355,9 @@ pub fn instrument_frontmatter(
                 && type_last_ident(&f.ty)
                     .map(|id| id == "LiveProp")
                     .unwrap_or(false)
-                {
-                    return Some(ident.to_string());
-                }
+            {
+                return Some(ident.to_string());
+            }
             None
         })
         .collect();
@@ -499,12 +503,23 @@ pub fn detect_load_signature(sig: &syn::Signature) -> LoadSignature {
         }
     });
 
+    let wants_live = sig.inputs.iter().any(|arg| {
+        if let syn::FnArg::Typed(pat) = arg {
+            type_last_ident(&pat.ty)
+                .map(|ident| ident == "Live")
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    });
+
     LoadSignature {
         is_async,
         returns_result,
         wants_client,
         wants_req,
         wants_page,
+        wants_live,
     }
 }
 
@@ -632,9 +647,10 @@ pub fn normalize_derive_path(input: &str) -> String {
 /// Parse a `u64` literal from a `pub const X: u64 = N;` expression.
 fn parse_u64_const(expr: &syn::Expr) -> Result<u64, ()> {
     if let syn::Expr::Lit(lit_expr) = expr
-        && let syn::Lit::Int(lit_int) = &lit_expr.lit {
-            return lit_int.base10_parse::<u64>().map_err(|_| ());
-        }
+        && let syn::Lit::Int(lit_int) = &lit_expr.lit
+    {
+        return lit_int.base10_parse::<u64>().map_err(|_| ());
+    }
     Err(())
 }
 

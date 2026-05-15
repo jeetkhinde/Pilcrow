@@ -1,4 +1,4 @@
-use crate::response::response::{form_errors, FormErrors};
+use crate::response::response::{FormErrors, form_errors};
 
 /// Fluent form validation builder.
 ///
@@ -118,10 +118,12 @@ mod tests {
 
     #[test]
     fn required_passes_for_nonempty_value() {
-        assert!(Validator::new()
-            .required("name", "Alice")
-            .into_result()
-            .is_ok());
+        assert!(
+            Validator::new()
+                .required("name", "Alice")
+                .into_result()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -145,10 +147,12 @@ mod tests {
 
     #[test]
     fn min_length_passes_at_boundary() {
-        assert!(Validator::new()
-            .min_length("pass", "abc", 3)
-            .into_result()
-            .is_ok());
+        assert!(
+            Validator::new()
+                .min_length("pass", "abc", 3)
+                .into_result()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -162,10 +166,12 @@ mod tests {
 
     #[test]
     fn max_length_passes_at_boundary() {
-        assert!(Validator::new()
-            .max_length("code", "abc", 3)
-            .into_result()
-            .is_ok());
+        assert!(
+            Validator::new()
+                .max_length("code", "abc", 3)
+                .into_result()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -179,10 +185,12 @@ mod tests {
 
     #[test]
     fn email_passes_valid_address() {
-        assert!(Validator::new()
-            .email("email", "user@example.com")
-            .into_result()
-            .is_ok());
+        assert!(
+            Validator::new()
+                .email("email", "user@example.com")
+                .into_result()
+                .is_ok()
+        );
     }
 
     #[test]

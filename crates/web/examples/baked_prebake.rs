@@ -29,9 +29,18 @@ fn main() -> io::Result<()> {
         BakedPagePaths::new(
             "/tickets/:id",
             "/tickets/123",
-            store.shell_path("/tickets/:id").to_string_lossy().to_string(),
-            store.json_path("/tickets/123").to_string_lossy().to_string(),
-            store.metadata_path("/tickets/123").to_string_lossy().to_string(),
+            store
+                .shell_path("/tickets/:id")
+                .to_string_lossy()
+                .to_string(),
+            store
+                .json_path("/tickets/123")
+                .to_string_lossy()
+                .to_string(),
+            store
+                .metadata_path("/tickets/123")
+                .to_string_lossy()
+                .to_string(),
         ),
         vec![BakedSlot::text("status")],
         vec![DependencyConfig::immediate("ticket:123", "status")],

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::FluentArgs;
 use fluent_bundle::FluentResource;
 use fluent_bundle::FluentValue;
+use fluent_bundle::concurrent::FluentBundle;
 use unic_langid::LanguageIdentifier;
 
 // ── Bundle storage ────────────────────────────────────────────
@@ -159,10 +159,8 @@ fn load_bundle(locale_dir: &Path, locale: &str) -> std::io::Result<ConcurrentBun
 // ── Locale detection (extension marker) ──────────────────────
 
 /// Locale code stored in request extensions by the locale-rewrite middleware.
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CurrentLocale(pub String);
-
 
 // ── Locale-rewrite middleware ─────────────────────────────────
 

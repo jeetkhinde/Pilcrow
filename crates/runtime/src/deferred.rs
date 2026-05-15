@@ -797,8 +797,8 @@ pub struct BakedField {
 mod tests {
     use super::*;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
     use std::task::{Context, Poll};
 

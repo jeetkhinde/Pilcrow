@@ -3,8 +3,8 @@ use futures_core::Stream;
 use std::convert::Infallible;
 use std::future::Future;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 crate::define_route!(SseRoute, "SSE", "/events/feed", "FEED");
 

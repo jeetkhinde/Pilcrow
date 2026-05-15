@@ -447,7 +447,8 @@ pub fn parse_code_behind(path: &Path) -> Option<CodeBehindInfo> {
                     for field in &named.named {
                         if let Some(ident) = &field.ident {
                             let type_name = type_to_string(&field.ty);
-                            let is_deferred = type_name.starts_with("AsyncValue") || type_name.starts_with("AsyncHtml");
+                            let is_deferred = type_name.starts_with("AsyncValue")
+                                || type_name.starts_with("AsyncHtml");
                             prop_fields.push(PropField {
                                 name: ident.to_string(),
                                 type_name,

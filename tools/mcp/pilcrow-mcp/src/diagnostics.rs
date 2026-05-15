@@ -99,7 +99,10 @@ pub fn diagnose_project(
                     &mut counter,
                     Severity::Error,
                     "pilcrow-load-not-async",
-                    &format!("load() in {} is not async. The build pipeline requires async load().", node.file_path),
+                    &format!(
+                        "load() in {} is not async. The build pipeline requires async load().",
+                        node.file_path
+                    ),
                     Some(&format!("pages/{}", node.file_path.replace(".html", ".rs"))),
                     None,
                     "Change `fn load` to `async fn load`.",
@@ -363,11 +366,8 @@ pub fn diagnose_route(
 
         // Run full validation
         if let Ok(source) = fs::read_to_string(&rs_abs) {
-            let report = validate_implementation(
-                &source,
-                Some(&rs_abs.to_string_lossy()),
-                Some("rust"),
-            );
+            let report =
+                validate_implementation(&source, Some(&rs_abs.to_string_lossy()), Some("rust"));
             for vf in report.findings {
                 findings.push(validation_finding_to_diag(&mut counter, vf));
             }
@@ -376,11 +376,8 @@ pub fn diagnose_route(
 
     // Check HTML template
     if let Ok(source) = fs::read_to_string(&html_abs) {
-        let report = validate_implementation(
-            &source,
-            Some(&html_abs.to_string_lossy()),
-            Some("html"),
-        );
+        let report =
+            validate_implementation(&source, Some(&html_abs.to_string_lossy()), Some("html"));
         for vf in report.findings {
             findings.push(validation_finding_to_diag(&mut counter, vf));
         }
@@ -532,10 +529,7 @@ pub fn propose_fix(findings: &[DiagnosticFinding], finding_id: &str) -> Option<F
     })
 }
 
-pub fn apply_safe_fix(
-    finding: &DiagnosticFinding,
-    dry_run: bool,
-) -> ApplyFixResult {
+pub fn apply_safe_fix(finding: &DiagnosticFinding, dry_run: bool) -> ApplyFixResult {
     match finding.rule_id.as_str() {
         "pilcrow-load-not-async" => {
             if let Some(file) = &finding.file {
@@ -609,16 +603,43 @@ fn validation_finding_to_diag(counter: &mut usize, vf: Finding) -> DiagnosticFin
 
 fn rule_source_ref(rule_id: &str) -> Option<String> {
     let refs: BTreeMap<&str, &str> = [
-        ("pilcrow-load-not-async", "crates/routekit/src/templating/codegen/instrument.rs"),
-        ("pilcrow-load-async", "crates/routekit/src/templating/codegen/instrument.rs"),
-        ("pilcrow-load-return", "crates/routekit/src/templating/codegen/instrument.rs"),
-        ("pilcrow-api-missing-router", "crates/routekit/src/templating/codegen/api_routes.rs"),
-        ("pilcrow-missing-not-found", "crates/routekit/src/templating/codegen/app_module.rs"),
-        ("pilcrow-no-generated-artifacts", "crates/routekit/src/lib.rs"),
-        ("pilcrow-missing-generated-app", "crates/routekit/src/lib.rs"),
+        (
+            "pilcrow-load-not-async",
+            "crates/routekit/src/templating/codegen/instrument.rs",
+        ),
+        (
+            "pilcrow-load-async",
+            "crates/routekit/src/templating/codegen/instrument.rs",
+        ),
+        (
+            "pilcrow-load-return",
+            "crates/routekit/src/templating/codegen/instrument.rs",
+        ),
+        (
+            "pilcrow-api-missing-router",
+            "crates/routekit/src/templating/codegen/api_routes.rs",
+        ),
+        (
+            "pilcrow-missing-not-found",
+            "crates/routekit/src/templating/codegen/app_module.rs",
+        ),
+        (
+            "pilcrow-no-generated-artifacts",
+            "crates/routekit/src/lib.rs",
+        ),
+        (
+            "pilcrow-missing-generated-app",
+            "crates/routekit/src/lib.rs",
+        ),
         ("pilcrow-planned-islands", "registry.toml: feature islands"),
-        ("pilcrow-planned-static-output", "registry.toml: feature ssg"),
-        ("pilcrow-boundary-silcrow-in-rust", "CLAUDE.md: silcrow.js section"),
+        (
+            "pilcrow-planned-static-output",
+            "registry.toml: feature ssg",
+        ),
+        (
+            "pilcrow-boundary-silcrow-in-rust",
+            "CLAUDE.md: silcrow.js section",
+        ),
     ]
     .into_iter()
     .collect();

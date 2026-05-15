@@ -172,7 +172,8 @@ mod tests {
     #[test]
     fn ignores_data_pilcrow_live_field_attributes() {
         // The two attribute namespaces must not interfere.
-        let html = r#"<span data-pilcrow-live-field="status">x</span><span s-live="count">0</span>"#;
+        let html =
+            r#"<span data-pilcrow-live-field="status">x</span><span s-live="count">0</span>"#;
         let names = find_s_live_slots(html);
         assert_eq!(names, vec!["count"]);
     }

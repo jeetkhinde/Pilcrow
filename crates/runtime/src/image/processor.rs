@@ -1,8 +1,8 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use image::imageops::FilterType;
 use image::DynamicImage;
+use image::imageops::FilterType;
 use sha2::{Digest, Sha256};
 
 pub struct TransformParams<'a> {

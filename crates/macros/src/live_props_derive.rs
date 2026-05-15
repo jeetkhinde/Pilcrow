@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+use syn::{Data, DeriveInput, Fields, Type, parse_macro_input};
 
 pub fn expand(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -21,7 +21,7 @@ pub fn expand(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics ::runtime::live_props::LivePropsExtract
+        impl #impl_generics ::runtime::live_props::LivePropExtract
             for #struct_name #ty_generics #where_clause
         {
             fn live_fields(&self) -> ::std::vec::Vec<::runtime::live_props::LiveFieldData> {
@@ -51,6 +51,7 @@ fn extract_live_fields(fields: &Fields) -> TokenStream2 {
         };
         let field_name_str = field_ident.to_string();
 
+        let column_name = find_str_attr(&field.attrs, "column");
         let promote_after = find_u32_attr(&field.attrs, "promote_after");
         let patch_debounce = find_u32_attr(&field.attrs, "patch_debounce");
 
@@ -58,13 +59,17 @@ fn extract_live_fields(fields: &Fields) -> TokenStream2 {
             #extractions
             {
                 let mut __lp = self.#field_ident.clone();
+                let mut __name = #field_name_str.to_string();
+                if let ::std::option::Option::Some(__c) = #column_name {
+                    __name = __c;
+                }
                 if let ::std::option::Option::Some(__n) = #promote_after {
                     __lp = __lp.promote_after(__n);
                 }
                 if let ::std::option::Option::Some(__n) = #patch_debounce {
                     __lp = __lp.patch_debounce(__n);
                 }
-                __fields.push(__lp.to_field_data(#field_name_str));
+                __fields.push(__lp.to_field_data(__name));
             }
         };
     }
@@ -73,9 +78,10 @@ fn extract_live_fields(fields: &Fields) -> TokenStream2 {
 
 fn is_live_props_type(ty: &Type) -> bool {
     if let Type::Path(tp) = ty
-        && let Some(seg) = tp.path.segments.last() {
-            return seg.ident == "LiveProps";
-        }
+        && let Some(seg) = tp.path.segments.last()
+    {
+        return seg.ident == "LiveProp";
+    }
     false
 }
 
@@ -83,9 +89,22 @@ fn find_u32_attr(attrs: &[syn::Attribute], name: &str) -> TokenStream2 {
     for attr in attrs {
         if attr.path().is_ident(name)
             && let Ok(lit) = attr.parse_args::<syn::LitInt>()
-                && let Ok(val) = lit.base10_parse::<u32>() {
-                    return quote! { ::std::option::Option::Some(#val as u32) };
-                }
+            && let Ok(val) = lit.base10_parse::<u32>()
+        {
+            return quote! { ::std::option::Option::Some(#val as u32) };
+        }
     }
     quote! { ::std::option::Option::None::<u32> }
+}
+
+fn find_str_attr(attrs: &[syn::Attribute], name: &str) -> TokenStream2 {
+    for attr in attrs {
+        if attr.path().is_ident(name)
+            && let Ok(lit) = attr.parse_args::<syn::LitStr>()
+        {
+            let val = lit.value();
+            return quote! { ::std::option::Option::Some(#val.to_string()) };
+        }
+    }
+    quote! { ::std::option::Option::None::<String> }
 }

@@ -5,15 +5,16 @@ use std::path::{Component, Path, PathBuf};
 
 use globset::{Glob, GlobSetBuilder};
 
+use crate::Route;
 use crate::routing::discovery::{
-    discover_fragment_files, discover_html_files_with_fragment_dirs, DiscoveredHtmlFiles,
+    DiscoveredHtmlFiles, discover_fragment_files, discover_html_files_with_fragment_dirs,
 };
 use crate::templating::build_config::PilcrowBuildConfig;
 use crate::templating::codegen::{
-    build_generated_fragment_manifest, write_generated_api_routes_module,
-    write_generated_app_module, write_generated_routes_module, write_generated_templates_module,
     AppCodegenMaps, GeneratedApiRoute, GeneratedPageRoute, GeneratedRouteParam,
-    GeneratedTemplateEntry, HookFlags, TemplateCodegenInput,
+    GeneratedTemplateEntry, HookFlags, TemplateCodegenInput, build_generated_fragment_manifest,
+    write_generated_api_routes_module, write_generated_app_module, write_generated_routes_module,
+    write_generated_templates_module,
 };
 use crate::templating::compiler::{
     inject_form_method_attrs, split_html_module, transpile_component_tags, transpile_island_tags,
@@ -21,13 +22,12 @@ use crate::templating::compiler::{
 };
 use crate::templating::markdown::transpile_markdown;
 use crate::templating::react::{
-    build_react_assets, replace_react_placeholders, replace_react_shell_placeholders,
-    transpile_react_tags, ReactIslandRef,
+    ReactIslandRef, build_react_assets, replace_react_placeholders,
+    replace_react_shell_placeholders, transpile_react_tags,
 };
 use crate::templating::solid::{
-    build_solid_assets, replace_solid_placeholders, transpile_solid_tags, SolidIslandRef,
+    SolidIslandRef, build_solid_assets, replace_solid_placeholders, transpile_solid_tags,
 };
-use crate::Route;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtmlSourceKind {
@@ -1701,8 +1701,9 @@ fn expand_known_components(
         }
 
         if ch == '<'
-            && let Some(invocation) = parse_component_invocation(&template[i..]) {
-                let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
+            && let Some(invocation) = parse_component_invocation(&template[i..])
+        {
+            let import_target = owner_module.imports.get(&invocation.name).ok_or_else(|| {
                 let (line, col) = line_col_at(template, i);
                 let mut msg = format!(
                     "missing explicit import for component `<{}>` at template line {line}, column {col}.",
@@ -1731,59 +1732,57 @@ fn expand_known_components(
                 template_compile_error(owner_path, msg)
             })?;
 
-                let imported_module = modules.get(import_target).ok_or_else(|| {
-                    template_compile_error(
-                        owner_path,
-                        format!(
-                            "import target `{}` was not part of discovered templates",
-                            src_relative_display_path(import_target)
-                        ),
-                    )
-                })?;
+            let imported_module = modules.get(import_target).ok_or_else(|| {
+                template_compile_error(
+                    owner_path,
+                    format!(
+                        "import target `{}` was not part of discovered templates",
+                        src_relative_display_path(import_target)
+                    ),
+                )
+            })?;
 
-                if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
-                    let mut cycle_chain = stack[cycle_start..]
-                        .iter()
-                        .map(|p| src_relative_display_path(p))
-                        .collect::<Vec<_>>();
-                    cycle_chain.push(src_relative_display_path(import_target));
-                    return Err(template_compile_error(
-                        owner_path,
-                        format!(
-                            "component import cycle detected: {}",
-                            cycle_chain.join(" -> ")
-                        ),
-                    ));
-                }
-
-                let inner_expanded = invocation
-                    .inner
-                    .as_deref()
-                    .map(|inner| {
-                        expand_known_components(inner, owner_path, modules, stack, depth + 1)
-                    })
-                    .transpose()?
-                    .unwrap_or_default();
-
-                let slot_assignments = collect_slot_assignments(&inner_expanded);
-                let component_with_slot =
-                    apply_slots(&imported_module.template_source, &slot_assignments);
-
-                stack.push(import_target.clone());
-                let component_body = expand_known_components(
-                    &component_with_slot,
-                    import_target,
-                    modules,
-                    stack,
-                    depth + 1,
-                )?;
-                stack.pop();
-
-                out.push_str(&render_askama_let_bindings(&invocation.attrs));
-                out.push_str(&component_body);
-                i += invocation.consumed;
-                continue;
+            if let Some(cycle_start) = stack.iter().position(|path| path == import_target) {
+                let mut cycle_chain = stack[cycle_start..]
+                    .iter()
+                    .map(|p| src_relative_display_path(p))
+                    .collect::<Vec<_>>();
+                cycle_chain.push(src_relative_display_path(import_target));
+                return Err(template_compile_error(
+                    owner_path,
+                    format!(
+                        "component import cycle detected: {}",
+                        cycle_chain.join(" -> ")
+                    ),
+                ));
             }
+
+            let inner_expanded = invocation
+                .inner
+                .as_deref()
+                .map(|inner| expand_known_components(inner, owner_path, modules, stack, depth + 1))
+                .transpose()?
+                .unwrap_or_default();
+
+            let slot_assignments = collect_slot_assignments(&inner_expanded);
+            let component_with_slot =
+                apply_slots(&imported_module.template_source, &slot_assignments);
+
+            stack.push(import_target.clone());
+            let component_body = expand_known_components(
+                &component_with_slot,
+                import_target,
+                modules,
+                stack,
+                depth + 1,
+            )?;
+            stack.pop();
+
+            out.push_str(&render_askama_let_bindings(&invocation.attrs));
+            out.push_str(&component_body);
+            i += invocation.consumed;
+            continue;
+        }
 
         out.push(ch);
         i += ch.len_utf8();
@@ -2767,10 +2766,12 @@ pub struct Props {
         assert!(result.generated_routes_file.exists());
         assert!(result.generated_templates_file.exists());
         assert!(result.generated_routes.iter().any(|r| r.pattern == "/"));
-        assert!(result
-            .generated_templates
-            .iter()
-            .any(|t| t.render_symbol == "render_page_index"));
+        assert!(
+            result
+                .generated_templates
+                .iter()
+                .any(|t| t.render_symbol == "render_page_index")
+        );
 
         let page_template = out.join("pilcrow_templates/pages/index.html");
         let page_rendered = fs::read_to_string(page_template).expect("read transpiled page");
@@ -3510,10 +3511,12 @@ pub struct Props {}
         );
 
         // Neither _layout.html should be a route
-        assert!(result
-            .generated_routes
-            .iter()
-            .all(|r| !r.pattern.contains("_layout")));
+        assert!(
+            result
+                .generated_routes
+                .iter()
+                .all(|r| !r.pattern.contains("_layout"))
+        );
 
         cleanup(&root);
     }
@@ -3553,10 +3556,12 @@ pub async fn load(_req: Req) -> AppResult<Props> {
         );
 
         // _layout.html is not a route
-        assert!(result
-            .generated_routes
-            .iter()
-            .all(|r| r.pattern != "/_layout"));
+        assert!(
+            result
+                .generated_routes
+                .iter()
+                .all(|r| r.pattern != "/_layout")
+        );
 
         cleanup(&root);
     }

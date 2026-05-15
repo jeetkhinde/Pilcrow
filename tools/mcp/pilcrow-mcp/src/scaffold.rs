@@ -400,7 +400,10 @@ fn scaffold_env_config(
     if has_env {
         return Ok((
             vec![],
-            vec!["Pilcrow.toml already has an [env] section. Edit it directly to add vars.".to_string()],
+            vec![
+                "Pilcrow.toml already has an [env] section. Edit it directly to add vars."
+                    .to_string(),
+            ],
         ));
     }
 
@@ -422,7 +425,8 @@ fn scaffold_env_config(
         vec![
             "Env config: add your actual env var names to Pilcrow.toml [env].".to_string(),
             "Public vars get PUBLIC_ prefix convention for client-visible use.".to_string(),
-            "Generated env::Public::load() and env::Private::load() are in OUT_DIR after build.".to_string(),
+            "Generated env::Public::load() and env::Private::load() are in OUT_DIR after build."
+                .to_string(),
         ],
     ))
 }
@@ -510,7 +514,8 @@ fn scaffold_component(
             ),
         }],
         vec![
-            "Component: import in templates with `{% import \"ui/ComponentName.html\" as Comp %}`.".to_string(),
+            "Component: import in templates with `{% import \"ui/ComponentName.html\" as Comp %}`."
+                .to_string(),
         ],
     ))
 }
@@ -668,9 +673,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.files.len(), 2);
-        assert!(result.files[0]
-            .path
-            .ends_with("pages/reports/index.html"));
+        assert!(result.files[0].path.ends_with("pages/reports/index.html"));
     }
 
     #[test]

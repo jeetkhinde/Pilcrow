@@ -1,6 +1,8 @@
 /// Constructs a [`DependencyKey`](crate::baked_pages::DependencyKey) from
 /// table name, column name, and a runtime value expression.
 ///
+/// Macro arguments mean: table, column, runtime value.
+///
 /// The generated key has the shape `"table:column=value"`, which matches the
 /// `depends_on @> ARRAY['table:column=value']` Postgres invalidation query.
 ///
@@ -9,8 +11,7 @@
 /// ```rust,ignore
 /// use runtime::dep;
 ///
-/// let ticket_id = 123u32;
-/// let key = dep!(tickets, id, ticket_id);
+/// let key = dep!(tickets, id, params.id);
 /// assert_eq!(key.as_str(), "tickets:id=123");
 ///
 /// let key2 = dep!(orders, order_id, "ord-456");
@@ -38,8 +39,12 @@ mod tests {
 
     #[test]
     fn dep_with_variable() {
-        let ticket_id = 456u32;
-        let key = dep!(tickets, id, ticket_id);
+        struct Params {
+            id: u32,
+        }
+
+        let params = Params { id: 456 };
+        let key = dep!(tickets, id, params.id);
         assert_eq!(key.as_str(), "tickets:id=456");
     }
 

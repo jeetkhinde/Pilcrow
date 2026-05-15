@@ -6,11 +6,11 @@ use axum::{
     async_trait,
     extract::{Form, FromRequest, FromRequestParts, Path, Request},
     http::request::Parts,
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
-use axum_extra::extract::cookie::{Cookie, SameSite};
 use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use cookie::time::Duration;
 use headers::HeaderMapExt;
 use pilcrow_core::AppError;

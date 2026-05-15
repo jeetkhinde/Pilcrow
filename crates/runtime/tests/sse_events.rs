@@ -1,7 +1,7 @@
 /// Tests for `SilcrowEvent`, `SseEmitter`, and `sse_stream`.
 use axum::response::IntoResponse;
 use http_body_util::BodyExt;
-use runtime::{sse_stream, EmitError, SilcrowEvent};
+use runtime::{EmitError, SilcrowEvent, sse_stream};
 
 async fn collect_sse_body(sse: impl IntoResponse) -> String {
     let bytes = sse

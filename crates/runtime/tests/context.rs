@@ -1,13 +1,13 @@
 /// Integration and unit tests for `Locals`, `FormMap`, and `Req`.
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
     routing::{get, post},
-    Router,
 };
 use http_body_util::BodyExt;
 use pilcrow_core::AppError;
-use runtime::{form_errors, FormMap, Locals, Req};
+use runtime::{FormMap, Locals, Req, form_errors};
 use tower::ServiceExt;
 
 // ── Helpers ──────────────────────────────────────────────────

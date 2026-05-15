@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 
 use pilcrow_core::ImageConfig;
 
-use super::processor::{self, cache_path, OutputFormat, TransformParams};
+use super::processor::{self, OutputFormat, TransformParams, cache_path};
 
 #[derive(Clone)]
 pub struct ImageState {

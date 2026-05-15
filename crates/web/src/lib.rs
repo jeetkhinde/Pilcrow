@@ -2,11 +2,11 @@
 //! This crate is the required entrypoint for convention-based `web` apps.
 
 // ── Response builders ────────────────────────────────────────
-pub use runtime::response::response::{form_errors, json, navigate, ok, redirect, status};
 pub use runtime::response::response::{
     ActionResult, ActionResultExt, ErrorResponse, FormErrorItem, FormErrors, JsonResponse,
     NavigateResponse, ResponseExt, ToastLevel,
 };
+pub use runtime::response::response::{form_errors, json, navigate, ok, redirect, status};
 
 // ── Request handling ─────────────────────────────────────────
 pub use runtime::{FormMap, Locals, Next, Page, Req, Res};
@@ -17,8 +17,8 @@ pub use runtime::StatusCode;
 
 // ── SSE ──────────────────────────────────────────────────────
 pub use runtime::{
-    interval, sse_raw, sse_stream, watch, EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter,
-    SseRoute,
+    EmitError, PilcrowStreamExt, SilcrowEvent, SseEmitter, SseRoute, interval, sse_raw, sse_stream,
+    watch,
 };
 
 // ── WebSocket ────────────────────────────────────────────────
@@ -26,8 +26,8 @@ pub use runtime::{WsEvent, WsRoute, WsStream};
 
 // ── Generated routes ─────────────────────────────────────────
 pub use runtime::{
-    generated_api_routes, generated_routes, pilcrow_router, register_generated_api_routes,
-    register_generated_routes, GeneratedApiRoute, GeneratedPageRoute,
+    GeneratedApiRoute, GeneratedPageRoute, generated_api_routes, generated_routes, pilcrow_router,
+    register_generated_api_routes, register_generated_routes,
 };
 
 // ── Assets ───────────────────────────────────────────────────
@@ -41,8 +41,8 @@ pub use pilcrow_core::{
 pub use pilcrow_client::PilcrowClient;
 pub use pilcrow_macros::handler;
 pub use runtime::island_ssr::IslandSsrWorker;
-pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 pub use runtime::{AdapterFuture, PilcrowAdapter, TokioAdapter};
+pub use runtime::{export, start, start_with_adapter, start_with_prerender};
 
 /// FSR (Field-Selective Rendering) developer-facing surface.
 ///
@@ -126,18 +126,18 @@ mod baked_page_tests {
         BakedRoute, BakedSlot, DependencyConfig,
     };
     use axum::{
+        Router,
         body::Body,
         http::{Request, StatusCode},
         routing::get,
-        Router,
     };
     use http_body_util::BodyExt;
     use serde_json::json;
     use std::{
         io,
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         },
     };
     use tower::ServiceExt;
@@ -151,9 +151,15 @@ mod baked_page_tests {
             BakedPagePaths::new(
                 "/tickets/:id",
                 concrete_path,
-                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store
+                    .shell_path("/tickets/:id")
+                    .to_string_lossy()
+                    .to_string(),
                 store.json_path(concrete_path).to_string_lossy().to_string(),
-                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+                store
+                    .metadata_path(concrete_path)
+                    .to_string_lossy()
+                    .to_string(),
             ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
@@ -411,8 +417,8 @@ pub mod adapters {
 
 // ── Async streaming ──────────────────────────────────────────
 pub use runtime::{
-    __live_props_response, async_response_combined, async_value_response, AsyncHtml,
-    AsyncHtmlPatch, AsyncValue, AsyncValuePatch, LiveProp, LiveTarget,
+    __live_props_response, AsyncHtml, AsyncHtmlPatch, AsyncValue, AsyncValuePatch, LiveProp,
+    LiveTarget, async_response_combined, async_value_response,
 };
 
 // ── ISR (Incremental Static Regeneration) ────────────────────

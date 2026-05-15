@@ -140,9 +140,15 @@ mod tests {
         let registry = Registry::load_from_project(&root).unwrap();
         assert!(registry.feature("ssr-pages").is_some());
         // All gaps are closed — no planned features remain
-        assert!(registry.filtered(Some(FeatureStatus::Planned), None).is_empty());
+        assert!(registry
+            .filtered(Some(FeatureStatus::Planned), None)
+            .is_empty());
         // Core features are stable
-        assert!(registry.feature("islands").map_or(false, |f| f.status == FeatureStatus::Stable));
-        assert!(registry.feature("head-meta").map_or(false, |f| f.status == FeatureStatus::Stable));
+        assert!(registry
+            .feature("islands")
+            .map_or(false, |f| f.status == FeatureStatus::Stable));
+        assert!(registry
+            .feature("head-meta")
+            .map_or(false, |f| f.status == FeatureStatus::Stable));
     }
 }

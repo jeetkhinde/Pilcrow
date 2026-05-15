@@ -224,9 +224,10 @@ fn find_last_div_with_attr(html: &str, attr: &str) -> Option<usize> {
         let candidate = &search[pos..];
         // Quick check: does the opening tag contain the attribute?
         if let Some(tag_end) = find_tag_end(candidate).checked_add(0)
-            && candidate[..tag_end].contains(attr) {
-                last = Some(offset + pos);
-            }
+            && candidate[..tag_end].contains(attr)
+        {
+            last = Some(offset + pos);
+        }
         // Advance past this occurrence
         let step = pos + 4;
         offset += step;

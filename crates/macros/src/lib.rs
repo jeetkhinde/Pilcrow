@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
+    Expr, LitStr, Token,
     parse::{Parse, ParseStream},
-    parse_macro_input, Expr, LitStr, Token,
+    parse_macro_input,
 };
 mod fsr_invalidate;
 mod handler;
@@ -14,7 +15,7 @@ pub fn handler(attr: TokenStream, item: TokenStream) -> TokenStream {
     handler::expand(attr, item)
 }
 
-#[proc_macro_derive(PilcrowProps, attributes(promote_after, patch_debounce))]
+#[proc_macro_derive(PilcrowProps, attributes(promote_after, patch_debounce, column))]
 pub fn derive_pilcrow_props(input: TokenStream) -> TokenStream {
     live_props_derive::expand(input)
 }

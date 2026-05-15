@@ -131,9 +131,10 @@ impl IsrCache {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("json")
                     && let Ok(raw) = std::fs::read_to_string(&path)
-                        && let Ok(ce) = serde_json::from_str::<CacheEntry>(&raw) {
-                            map.insert(ce.key.clone(), ce);
-                        }
+                    && let Ok(ce) = serde_json::from_str::<CacheEntry>(&raw)
+                {
+                    map.insert(ce.key.clone(), ce);
+                }
             }
         }
 
@@ -192,14 +193,15 @@ impl IsrCache {
     pub async fn store(&self, key: &str, html: String, ttl_secs: u64, tags: Vec<String>) {
         let entry = CacheEntry::new(key.to_string(), html, ttl_secs, tags);
         if let Some(dir) = &self.persist_dir
-            && let Err(err) = persist_entry(dir, key, &entry).await {
-                tracing::error!(
-                    key,
-                    path = %dir.display(),
-                    error = %err,
-                    "failed to persist ISR cache entry"
-                );
-            }
+            && let Err(err) = persist_entry(dir, key, &entry).await
+        {
+            tracing::error!(
+                key,
+                path = %dir.display(),
+                error = %err,
+                "failed to persist ISR cache entry"
+            );
+        }
         self.map.insert(key.to_string(), entry);
     }
 
@@ -262,14 +264,15 @@ impl IsrCache {
             if let Some(dir) = &self.persist_dir {
                 let path = cache_file_path(dir, &key);
                 if let Err(err) = std::fs::remove_file(&path)
-                    && err.kind() != std::io::ErrorKind::NotFound {
-                        tracing::error!(
-                            key,
-                            path = %path.display(),
-                            error = %err,
-                            "failed to remove ISR cache entry"
-                        );
-                    }
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::error!(
+                        key,
+                        path = %path.display(),
+                        error = %err,
+                        "failed to remove ISR cache entry"
+                    );
+                }
             }
         }
     }

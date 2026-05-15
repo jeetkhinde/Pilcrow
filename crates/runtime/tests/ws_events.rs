@@ -1,5 +1,5 @@
 /// Tests for `WsEvent` serialization and `WsRecvError` display.
-use runtime::{ws::ws::WsRecvError, WsEvent};
+use runtime::{WsEvent, ws::ws::WsRecvError};
 
 // ── WsEvent serialization ─────────────────────────────────────
 

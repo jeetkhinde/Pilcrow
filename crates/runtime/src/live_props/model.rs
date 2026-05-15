@@ -1,21 +1,21 @@
 use crate::baked_pages::DependencyKey;
 use serde::{Deserialize, Serialize};
 
-// ── LiveProps<T> ──────────────────────────────────────────────────────────────
+// ── LiveProp<T> ──────────────────────────────────────────────────────────────
 
 /// A field value that participates in Pilcrow's live-props cache.
 ///
 /// Returned from route handlers. The `#[pilcrow::handler(live)]` macro extracts
 /// these fields and writes them to `pilcrow_cache` after every render.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiveProps<T> {
+pub struct LiveProp<T> {
     pub value: T,
     pub depends_on: Vec<DependencyKey>,
     pub promote_after: Option<u32>,
     pub patch_debounce: Option<u32>,
 }
 
-impl<T: Serialize + Clone> LiveProps<T> {
+impl<T: Serialize + Clone> LiveProp<T> {
     pub fn new(value: T, depends_on: Vec<DependencyKey>) -> Self {
         Self {
             value,
@@ -48,7 +48,7 @@ impl<T: Serialize + Clone> LiveProps<T> {
 
 // ── LiveFieldData ─────────────────────────────────────────────────────────────
 
-/// Extracted metadata for a single live field. Produced by `LivePropsExtract::live_fields()`.
+/// Extracted metadata for a single live field. Produced by `LivePropExtract::live_fields()`.
 #[derive(Debug, Clone)]
 pub struct LiveFieldData {
     pub field_name: String,
@@ -58,13 +58,13 @@ pub struct LiveFieldData {
     pub patch_debounce: Option<u32>,
 }
 
-// ── LivePropsExtract ──────────────────────────────────────────────────────────
+// ── LivePropExtract ──────────────────────────────────────────────────────────
 
-/// Implemented by structs that contain `LiveProps<T>` fields (via `#[derive(PilcrowProps)]`).
+/// Implemented by structs that contain `LiveProp<T>` fields (via `#[derive(PilcrowProps)]`).
 ///
 /// The `#[pilcrow::handler(live)]` macro calls this after the handler returns to extract
 /// and persist live field data.
-pub trait LivePropsExtract {
+pub trait LivePropExtract {
     fn live_fields(&self) -> Vec<LiveFieldData>;
 }
 
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn live_props_new_stores_value_and_deps() {
         let dep = DependencyKey::new("tickets:id=123");
-        let lp = LiveProps::new("Open".to_string(), vec![dep.clone()]);
+        let lp = LiveProp::new("Open".to_string(), vec![dep.clone()]);
         assert_eq!(lp.value, "Open");
         assert_eq!(lp.depends_on, vec![dep]);
         assert!(lp.promote_after.is_none());
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn live_props_builder_sets_options() {
-        let lp = LiveProps::new("Open".to_string(), vec![])
+        let lp = LiveProp::new("Open".to_string(), vec![])
             .promote_after(50)
             .patch_debounce(30);
         assert_eq!(lp.promote_after, Some(50));
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn live_field_data_from_live_props() {
         let dep = DependencyKey::new("tickets:id=123");
-        let lp = LiveProps::new("Open".to_string(), vec![dep.clone()]).promote_after(50);
+        let lp = LiveProp::new("Open".to_string(), vec![dep.clone()]).promote_after(50);
         let field = lp.to_field_data("status");
         assert_eq!(field.field_name, "status");
         assert_eq!(field.json_value, serde_json::json!("Open"));
@@ -111,7 +111,7 @@ mod tests {
             DependencyKey::new("tickets:id=1"),
             DependencyKey::new("tickets:id=2"),
         ];
-        let lp = LiveProps::new(42u32, deps.clone());
+        let lp = LiveProp::new(42u32, deps.clone());
         let field = lp.to_field_data("count");
         assert_eq!(field.depends_on.len(), 2);
         assert_eq!(field.json_value, serde_json::json!(42));

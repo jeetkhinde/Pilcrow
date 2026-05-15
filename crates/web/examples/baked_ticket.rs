@@ -5,10 +5,10 @@
 //! cargo run -p pilcrow-web --features experimental-baked-pages --example baked_ticket
 
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
     routing::{get, post},
-    Router,
 };
 use http_body_util::BodyExt;
 use pilcrow_web::experimental::baked_pages::{
@@ -19,8 +19,8 @@ use serde_json::json;
 use std::{
     fs, io,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use tower::ServiceExt;
@@ -160,9 +160,15 @@ fn make_page(store: &BakedPageStore, concrete_path: &str, threshold: Option<u32>
         BakedPagePaths::new(
             TICKET_PATTERN,
             concrete_path,
-            store.shell_path(TICKET_PATTERN).to_string_lossy().to_string(),
+            store
+                .shell_path(TICKET_PATTERN)
+                .to_string_lossy()
+                .to_string(),
             store.json_path(concrete_path).to_string_lossy().to_string(),
-            store.metadata_path(concrete_path).to_string_lossy().to_string(),
+            store
+                .metadata_path(concrete_path)
+                .to_string_lossy()
+                .to_string(),
         ),
         vec![BakedSlot::text("status")],
         vec![DependencyConfig::immediate(DEP_KEY, "status")],

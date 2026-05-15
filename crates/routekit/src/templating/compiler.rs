@@ -243,11 +243,12 @@ pub fn inject_form_method_attrs(template: &str) -> String {
             let next_char = template[after..].chars().next();
             // Must be followed by whitespace or '>' to be a real <form> tag
             if matches!(next_char, Some(c) if c.is_whitespace() || c == '>')
-                && let Some((transformed, consumed)) = try_inject_form_tag(&template[i..]) {
-                    output.push_str(&transformed);
-                    i += consumed;
-                    continue;
-                }
+                && let Some((transformed, consumed)) = try_inject_form_tag(&template[i..])
+            {
+                output.push_str(&transformed);
+                i += consumed;
+                continue;
+            }
         }
 
         let c = template[i..].chars().next().unwrap();
@@ -459,11 +460,12 @@ pub fn transpile_component_tags(template: &str) -> String {
         }
 
         if ch == '<'
-            && let Some((replacement, consumed)) = parse_component_tag(&template[i..]) {
-                output.push_str(&replacement);
-                i += consumed;
-                continue;
-            }
+            && let Some((replacement, consumed)) = parse_component_tag(&template[i..])
+        {
+            output.push_str(&replacement);
+            i += consumed;
+            continue;
+        }
 
         output.push(ch);
         i += ch.len_utf8();
@@ -917,11 +919,12 @@ pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
             let rest = &template[i + 14..];
             let next = rest.chars().next();
             if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>')
-                && let Some((html, consumed)) = parse_pilcrow_image_tag(&template[i..]) {
-                    output.push_str(&html);
-                    i += consumed;
-                    continue;
-                }
+                && let Some((html, consumed)) = parse_pilcrow_image_tag(&template[i..])
+            {
+                output.push_str(&html);
+                i += consumed;
+                continue;
+            }
         }
         // Strip <pilcrow:head> blocks that survived layout slot expansion
         // (pages with LAYOUT="none" or no _layout.html in the chain).
@@ -929,10 +932,11 @@ pub(crate) fn transpile_pilcrow_tags(template: &str) -> String {
             let rest = &template[i + 13..];
             let next = rest.chars().next();
             if matches!(next, Some(c) if c.is_whitespace() || c == '>')
-                && let Some(consumed) = strip_pilcrow_head_block(&template[i..]) {
-                    i += consumed;
-                    continue;
-                }
+                && let Some(consumed) = strip_pilcrow_head_block(&template[i..])
+            {
+                i += consumed;
+                continue;
+            }
         }
         let c = template[i..].chars().next().unwrap();
         output.push(c);
@@ -1155,12 +1159,12 @@ pub(crate) fn transpile_island_tags(template: &str, page_url_base: &str) -> Stri
             if matches!(next, Some(c) if c.is_whitespace() || c == '/' || c == '>')
                 && let Some((html, consumed)) =
                     parse_island_tag(&template[i..], page_url_base, counter)
-                {
-                    output.push_str(&html);
-                    i += consumed;
-                    counter += 1;
-                    continue;
-                }
+            {
+                output.push_str(&html);
+                i += consumed;
+                counter += 1;
+                continue;
+            }
         }
         let c = template[i..].chars().next().unwrap();
         output.push(c);

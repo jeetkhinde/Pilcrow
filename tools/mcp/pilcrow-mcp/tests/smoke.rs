@@ -95,9 +95,8 @@ impl McpClient {
         self.reader
             .read_line(&mut line)
             .expect("failed to read response line from MCP server");
-        serde_json::from_str(line.trim()).unwrap_or_else(|e| {
-            panic!("failed to parse JSON response: {e}\nraw: {line}")
-        })
+        serde_json::from_str(line.trim())
+            .unwrap_or_else(|e| panic!("failed to parse JSON response: {e}\nraw: {line}"))
     }
 
     fn initialize(&mut self) {
@@ -113,15 +112,15 @@ impl McpClient {
             resp["jsonrpc"], "2.0",
             "initialize response should be JSON-RPC 2.0"
         );
-        assert!(resp["error"].is_null(), "initialize should not error: {resp}");
+        assert!(
+            resp["error"].is_null(),
+            "initialize should not error: {resp}"
+        );
         self.notify("notifications/initialized", json!({}));
     }
 
     fn call_tool(&mut self, name: &str, args: Value) -> Value {
-        self.request(
-            "tools/call",
-            json!({ "name": name, "arguments": args }),
-        )
+        self.request("tools/call", json!({ "name": name, "arguments": args }))
     }
 }
 
@@ -166,15 +165,15 @@ fn smoke_tools_list_contains_all_expected_tools() {
     let mut client = McpClient::spawn();
     let resp = client.request("tools/list", json!({}));
 
-    assert!(resp["error"].is_null(), "tools/list should not error: {resp}");
+    assert!(
+        resp["error"].is_null(),
+        "tools/list should not error: {resp}"
+    );
     let tools = resp["result"]["tools"]
         .as_array()
         .expect("tools/list result should have a 'tools' array");
 
-    let names: Vec<&str> = tools
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
     for expected in EXPECTED_TOOLS {
         assert!(
@@ -209,10 +208,7 @@ fn smoke_resources_list_contains_all_expected_resources() {
         .as_array()
         .expect("resources/list result should have a 'resources' array");
 
-    let uris: Vec<&str> = resources
-        .iter()
-        .filter_map(|r| r["uri"].as_str())
-        .collect();
+    let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
 
     for expected in EXPECTED_RESOURCE_URIS {
         assert!(
@@ -227,10 +223,7 @@ fn smoke_resources_list_contains_all_expected_resources() {
 #[test]
 fn smoke_read_docs_resource() {
     let mut client = McpClient::spawn();
-    let resp = client.request(
-        "resources/read",
-        json!({ "uri": "pilcrow://docs" }),
-    );
+    let resp = client.request("resources/read", json!({ "uri": "pilcrow://docs" }));
     assert!(
         resp["error"].is_null(),
         "reading pilcrow://docs should not error: {resp}"
@@ -255,30 +248,21 @@ fn smoke_read_routekit_features_resource() {
 #[test]
 fn smoke_read_api_runtime_resource() {
     let mut client = McpClient::spawn();
-    let resp = client.request(
-        "resources/read",
-        json!({ "uri": "pilcrow://api/runtime" }),
-    );
+    let resp = client.request("resources/read", json!({ "uri": "pilcrow://api/runtime" }));
     assert!(resp["error"].is_null(), "reading api/runtime: {resp}");
 }
 
 #[test]
 fn smoke_read_api_web_resource() {
     let mut client = McpClient::spawn();
-    let resp = client.request(
-        "resources/read",
-        json!({ "uri": "pilcrow://api/web" }),
-    );
+    let resp = client.request("resources/read", json!({ "uri": "pilcrow://api/web" }));
     assert!(resp["error"].is_null(), "reading api/web: {resp}");
 }
 
 #[test]
 fn smoke_read_examples_resource() {
     let mut client = McpClient::spawn();
-    let resp = client.request(
-        "resources/read",
-        json!({ "uri": "pilcrow://examples" }),
-    );
+    let resp = client.request("resources/read", json!({ "uri": "pilcrow://examples" }));
     assert!(resp["error"].is_null(), "reading examples: {resp}");
 }
 
@@ -339,8 +323,14 @@ fn smoke_suggest_pattern_react_island_uses_hooks() {
     assert!(resp["error"].is_null(), "suggest_pattern errored: {resp}");
 
     let text = serde_json::to_string(&resp["result"]).unwrap_or_default();
-    assert!(text.contains("react-islands"), "missing React match: {text}");
-    assert!(text.contains("pilcrow/react"), "missing hook import: {text}");
+    assert!(
+        text.contains("react-islands"),
+        "missing React match: {text}"
+    );
+    assert!(
+        text.contains("pilcrow/react"),
+        "missing hook import: {text}"
+    );
     assert!(
         text.contains("ProductPanel.jsx"),
         "missing JSX island example: {text}"
@@ -355,7 +345,10 @@ fn smoke_answer_pilcrow_question_returns_answer() {
         "answer_pilcrow_question",
         json!({ "question": "How do I add nested layouts?" }),
     );
-    assert!(resp["error"].is_null(), "answer_pilcrow_question errored: {resp}");
+    assert!(
+        resp["error"].is_null(),
+        "answer_pilcrow_question errored: {resp}"
+    );
     let content = &resp["result"]["content"];
     assert!(
         content.is_array() && !content.as_array().unwrap().is_empty(),
@@ -385,7 +378,10 @@ fn smoke_validate_valid_load_returns_valid() {
             "path": "src/pages/index.rs"
         }),
     );
-    assert!(resp["error"].is_null(), "validate_implementation errored: {resp}");
+    assert!(
+        resp["error"].is_null(),
+        "validate_implementation errored: {resp}"
+    );
 }
 
 /// Scaffolding group — dry run
@@ -444,10 +440,7 @@ fn smoke_inspect_route_returns_inspection() {
 fn smoke_diagnose_project_returns_result() {
     let mut client = McpClient::spawn();
     let resp = client.call_tool("diagnose_project", json!({}));
-    assert!(
-        resp["error"].is_null(),
-        "diagnose_project errored: {resp}"
-    );
+    assert!(resp["error"].is_null(), "diagnose_project errored: {resp}");
 }
 
 // ── Dry-run vs write-mode scaffolding ─────────────────────────────────────────
@@ -460,7 +453,10 @@ fn smoke_orchestrate_defaults_to_dry_run() {
         "orchestrate_feature",
         json!({ "kind": "static-page", "name": "default-dry" }),
     );
-    assert!(resp["error"].is_null(), "orchestrate_feature errored: {resp}");
+    assert!(
+        resp["error"].is_null(),
+        "orchestrate_feature errored: {resp}"
+    );
     let text = serde_json::to_string(&resp["result"]).unwrap_or_default();
     // Either "dry_run":true or "action":"dry_run" should appear
     assert!(

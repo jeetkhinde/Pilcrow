@@ -30,9 +30,7 @@ fn minimal_app(dir: &TempDir, name: &str) -> std::path::PathBuf {
     fs::create_dir_all(&app).unwrap();
     fs::write(
         app.join("Cargo.toml"),
-        format!(
-            "[package]\nname=\"{name}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n"
-        ),
+        format!("[package]\nname=\"{name}\"\nversion=\"0.1.0\"\nedition=\"2021\"\n"),
     )
     .unwrap();
     app
@@ -232,7 +230,10 @@ fn loading_skeleton_detected_in_chain() {
         .iter()
         .find(|n| n.url_pattern == "/")
         .unwrap();
-    assert!(node.has_loading, "expected has_loading when _loading.html present");
+    assert!(
+        node.has_loading,
+        "expected has_loading when _loading.html present"
+    );
 }
 
 #[test]
@@ -249,7 +250,10 @@ fn error_page_detected_in_chain() {
         .iter()
         .find(|n| n.url_pattern == "/")
         .unwrap();
-    assert!(node.has_error, "expected has_error when _error.html present");
+    assert!(
+        node.has_error,
+        "expected has_error when _error.html present"
+    );
     assert!(ctx.has_global_error, "expected has_global_error flag set");
 }
 
@@ -285,8 +289,7 @@ fn invalid_load_wrong_return_type_rejected() {
 
 #[test]
 fn invalid_load_missing_req_warns() {
-    let code =
-        "pub struct Props {}\npub async fn load() -> AppResult<Props> { Ok(Props {}) }";
+    let code = "pub struct Props {}\npub async fn load() -> AppResult<Props> { Ok(Props {}) }";
     let report = validate_implementation(code, Some("src/pages/index.rs"), None);
     assert!(
         report
@@ -299,7 +302,8 @@ fn invalid_load_missing_req_warns() {
 
 #[test]
 fn valid_load_shape_accepted() {
-    let code = "pub struct Props {}\npub async fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }";
+    let code =
+        "pub struct Props {}\npub async fn load(req: Req) -> AppResult<Props> { Ok(Props {}) }";
     let report = validate_implementation(code, Some("src/pages/index.rs"), None);
     assert!(
         report.valid,
@@ -442,7 +446,11 @@ fn scan_detects_fragment_directory() {
     let app = minimal_app(&dir, "app");
     fs::create_dir_all(app.join("src/widgets")).unwrap();
     fs::write(app.join("src/widgets/user-card.html"), "<p>Card</p>").unwrap();
-    fs::write(app.join("Pilcrow.toml"), "[[fragments]]\ndir = \"widgets\"\n").unwrap();
+    fs::write(
+        app.join("Pilcrow.toml"),
+        "[[fragments]]\ndir = \"widgets\"\n",
+    )
+    .unwrap();
 
     let ctx = scan(&dir, "app");
     assert!(
@@ -508,7 +516,11 @@ fn scan_empty_fragment_directory_still_registered() {
     let dir = tempfile::tempdir().unwrap();
     let app = minimal_app(&dir, "app");
     fs::create_dir_all(app.join("src/chunks")).unwrap();
-    fs::write(app.join("Pilcrow.toml"), "[[fragments]]\ndir = \"chunks\"\n").unwrap();
+    fs::write(
+        app.join("Pilcrow.toml"),
+        "[[fragments]]\ndir = \"chunks\"\n",
+    )
+    .unwrap();
 
     let ctx = scan(&dir, "app");
     assert_eq!(
@@ -715,7 +727,8 @@ fn prerender_const_in_rust_accepted() {
         !report
             .findings
             .iter()
-            .any(|f| f.rule_id == "pilcrow-planned-static-output" && f.severity == pilcrow_mcp::validation::Severity::Error),
+            .any(|f| f.rule_id == "pilcrow-planned-static-output"
+                && f.severity == pilcrow_mcp::validation::Severity::Error),
         "PRERENDER should not produce an error-level finding now that ISR is implemented"
     );
 }

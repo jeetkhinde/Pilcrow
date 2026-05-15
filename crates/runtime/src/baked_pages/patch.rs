@@ -143,9 +143,15 @@ mod tests {
             BakedPagePaths::new(
                 "/tickets/:id",
                 concrete_path,
-                store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                store
+                    .shell_path("/tickets/:id")
+                    .to_string_lossy()
+                    .to_string(),
                 store.json_path(concrete_path).to_string_lossy().to_string(),
-                store.metadata_path(concrete_path).to_string_lossy().to_string(),
+                store
+                    .metadata_path(concrete_path)
+                    .to_string_lossy()
+                    .to_string(),
             ),
             vec![BakedSlot::text("status")],
             vec![DependencyConfig::immediate("TicketStatus:123", "status")],
@@ -230,7 +236,10 @@ mod tests {
                 BakedPagePaths::new(
                     "/tickets/:id",
                     path,
-                    store.shell_path("/tickets/:id").to_string_lossy().to_string(),
+                    store
+                        .shell_path("/tickets/:id")
+                        .to_string_lossy()
+                        .to_string(),
                     store.json_path(path).to_string_lossy().to_string(),
                     store.metadata_path(path).to_string_lossy().to_string(),
                 ),

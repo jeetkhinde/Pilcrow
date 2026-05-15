@@ -3,7 +3,7 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 
-use routing::path::{normalize_path, PathHierarchy};
+use routing::path::{PathHierarchy, normalize_path};
 
 pub mod fsr;
 pub mod routing;
@@ -650,9 +650,10 @@ impl Router {
         }
 
         if let Some(layout) = self.layouts.remove(pattern)
-            && let Some(name) = &layout.layout_name {
-                self.named_layouts.remove(name);
-            }
+            && let Some(name) = &layout.layout_name
+        {
+            self.named_layouts.remove(name);
+        }
 
         self.error_pages.remove(pattern);
         self.loading_pages.remove(pattern);
