@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, visit::Visit, FnArg, Ident, ItemFn, Pat, PatType};
+use syn::{FnArg, Ident, ItemFn, Pat, PatType, parse_macro_input, visit::Visit};
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let is_live = is_live_attr(TokenStream2::from(attr));
@@ -39,30 +39,31 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     for param in &func.sig.inputs {
         if let FnArg::Typed(PatType { pat, ty, .. }) = param
-            && let Pat::Ident(ident) = pat.as_ref() {
-                let name = ident.ident.to_string();
-                match name.as_str() {
-                    "form" => {
-                        rewritten.push(quote! {
-                            ::axum::Form(#pat): ::axum::Form<#ty>
-                        });
-                        continue;
-                    }
-                    "json" => {
-                        rewritten.push(quote! {
-                            ::axum::Json(#pat): ::axum::Json<#ty>
-                        });
-                        continue;
-                    }
-                    "path" => {
-                        rewritten.push(quote! {
-                            ::axum::extract::Path(#pat): ::axum::extract::Path<#ty>
-                        });
-                        continue;
-                    }
-                    _ => {}
+            && let Pat::Ident(ident) = pat.as_ref()
+        {
+            let name = ident.ident.to_string();
+            match name.as_str() {
+                "form" => {
+                    rewritten.push(quote! {
+                        ::axum::Form(#pat): ::axum::Form<#ty>
+                    });
+                    continue;
                 }
+                "json" => {
+                    rewritten.push(quote! {
+                        ::axum::Json(#pat): ::axum::Json<#ty>
+                    });
+                    continue;
+                }
+                "path" => {
+                    rewritten.push(quote! {
+                        ::axum::extract::Path(#pat): ::axum::extract::Path<#ty>
+                    });
+                    continue;
+                }
+                _ => {}
             }
+        }
         rewritten.push(quote! { #param });
     }
 
@@ -83,7 +84,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let live_write = if is_live {
         quote! {
             {
-                use ::runtime::live_props::LivePropsExtract as _;
+                use ::runtime::live_props::LivePropExtract as _;
                 let __live_fields = __r.live_fields();
                 if !__live_fields.is_empty() {
                     let __route = __pilcrow_matched_path.as_str().to_string();

@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse::Parse, parse_macro_input, Expr};
+use syn::{Expr, parse::Parse, parse_macro_input};
 
 struct InvalidateInput {
     dep_key_expr: Expr,
@@ -24,10 +24,10 @@ impl Parse for InvalidateInput {
 ///
 /// ```rust,ignore
 /// #[pilcrow::handler(live)]
-/// async fn update_ticket(path: (u32,)) -> TicketProps {
-///     let (id,) = path;
+/// async fn update_ticket(params: TicketParams) -> TicketProps {
 ///     // ... update DB ...
-///     pilcrow::invalidate!(dep!(tickets, id, id));
+///     // dep! args mean: table, column, runtime value.
+///     pilcrow::invalidate!(dep!(tickets, id, params.id));
 ///     TicketProps { /* ... */ }
 /// }
 /// ```

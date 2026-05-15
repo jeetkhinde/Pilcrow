@@ -1,6 +1,6 @@
 use crate::error::ClientError;
 use pilcrow_core::AppResult;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 #[derive(Clone)]
 pub struct PilcrowClient {

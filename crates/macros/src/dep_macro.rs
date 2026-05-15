@@ -25,10 +25,11 @@ impl Parse for DepInput {
 
 /// Constructs a [`DependencyKey`] from table name, column name, and a runtime value.
 ///
+/// Macro arguments mean: table, column, runtime value.
+///
 /// # Example
 /// ```rust,ignore
-/// let ticket_id = 123u32;
-/// let key = pilcrow::dep!(tickets, id, ticket_id);
+/// let key = pilcrow::dep!(tickets, id, params.id);
 /// // key.as_str() == "tickets:id=123"
 ///
 /// let key2 = pilcrow::dep!(tickets, id, 456);
