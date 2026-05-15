@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use syn::{FnArg, Item, ReturnType, Type, Visibility};
 
@@ -166,6 +168,28 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
                     Some(lnum),
                     Some("registry.toml: feature SSR Streaming"),
                     Some("Pre-rendered pages are fully static and cannot use streaming."),
+                ));
+            }
+            if code.contains("LiveProp<") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-streaming-fsr-conflict",
+                    "STREAMING = true is incompatible with FSR (live.rs / LiveProp) — routekit reports this as a structured build error.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature fsr"),
+                    Some("FSR routes serve pre-baked HTML with surgical slot patches. Remove STREAMING = true, or remove the live.rs file and LiveProp fields."),
+                ));
+            }
+            if code.contains("FSR_JSON") {
+                findings.push(finding_with_line(
+                    Severity::Error,
+                    "pilcrow-streaming-fsr-json-conflict",
+                    "STREAMING = true is incompatible with FSR_JSON = true — routekit reports this as a structured build error.".to_string(),
+                    path,
+                    Some(lnum),
+                    Some("registry.toml: feature fsr"),
+                    Some("Baked JSON output requires a promoted (non-streaming) route. Remove FSR_JSON = true from streaming pages."),
                 ));
             }
         }
@@ -395,6 +419,22 @@ fn validate_rust(code: &str, path: Option<&str>, kind: Option<&str>, findings: &
 }
 
 fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
+    for (slot, count) in collect_s_live_counts(code)
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+    {
+        findings.push(finding(
+            Severity::Error,
+            "pilcrow-fsr-duplicate-s-live",
+            format!(
+                "Duplicate FSR slot s-live=\"{slot}\" appears {count} times. Routekit requires each s-live slot name in a template to be unique."
+            ),
+            path,
+            Some("crates/routekit/src/fsr.rs"),
+            Some("Use one s-live slot per Live field, or split the values into distinct LiveProp fields."),
+        ));
+    }
+
     for (idx, line) in code.lines().enumerate() {
         let lnum = idx + 1;
 
@@ -541,6 +581,61 @@ fn validate_html(code: &str, path: Option<&str>, findings: &mut Vec<Finding>) {
             }
         }
     }
+}
+
+fn collect_s_live_counts(html: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    let mut offset = 0;
+    while let Some(pos) = html[offset..].find("s-live") {
+        let attr_start = offset + pos;
+        let after_name = attr_start + "s-live".len();
+        if after_name < html.len()
+            && html[after_name..]
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            offset = after_name;
+            continue;
+        }
+
+        let Some((name, next_offset)) = parse_s_live_value(html, after_name) else {
+            offset = after_name;
+            continue;
+        };
+        if !name.is_empty() {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+        offset = next_offset;
+    }
+    counts
+}
+
+fn parse_s_live_value(html: &str, mut offset: usize) -> Option<(String, usize)> {
+    let bytes = html.as_bytes();
+    while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
+        offset += 1;
+    }
+    if bytes.get(offset) != Some(&b'=') {
+        return None;
+    }
+    offset += 1;
+    while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
+        offset += 1;
+    }
+    let quote = *bytes.get(offset)?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    offset += 1;
+    let value_start = offset;
+    while offset < bytes.len() && bytes[offset] != quote {
+        offset += 1;
+    }
+    if offset >= bytes.len() {
+        return None;
+    }
+    Some((html[value_start..offset].to_string(), offset + 1))
 }
 
 /// Extract the URL string from a `redirect("/path")`, `navigate("/path")`, or
@@ -905,6 +1000,24 @@ pub async fn load(req: Req) -> AppResult<Props> {
                 .iter()
                 .any(|f| f.rule_id == "pilcrow-isr-missing-cache-vary"),
             "unexpected pilcrow-isr-missing-cache-vary: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_fsr_s_live_slots() {
+        let report = validate_implementation(
+            r#"<span s-live="status">Open</span><strong s-live='status'>Open</strong>"#,
+            Some("pages/tickets/index.html"),
+            None,
+        );
+        assert!(!report.valid);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.rule_id == "pilcrow-fsr-duplicate-s-live"),
+            "expected pilcrow-fsr-duplicate-s-live, got: {:?}",
             report.findings
         );
     }

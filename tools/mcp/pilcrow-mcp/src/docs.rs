@@ -446,13 +446,13 @@ fn document_specs() -> Vec<DocumentSpec> {
         },
         DocumentSpec {
             id: "fsr-mod",
-            title: "FSR runtime module (LiveProps, LiveQuery, PilcrowLive, watcher, hub)",
+            title: "FSR runtime module (LiveProp, LiveQuery, PilcrowLive, watcher, hub)",
             path: "crates/runtime/src/fsr/mod.rs",
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
             id: "fsr-live-props",
-            title: "FSR LiveProps<T> and DependencyKey types",
+            title: "FSR LiveProp<T> and DependencyKey types",
             path: "crates/runtime/src/fsr/live_props.rs",
             category: KnowledgeCategory::RuntimeApi,
         },
@@ -466,6 +466,24 @@ fn document_specs() -> Vec<DocumentSpec> {
             id: "fsr-macros",
             title: "FSR macros: fsr_dep!, live_query!",
             path: "crates/runtime/src/fsr/macros.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "fsr-routekit-validation",
+            title: "FSR routekit validation for live.rs and s-live slots",
+            path: "crates/routekit/src/fsr.rs",
+            category: KnowledgeCategory::Routekit,
+        },
+        DocumentSpec {
+            id: "fsr-cache",
+            title: "FSR Redis cache layer (RedisCache, pub/sub payloads)",
+            path: "crates/runtime/src/fsr/cache.rs",
+            category: KnowledgeCategory::RuntimeApi,
+        },
+        DocumentSpec {
+            id: "fsr-store",
+            title: "FSR Postgres store (FsrStore, StaleSlot, InspectRow)",
+            path: "crates/runtime/src/fsr/store.rs",
             category: KnowledgeCategory::RuntimeApi,
         },
         DocumentSpec {
@@ -498,12 +516,7 @@ fn document_specs() -> Vec<DocumentSpec> {
             path: "crates/runtime/src/baked_pages/patch.rs",
             category: KnowledgeCategory::RuntimeApi,
         },
-        DocumentSpec {
-            id: "runtime-baked-page-prebake",
-            title: "Experimental baked-page prebake API",
-            path: "crates/runtime/src/baked_pages/prebake.rs",
-            category: KnowledgeCategory::RuntimeApi,
-        },
+
         DocumentSpec {
             id: "runtime-baked-page-serving",
             title: "Experimental baked-page lazy serving helper",
