@@ -1,16 +1,44 @@
 use sqlx::PgPool;
 use std::sync::Arc;
 
+#[cfg(feature = "live-props-redis")]
+use super::cache::{InvalidatePayload, RedisCache};
+
 /// Manages `pilcrow_fsr` table operations for FSR slot tracking.
 #[derive(Debug, Clone)]
 pub struct FsrStore {
     pool: Arc<PgPool>,
+    #[cfg(feature = "live-props-redis")]
+    redis: Option<Arc<RedisCache>>,
 }
 
 impl FsrStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool: Arc::new(pool),
+            #[cfg(feature = "live-props-redis")]
+            redis: None,
+        }
+    }
+
+    /// Create an `FsrStore` that also publishes invalidation events to Redis.
+    #[cfg(feature = "live-props-redis")]
+    pub fn with_redis(pool: PgPool, redis: Arc<RedisCache>) -> Self {
+        Self {
+            pool: Arc::new(pool),
+            redis: Some(redis),
+        }
+    }
+
+    /// Return a clone of this store with a Redis cache attached.
+    ///
+    /// Used in `start.rs` to upgrade the store after the Redis connection is
+    /// established without re-connecting to Postgres.
+    #[cfg(feature = "live-props-redis")]
+    pub fn with_redis_attached(&self, redis: Arc<RedisCache>) -> Self {
+        Self {
+            pool: Arc::clone(&self.pool),
+            redis: Some(redis),
         }
     }
 
@@ -117,6 +145,10 @@ impl FsrStore {
     /// Mark all `pilcrow_fsr` rows whose `depends_on` contains `dep_key` as stale.
     ///
     /// Returns the distinct affected routes.
+    ///
+    /// When Redis is configured, also publishes `pilcrow:invalidate` so the
+    /// pub/sub-driven watcher triggers immediately instead of waiting for the
+    /// next polling interval.
     pub async fn invalidate_dep_key(&self, dep_key: &str) -> sqlx::Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"
@@ -134,10 +166,32 @@ impl FsrStore {
         let mut routes: Vec<String> = rows.into_iter().map(|(r,)| r).collect();
         routes.sort();
         routes.dedup();
+
+        #[cfg(feature = "live-props-redis")]
+        if let Some(ref redis) = self.redis {
+            for route in &routes {
+                let payload = InvalidatePayload {
+                    route: route.clone(),
+                    slots: vec![],
+                    deps: vec![dep_key.to_string()],
+                };
+                if let Err(e) = redis.publish_invalidate(&payload).await {
+                    tracing::warn!(
+                        dep_key,
+                        route,
+                        error = %e,
+                        "FsrStore: Redis publish_invalidate failed"
+                    );
+                }
+            }
+        }
+
         Ok(routes)
     }
 
     /// Mark all slot rows for a specific route as stale.
+    ///
+    /// When Redis is configured, also publishes `pilcrow:invalidate`.
     pub async fn invalidate_route(&self, route: &str) -> sqlx::Result<()> {
         sqlx::query(
             r#"
@@ -149,6 +203,23 @@ impl FsrStore {
         .bind(route)
         .execute(&*self.pool)
         .await?;
+
+        #[cfg(feature = "live-props-redis")]
+        if let Some(ref redis) = self.redis {
+            let payload = InvalidatePayload {
+                route: route.to_string(),
+                slots: vec![],
+                deps: vec![],
+            };
+            if let Err(e) = redis.publish_invalidate(&payload).await {
+                tracing::warn!(
+                    route,
+                    error = %e,
+                    "FsrStore: Redis publish_invalidate (route) failed"
+                );
+            }
+        }
+
         Ok(())
     }
 

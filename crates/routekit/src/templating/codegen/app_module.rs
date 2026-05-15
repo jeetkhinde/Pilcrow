@@ -426,6 +426,9 @@ pub fn render_generated_app_module(
         let is_streaming = page_options_map
             .get(&entry.symbol)
             .is_some_and(|o| o.streaming);
+        let fsr_json = page_options_map
+            .get(&entry.symbol)
+            .is_some_and(|o| o.fsr.json);
 
         // Build-time validation for STREAMING.
         if is_streaming {
@@ -455,6 +458,22 @@ pub fn render_generated_app_module(
                     entry,
                     "STREAMING = true does not support PilcrowClient in load().",
                     "Use AsyncValue<T> for client-based data fetching, or remove the PilcrowClient argument from the streaming page load().",
+                ));
+            }
+            // FSR compatibility: live.rs routes serve pre-baked or SSR HTML and cannot stream.
+            if has_fsr {
+                return Err(route_config_error(
+                    entry,
+                    "STREAMING = true is incompatible with a live.rs companion (FSR).",
+                    "FSR routes serve pre-baked HTML with surgical slot patches — full-page streaming is not supported. Remove STREAMING = true or the live.rs file.",
+                ));
+            }
+            // FSR_JSON is only meaningful on FSR routes; it is also incompatible with streaming.
+            if fsr_json {
+                return Err(route_config_error(
+                    entry,
+                    "STREAMING = true is incompatible with FSR_JSON = true.",
+                    "Remove FSR_JSON = true from streaming pages — baked JSON output requires a promoted (non-streaming) route.",
                 ));
             }
         }

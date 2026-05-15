@@ -255,6 +255,13 @@ where
                                         let redis = Arc::new(cache);
                                         app = app.layer(axum::Extension(Arc::clone(&redis)));
 
+                                        // Rebuild fsr_store with Redis attached so that
+                                        // invalidate_dep_key / invalidate_route publish
+                                        // to pilcrow:invalidate immediately.
+                                        let fsr_store = Arc::new(fsr_store.with_redis_attached(Arc::clone(&redis)));
+                                        // Re-register the upgraded store as an Extension.
+                                        app = app.layer(axum::Extension(Arc::clone(&fsr_store)));
+
                                         // Bridge: Redis pilcrow:patch → in-process broadcast.
                                         spawn_redis_patch_bridge(Arc::clone(&redis), (*fsr_tx).clone());
 
