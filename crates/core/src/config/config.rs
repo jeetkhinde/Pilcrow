@@ -70,6 +70,9 @@ pub struct FsrConfig {
     pub connection_ttl_secs: u64,
     /// SSE keep-alive heartbeat interval in seconds.
     pub keepalive_secs: u64,
+    /// Redis connection URL (`redis://...`). When set, the embedded watcher uses
+    /// Redis pub/sub instead of polling and the FSR cache layer is activated.
+    pub redis_url: Option<String>,
 }
 
 impl Default for FsrConfig {
@@ -83,6 +86,7 @@ impl Default for FsrConfig {
             max_sse_connections: 1000,
             connection_ttl_secs: 3600,
             keepalive_secs: 30,
+            redis_url: None,
         }
     }
 }

@@ -86,16 +86,16 @@ where
             tracing::info!("ISR cache: filesystem backend at {dir}");
             IsrCache::with_persistence(dir)
         }
-        CacheProvider::Sqlite | CacheProvider::Redis => {
-            tracing::error!(
-                provider = ?config.cache.provider,
-                "configured ISR cache provider is not implemented"
-            );
-            eprintln!(
-                "pilcrow: cache provider {:?} is not implemented; use memory or filesystem",
-                config.cache.provider
-            );
+        CacheProvider::Sqlite => {
+            tracing::error!("ISR cache provider 'sqlite' is not implemented; use memory or filesystem");
+            eprintln!("pilcrow: cache provider 'sqlite' is not implemented; use memory or filesystem");
             std::process::exit(1);
+        }
+        CacheProvider::Redis => {
+            // Redis is wired as the FSR hot cache below; for the ISR layer we fall
+            // back to in-memory so the server can still start.
+            tracing::info!("ISR cache: using in-memory (Redis is reserved for the FSR layer)");
+            IsrCache::new()
         }
     });
 
@@ -240,17 +240,67 @@ where
                             patch_debounce_secs: fsr_config.patch_debounce_secs,
                             purge_after_seconds: fsr_config.purge_after_seconds,
                         };
-                        spawn_embedded_watcher(
-                            Arc::clone(&fsr_store),
-                            watcher_cfg,
-                            Some((*fsr_tx).clone()),
-                        );
-                        tracing::info!(
-                            "FSR: embedded watcher started (poll: {}ms, max_connections: {}, ttl: {}s)",
-                            fsr_config.poll_interval_ms,
-                            fsr_config.max_sse_connections,
-                            fsr_config.connection_ttl_secs,
-                        );
+
+                        // If Redis is configured, use the pub/sub-driven watcher and
+                        // spawn a bridge that forwards pilcrow:patch events to the
+                        // in-process broadcast channel (for single-pod SSE clients).
+                        #[cfg(feature = "live-props-redis")]
+                        let redis_started = {
+                            use crate::fsr::cache::RedisCache;
+                            use crate::fsr::watcher::spawn_embedded_watcher_redis;
+
+                            if let Some(ref redis_url) = fsr_config.redis_url {
+                                match RedisCache::connect(redis_url).await {
+                                    Ok(cache) => {
+                                        let redis = Arc::new(cache);
+                                        app = app.layer(axum::Extension(Arc::clone(&redis)));
+
+                                        // Bridge: Redis pilcrow:patch → in-process broadcast.
+                                        spawn_redis_patch_bridge(Arc::clone(&redis), (*fsr_tx).clone());
+
+                                        spawn_embedded_watcher_redis(
+                                            Arc::clone(&fsr_store),
+                                            watcher_cfg.clone(),
+                                            Some((*fsr_tx).clone()),
+                                            Arc::clone(&redis),
+                                        );
+                                        tracing::info!(
+                                            "FSR: embedded watcher started (Redis pub/sub, max_connections: {}, ttl: {}s)",
+                                            fsr_config.max_sse_connections,
+                                            fsr_config.connection_ttl_secs,
+                                        );
+                                        true
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            error = %e,
+                                            url = redis_url,
+                                            "FSR: failed to connect to Redis — falling back to polling"
+                                        );
+                                        false
+                                    }
+                                }
+                            } else {
+                                false
+                            }
+                        };
+
+                        #[cfg(not(feature = "live-props-redis"))]
+                        let redis_started = false;
+
+                        if !redis_started {
+                            spawn_embedded_watcher(
+                                Arc::clone(&fsr_store),
+                                watcher_cfg,
+                                Some((*fsr_tx).clone()),
+                            );
+                            tracing::info!(
+                                "FSR: embedded watcher started (polling {}ms, max_connections: {}, ttl: {}s)",
+                                fsr_config.poll_interval_ms,
+                                fsr_config.max_sse_connections,
+                                fsr_config.connection_ttl_secs,
+                            );
+                        }
                     }
                 }
                 Err(err) => {
@@ -356,6 +406,51 @@ async fn island_ssr_middleware(
 
     let replaced = replace_ssr_placeholders(html, &worker);
     axum::response::Response::from_parts(parts, axum::body::Body::from(replaced))
+}
+
+/// Subscribe to Redis `pilcrow:patch` and forward each event to the in-process
+/// broadcast channel so SSE clients on this pod receive multi-pod patch events.
+#[cfg(feature = "live-props-redis")]
+fn spawn_redis_patch_bridge(
+    redis: Arc<crate::fsr::cache::RedisCache>,
+    tx: crate::fsr::WatcherEventTx,
+) {
+    use futures_util::StreamExt as _;
+    tokio::spawn(async move {
+        loop {
+            match redis.client().get_async_pubsub().await {
+                Ok(mut pubsub) => {
+                    if let Err(e) = pubsub.subscribe("pilcrow:patch").await {
+                        tracing::warn!(error = %e, "FSR patch bridge: subscribe failed, retrying in 1s");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
+                    }
+                    let stream = pubsub.on_message();
+                    tokio::pin!(stream);
+                    while let Some(msg) = stream.next().await {
+                        let payload: String = match msg.get_payload() {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
+                        if let Ok(patch) =
+                            serde_json::from_str::<crate::fsr::cache::PatchPayload>(&payload)
+                        {
+                            let _ = tx.send(crate::fsr::watcher::SlotPatch {
+                                route: patch.route,
+                                slot: patch.slot,
+                                value: patch.value,
+                            });
+                        }
+                    }
+                    tracing::warn!("FSR patch bridge: Redis connection closed, reconnecting");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "FSR patch bridge: Redis connection failed, retrying in 1s");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
 }
 
 fn load_config_or_exit() -> PilcrowConfig {

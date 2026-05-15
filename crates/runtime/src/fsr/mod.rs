@@ -1,4 +1,5 @@
 mod baking;
+pub mod cache;
 mod extractor;
 pub mod hub;
 mod inspect;
@@ -20,6 +21,9 @@ pub use hub::{
 pub use inspect::fsr_inspect_handler;
 pub use live_props::{DependencyKey, LiveProp};
 pub use live_trait::{LiveFieldRegistration, LiveQuery, PilcrowLive};
+pub use cache::{InvalidatePayload, PatchPayload};
+#[cfg(feature = "live-props-redis")]
+pub use cache::RedisCache;
 pub use store::{FsrStore, StaleSlot};
 pub use watcher::{
     SlotPatch, WatcherConfig, WatcherEventTx, pilcrow_fsr_watcher_tick, spawn_embedded_watcher,
