@@ -128,7 +128,7 @@ impl KnowledgeBase {
                 title: "Pilcrow feature registry".to_string(),
                 path: "registry.toml".to_string(),
                 category: KnowledgeCategory::Routekit,
-                text: serde_json::to_string_pretty(&registry.features).unwrap_or_default(),
+                text: serde_json::to_string_pretty(&registry.features).unwrap_or_else(|_| "[]".to_string()),
             });
         }
         Some(ResourcePayload {
